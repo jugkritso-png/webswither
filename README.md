@@ -1,8 +1,16 @@
 # WebMix Broadcast Pro
 
-ระบบสลับภาพ (video switcher) ที่ทำงานบนเว็บเบราว์เซอร์ทั้งหมดในไฟล์เดียว `index.html`
-มีจอ Preview/Program, ปุ่ม CUT/AUTO FADE/T-Bar, ภาพซ้อน PiP, Chroma Key, ป้ายชื่อ (Lower Third),
-มิกเซอร์เสียง, กล้องมือถือไร้สายผ่าน QR Code, บันทึกวิดีโอ และสตรีมสดผ่าน RTMP
+ระบบสลับภาพและเสียง (live production switcher) ที่ทำงานบนเว็บเบราว์เซอร์ ใช้ได้ทั้งคอมพิวเตอร์ แท็บเล็ต และมือถือ
+
+- จอ Preview / Program, ปุ่ม CUT / AUTO / FTB และ T-Bar (เอฟเฟกต์ MIX, DIP, WIPE เลือกเวลาได้)
+- Input: กล้อง/แคปเจอร์การ์ด (เลือกอุปกรณ์และความละเอียด), แชร์หน้าจอ, ไฟล์วิดีโอ (เล่น/หยุด/วนซ้ำ), ภาพนิ่ง,
+  Color Bars, Slate ข้อความ, นาฬิกา, Black และกล้องมือถือไร้สายผ่าน QR Code (มีไฟ Tally บนมือถือ)
+- กราฟิก: ป้ายชื่อ Lower Third พร้อมแอนิเมชัน, ภาพซ้อน PIP, Chroma Key ฉากเขียว/ฟ้า
+- มิกเซอร์เสียง: มิเตอร์ dBFS จริง, เฟดเดอร์, Mute, Audio Follow Video, ฟังเสียงผ่านหูฟัง (MON)
+- บันทึกวิดีโอ, สตรีมสด RTMP (YouTube / Facebook / Twitch / อื่น ๆ), ภาพนิ่ง, หน้าต่าง Program Output แยก, เต็มจอ
+- คู่มือในแอป (ปุ่ม ?) และดาวน์โหลดคู่มือเป็นไฟล์ Word
+
+โครงสร้างไฟล์: `index.html` (หน้าเว็บ), `assets/app.css` (ดีไซน์), `assets/app.js` (การทำงาน), `server/` (Stream Gateway)
 
 ## เปิดใช้งานผ่าน GitHub Pages (HTTPS)
 
@@ -28,11 +36,11 @@ npm install
 STREAM_TOKEN=รหัสลับของคุณ PORT=8080 npm start
 ```
 
-ในหน้า WebMix:
+ในหน้า WebMix กดปุ่มตั้งค่า (ไอคอนแถบเลื่อน) → แท็บ **การสตรีม**:
 
-- ช่อง Gateway ใส่ `wss://โดเมนของคุณ:8080/?token=รหัสลับของคุณ`
-- ช่อง RTMP ใส่ `rtmp://a.rtmp.youtube.com/live2/<STREAM KEY>`
-- กด **📡 STREAM**
+- Stream Gateway ใส่ `wss://โดเมนของคุณ:8080/?token=รหัสลับของคุณ`
+- เลือกแพลตฟอร์ม (YouTube / Facebook / Twitch / กำหนดเอง) แล้วใส่ Stream Key
+- กด **STREAM** ที่แถบด้านบน — ความละเอียด เฟรมเรต และบิตเรตตั้งได้ในแท็บ **เอาต์พุต**
 
 หมายเหตุ
 

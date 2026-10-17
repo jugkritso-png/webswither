@@ -23,12 +23,16 @@ wss.on('connection', (ws, req) => {
   if (TOKEN && params.get('token') !== TOKEN) return ws.close(1008, 'invalid token');
   if (!/^rtmps?:\/\/[^\s]+$/i.test(rtmp)) return ws.close(1008, 'invalid rtmp url');
 
+  // ค่าที่ส่งมาจากหน้าตั้งค่า (มีค่าเริ่มต้นและจำกัดช่วงไว้เสมอ)
+  const fps = [24, 25, 30, 50, 60].includes(Number(params.get('fps'))) ? Number(params.get('fps')) : 30;
+  const kbps = Math.min(12000, Math.max(500, Number(params.get('vb')) || 4500));
+
   const ffmpeg = spawn(FFMPEG, [
     '-loglevel', 'warning',
     '-i', 'pipe:0',
     '-c:v', 'libx264', '-preset', 'veryfast', '-tune', 'zerolatency',
-    '-pix_fmt', 'yuv420p', '-r', '30', '-g', '60',
-    '-b:v', '4500k', '-maxrate', '4500k', '-bufsize', '9000k',
+    '-pix_fmt', 'yuv420p', '-r', String(fps), '-g', String(fps * 2),
+    '-b:v', `${kbps}k`, '-maxrate', `${kbps}k`, '-bufsize', `${kbps * 2}k`,
     '-c:a', 'aac', '-ar', '44100', '-b:a', '128k',
     '-f', 'flv', rtmp
   ], { stdio: ['pipe', 'ignore', 'pipe'] });
