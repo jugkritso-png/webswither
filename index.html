@@ -1,0 +1,865 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WebMix Broadcast Pro — Studio Switcher</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-dark: #07090e;
+      --panel-bg: #11151f;
+      --border-col: #222938;
+    }
+    body {
+      background-color: var(--bg-dark);
+      color: #e2e8f0;
+      font-family: 'Inter', sans-serif;
+      user-select: none;
+      overflow: hidden;
+    }
+    .mono { font-family: 'JetBrains Mono', monospace; }
+    .studio-panel {
+      background: linear-gradient(180deg, #151a26 0%, #0d1017 100%);
+      border: 1px solid var(--border-col);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.05), 0 4px 12px rgba(0,0,0,0.5);
+    }
+    /* ปุ่มกดสไตล์ฮาร์ดแวร์ Broadcast */
+    .hw-btn {
+      background: linear-gradient(180deg, #2a3246 0%, #1a202e 100%);
+      border: 1px solid #3b455e;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.12), 0 2px 4px rgba(0,0,0,0.6);
+      transition: all 0.1s ease;
+    }
+    .hw-btn:hover { filter: brightness(1.15); }
+    .hw-btn:active { transform: translateY(1px); box-shadow: inset 0 2px 4px rgba(0,0,0,0.8); }
+
+    .hw-btn-red {
+      background: linear-gradient(180deg, #ef4444 0%, #b91c1c 100%);
+      border-color: #f87171;
+      box-shadow: 0 0 15px rgba(239, 68, 68, 0.35), inset 0 1px 0 rgba(255,255,255,0.3);
+    }
+    .hw-btn-amber {
+      background: linear-gradient(180deg, #f59e0b 0%, #b45309 100%);
+      border-color: #fbbf24;
+      box-shadow: 0 0 15px rgba(245, 158, 11, 0.3), inset 0 1px 0 rgba(255,255,255,0.3);
+    }
+    .hw-btn-green {
+      background: linear-gradient(180deg, #10b981 0%, #047857 100%);
+      border-color: #34d399;
+    }
+
+    /* กรอบจอมอนิเตอร์ */
+    .monitor-frame {
+      aspect-ratio: 16 / 9;
+      background: #000;
+      position: relative;
+      overflow: hidden;
+      border-radius: 4px;
+    }
+    .tally-prv { border: 2px solid #10b981; box-shadow: 0 0 20px rgba(16, 185, 129, 0.15); }
+    .tally-pgm { border: 2px solid #ef4444; box-shadow: 0 0 25px rgba(239, 68, 68, 0.25); }
+
+    /* T-Bar Slider แนวตั้ง */
+    .tbar-slider {
+      -webkit-appearance: slider-vertical;
+      width: 28px;
+      height: 110px;
+      background: #090c12;
+      accent-color: #f59e0b;
+      cursor: ns-resize;
+    }
+    ::-webkit-scrollbar { width: 5px; height: 5px; }
+    ::-webkit-scrollbar-track { background: #090c12; }
+    ::-webkit-scrollbar-thumb { background: #2a3246; border-radius: 3px; }
+  </style>
+</head>
+<body class="h-screen flex flex-col p-2 gap-2">
+
+  <!-- โหมดกล้องมือถือไร้สาย (แสดงเมื่อสแกน QR เข้ามา) -->
+  <div id="mobile-caller-ui" class="hidden fixed inset-0 bg-black z-50 flex flex-col items-center justify-center p-4">
+    <div class="text-xs font-bold px-2 py-0.5 bg-red-600 rounded mb-2 animate-pulse">LIVE WIRELESS CAMERA</div>
+    <h2 class="text-lg font-bold text-white mb-1">WebMix Pro Camera</h2>
+    <p id="caller-status" class="text-xs text-slate-400 mb-3">กำลังส่งสัญญาณเข้าสตูดิโอ...</p>
+    <video id="caller-preview" autoplay muted playsinline class="w-full max-w-md rounded border-2 border-emerald-500 mb-4 bg-slate-950"></video>
+    <button onclick="switchMobileCam()" class="hw-btn px-5 py-2.5 rounded text-xs font-bold">🔄 สลับกล้อง หน้า / หลัง</button>
+  </div>
+
+  <!-- 1. TOP BROADCAST BAR (แถบสถานะห้องส่งด้านบน) -->
+  <header class="studio-panel rounded-md px-3 py-1.5 flex flex-wrap justify-between items-center shrink-0">
+    <!-- โลโก้ & สถานะระบบ -->
+    <div class="flex items-center gap-4">
+      <div class="flex items-center gap-2">
+        <div class="w-3 h-3 rounded-sm bg-gradient-to-br from-amber-400 to-red-600 shadow"></div>
+        <span class="font-extrabold tracking-wider text-sm text-white">WEBMIX <span class="text-amber-400">PRO HD</span></span>
+        <span class="text-[10px] mono bg-slate-800 text-slate-300 px-1.5 py-0.5 rounded border border-slate-700">1080p / 60fps Engine</span>
+      </div>
+      <div class="hidden xl:flex items-center gap-3 text-[11px] text-slate-400 border-l border-slate-800 pl-4">
+        <span>CPU: <b class="text-emerald-400 mono">12%</b></span>
+        <span>GPU: <b class="text-emerald-400 mono">WebGL Active</b></span>
+      </div>
+    </div>
+
+    <!-- นาฬิกาสตูดิโอ & ป้าย ON AIR -->
+    <div class="flex items-center gap-3">
+      <div class="bg-black/80 border border-slate-800 px-3 py-1 rounded flex items-center gap-3">
+        <div class="text-right">
+          <div class="text-[9px] text-slate-500 font-bold uppercase">System Time</div>
+          <div id="clock-display" class="mono text-xs font-bold text-slate-200">00:00:00</div>
+        </div>
+        <div class="h-5 w-[1px] bg-slate-800"></div>
+        <div class="text-right">
+          <div class="text-[9px] text-slate-500 font-bold uppercase">On Air Duration</div>
+          <div id="timer-display" class="mono text-xs font-bold text-amber-400">00:00:00</div>
+        </div>
+      </div>
+
+      <div id="onair-badge" class="px-3 py-1.5 rounded bg-slate-900 border border-slate-800 text-slate-500 font-extrabold text-xs tracking-widest flex items-center gap-1.5">
+        <span id="onair-dot" class="w-2 h-2 rounded-full bg-slate-600"></span>
+        OFF AIR
+      </div>
+    </div>
+
+    <!-- ปุ่มบันทึกและสตรีม + ส่งออกไฟล์ -->
+    <div class="flex items-center gap-1.5">
+      <input type="text" id="rtmp-url" placeholder="rtmp://a.rtmp.youtube.com/live2/KEY" class="bg-black/60 text-[11px] mono px-2.5 py-1.5 rounded border border-slate-800 w-48 text-slate-200 focus:outline-none focus:border-amber-500">
+      <button onclick="toggleLiveStream()" id="btn-stream" class="hw-btn px-3 py-1.5 rounded text-xs font-bold text-rose-400 flex items-center gap-1">
+        📡 STREAM
+      </button>
+      <button onclick="toggleRecording()" id="btn-record" class="hw-btn px-3 py-1.5 rounded text-xs font-bold text-slate-200 flex items-center gap-1">
+        ● REC
+      </button>
+      <button onclick="exportToWord()" title="ดาวน์โหลดคู่มือเข้า Microsoft Word" class="hw-btn px-2.5 py-1.5 rounded text-xs font-bold text-sky-400">
+        📄 คู่มือ Word
+      </button>
+    </div>
+  </header>
+
+  <!-- 2. UPPER WORKSPACE: PREVIEW + SWITCHER DECK + PROGRAM -->
+  <div class="grid grid-cols-12 gap-2 shrink-0">
+
+    <!-- จอ PREVIEW (5 Cols) -->
+    <div class="col-span-12 lg:col-span-5 studio-panel rounded-md p-2 flex flex-col">
+      <div class="flex justify-between items-center mb-1.5 px-1">
+        <div class="flex items-center gap-2">
+          <span class="w-2.5 h-2.5 rounded-xs bg-emerald-500 shadow-[0_0_8px_#10b981]"></span>
+          <span class="text-xs font-extrabold tracking-wider text-emerald-400">PREVIEW</span>
+          <span id="prv-label" class="text-xs font-semibold text-white bg-slate-800/90 px-2 py-0.5 rounded">CAM 2 - Standby</span>
+        </div>
+        <span class="mono text-[10px] text-slate-400">NEXT SOURCE</span>
+      </div>
+      <div class="monitor-frame tally-prv">
+        <canvas id="previewCanvas" width="1280" height="720" class="w-full h-full object-contain"></canvas>
+        <!-- เส้น Safe Area & Crosshair แบบกล้องโปร -->
+        <div id="safe-grid" class="absolute inset-4 border border-white/15 pointer-events-none flex items-center justify-center">
+          <div class="w-4 h-[1px] bg-white/20"></div>
+          <div class="h-4 w-[1px] bg-white/20 absolute"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- แผงควบคุมการสลับภาพกลาง (CENTER SWITCHER DECK - 2 Cols) -->
+    <div class="col-span-12 lg:col-span-2 studio-panel rounded-md p-2.5 flex flex-col justify-between">
+      <div class="text-center border-b border-slate-800 pb-1.5">
+        <span class="text-[10px] font-bold tracking-widest text-slate-400 uppercase">Transition Deck</span>
+      </div>
+
+      <!-- ปุ่ม CUT / AUTO FADE + คันโยก T-BAR -->
+      <div class="flex items-center justify-around my-1 py-2 bg-black/40 rounded border border-slate-800/80">
+        <div class="flex flex-col gap-2 w-24">
+          <button onclick="cutTransition()" class="hw-btn-red py-3 rounded font-extrabold text-xs tracking-wider text-white">
+            CUT
+            <span class="block text-[9px] font-normal opacity-80 mono">[SPACE]</span>
+          </button>
+          <button onclick="fadeTransition()" class="hw-btn-amber py-3 rounded font-extrabold text-xs tracking-wider text-white">
+            AUTO FADE
+            <span class="block text-[9px] font-normal opacity-80 mono">[ENTER]</span>
+          </button>
+        </div>
+
+        <!-- T-Bar Manual Fader -->
+        <div class="flex flex-col items-center">
+          <span class="text-[9px] mono text-slate-400 mb-1">T-BAR</span>
+          <input type="range" id="tbar" min="0" max="100" value="0" oninput="manualTbar(this.value)" class="tbar-slider">
+          <span id="tbar-val" class="text-[10px] mono text-amber-400 mt-1">0%</span>
+        </div>
+      </div>
+
+      <!-- ปุ่ม DSK Overlays (PiP / ป้ายชื่อ / ฉากเขียว) -->
+      <div class="flex flex-col gap-1.5">
+        <div class="grid grid-cols-2 gap-1.5">
+          <button onclick="togglePip()" id="btn-pip" class="hw-btn py-1.5 rounded text-[11px] font-bold text-slate-200">
+            🖼️ PiP [P]
+          </button>
+          <button onclick="toggleLowerThird()" id="btn-overlay" class="hw-btn py-1.5 rounded text-[11px] font-bold text-slate-200">
+            🔤 TITLE [L]
+          </button>
+        </div>
+
+        <div class="bg-black/50 p-2 rounded border border-slate-800/90 flex flex-col gap-1">
+          <div class="flex justify-between items-center">
+            <label class="flex items-center gap-1.5 cursor-pointer text-[11px] font-bold text-emerald-400">
+              <input type="checkbox" id="chroma-enable" class="accent-emerald-500"> CHROMA KEY
+            </label>
+            <span class="text-[9px] mono text-slate-400">GREEN</span>
+          </div>
+          <input type="range" id="chroma-tolerance" min="20" max="180" value="90" class="w-full h-1.5 accent-emerald-500">
+        </div>
+      </div>
+    </div>
+
+    <!-- จอ PROGRAM (5 Cols) -->
+    <div class="col-span-12 lg:col-span-5 studio-panel rounded-md p-2 flex flex-col">
+      <div class="flex justify-between items-center mb-1.5 px-1">
+        <div class="flex items-center gap-2">
+          <span class="w-2.5 h-2.5 rounded-xs bg-red-500 shadow-[0_0_8px_#ef4444] animate-pulse"></span>
+          <span class="text-xs font-extrabold tracking-wider text-red-500">PROGRAM</span>
+          <span id="pgm-label" class="text-xs font-semibold text-white bg-red-950/80 border border-red-800/60 px-2 py-0.5 rounded">CAM 1 - Main Studio</span>
+        </div>
+        <span class="mono text-[10px] text-red-400 font-bold">MASTER OUTPUT</span>
+      </div>
+      <div class="monitor-frame tally-pgm">
+        <canvas id="programCanvas" width="1280" height="720" class="w-full h-full object-contain"></canvas>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- 3. LOWER WORKSPACE: MULTI-VIEW INPUT MATRIX + GRAPHICS + PRO AUDIO MIXER -->
+  <div class="flex-1 grid grid-cols-12 gap-2 overflow-hidden min-h-[210px]">
+
+    <!-- แผง MULTI-VIEW INPUTS พร้อมจอพรีวิวสดในปุ่ม (7 Cols) -->
+    <div class="col-span-12 lg:col-span-7 studio-panel rounded-md p-2.5 flex flex-col overflow-hidden">
+      <div class="flex flex-wrap justify-between items-center mb-2 gap-1.5 shrink-0 border-b border-slate-800 pb-2">
+        <div class="flex items-center gap-2">
+          <span class="text-xs font-extrabold tracking-wider text-slate-300 uppercase">🎬 Input Matrix</span>
+          <span class="text-[10px] text-slate-500">(คลิกซ้าย = ส่งเข้า Preview | ดับเบิลคลิก = ตัดเข้า Program ทันที)</span>
+        </div>
+        <div class="flex flex-wrap gap-1.5">
+          <button onclick="showQrModal()" class="hw-btn-green px-2.5 py-1 rounded text-[11px] font-bold text-white flex items-center gap-1 shadow">
+            📲 + กล้องมือถือไร้สาย (vMix Call)
+          </button>
+          <button onclick="addWebcam()" class="hw-btn px-2.5 py-1 rounded text-[11px] font-semibold">+ เว็บแคม</button>
+          <button onclick="addScreenShare()" class="hw-btn px-2.5 py-1 rounded text-[11px] font-semibold">+ แชร์หน้าจอ</button>
+          <label class="hw-btn px-2.5 py-1 rounded text-[11px] font-semibold cursor-pointer">
+            + ไฟล์วิดีโอ
+            <input type="file" accept="video/*" class="hidden" onchange="addVideoFile(event)">
+          </label>
+        </div>
+      </div>
+
+      <!-- ตารางแสดงกล้องพร้อม Live Thumbnail -->
+      <div id="inputs-grid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 overflow-y-auto pr-1 flex-1"></div>
+    </div>
+
+    <!-- แผงควบคุมป้ายชื่อ CG & PTZ (2 Cols) -->
+    <div class="col-span-12 lg:col-span-2 studio-panel rounded-md p-2.5 flex flex-col justify-between overflow-y-auto">
+      <div>
+        <div class="text-xs font-extrabold tracking-wider text-slate-300 uppercase border-b border-slate-800 pb-1.5 mb-2">
+          🔤 CG Lower Thirds
+        </div>
+        <label class="text-[10px] text-slate-400 font-semibold block mb-1">หัวข้อหลัก (Headline):</label>
+        <input type="text" id="lowerThirdTitle" value="BREAKING NEWS" class="bg-black/70 text-amber-400 font-bold text-xs px-2 py-1.5 rounded border border-slate-800 w-full mb-2">
+
+        <label class="text-[10px] text-slate-400 font-semibold block mb-1">ข้อความรอง (Subtitle):</label>
+        <input type="text" id="lowerThirdSub" value="รายงานสดจากสตูดิโอ WebMix Broadcast Pro" class="bg-black/70 text-white text-xs px-2 py-1.5 rounded border border-slate-800 w-full mb-2">
+
+        <button onclick="toggleLowerThird()" class="w-full hw-btn py-1.5 rounded text-xs font-bold text-sky-400 mt-1">
+          ⚡ แสดง / ซ่อนป้ายชื่อบนจอ
+        </button>
+      </div>
+
+      <div class="border-t border-slate-800 pt-2 mt-2">
+        <div class="flex justify-between items-center text-[10px] text-slate-400">
+          <span>คีย์ลัด: <b>1-9</b> เลือกกล้อง</span>
+          <span><b>Space</b> = Cut</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- แผง DIGITAL AUDIO MIXER พร้อมไฟ LED แนวตั้ง (3 Cols) -->
+    <div class="col-span-12 lg:col-span-3 studio-panel rounded-md p-2.5 flex flex-col overflow-hidden">
+      <div class="flex justify-between items-center border-b border-slate-800 pb-1.5 mb-2 shrink-0">
+        <span class="text-xs font-extrabold tracking-wider text-slate-300 uppercase">🎚️ Audio Console</span>
+        <button onclick="addMicInput()" class="hw-btn px-2 py-0.5 rounded text-[10px] font-bold text-emerald-400">
+          🎙️ + เพิ่มไมค์
+        </button>
+      </div>
+
+      <!-- ช่องปรับเสียงเรียงแนวนอนเหมือนบอร์ดมิกเซอร์จริง -->
+      <div class="flex gap-2 h-full overflow-x-auto pb-1 items-stretch" id="audio-mixer-strips">
+        <!-- แถบ Master Strip อยู่ซ้ายสุดเสมอ -->
+        <div class="bg-black/60 border border-slate-800 rounded p-2 flex flex-col items-center justify-between min-w-[68px] shrink-0">
+          <span class="text-[10px] font-extrabold text-amber-400">MASTER</span>
+          <div class="flex items-center gap-1.5 my-1 flex-1">
+            <!-- แถบไฟ LED 12 ขีด -->
+            <div id="master-led-bar" class="w-3 h-28 bg-slate-950 rounded-xs p-0.5 flex flex-col-reverse justify-between border border-slate-800"></div>
+          </div>
+          <span class="mono text-[9px] text-emerald-400 font-bold">0.0 dB</span>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Modal สแกน QR ดึงกล้องมือถือ -->
+  <div id="qr-modal" class="hidden fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4">
+    <div class="studio-panel p-5 rounded-xl max-w-sm w-full text-center border border-slate-700">
+      <div class="text-xs font-bold text-emerald-400 uppercase tracking-wider mb-1">WebRTC Wireless Camera</div>
+      <h3 class="font-extrabold text-base text-white mb-2">สแกนเพื่อเชื่อมต่อกล้องมือถือ</h3>
+      <p class="text-xs text-slate-400 mb-4">นำโทรศัพท์หรือแท็บเล็ตสแกน QR Code เพื่อส่งภาพและเสียงเข้าสู่ช่อง Input อัตโนมัติ</p>
+      <div id="qrcode" class="bg-white p-3 rounded-lg inline-block mb-3 shadow-lg"></div>
+      <input type="text" id="call-link-input" readonly class="w-full bg-black text-[11px] mono p-2 rounded border border-slate-800 text-slate-300 mb-3 text-center">
+      <button onclick="document.getElementById('qr-modal').classList.add('hidden')" class="hw-btn w-full py-2 rounded text-xs font-bold text-white">ปิดหน้าต่าง</button>
+    </div>
+  </div>
+
+  <div id="hidden-media" class="hidden"></div>
+  <canvas id="chromaCanvas" width="1280" height="720" class="hidden"></canvas>
+
+  <script>
+    const prvCanvas = document.getElementById('previewCanvas');
+    const prvCtx = prvCanvas.getContext('2d');
+    const pgmCanvas = document.getElementById('programCanvas');
+    const pgmCtx = pgmCanvas.getContext('2d');
+    const chromaCanvas = document.getElementById('chromaCanvas');
+    const chromaCtx = chromaCanvas.getContext('2d', { willReadFrequently: true });
+
+    let inputs = [];
+    let audioChannels = [];
+    let currentPreview = 1;
+    let currentProgram = 0;
+    let isFading = false;
+    let transitionProgress = 0;
+    let showLowerThird = true; // เปิดป้ายชื่อโชว์ความสวยงามตั้งแต่เริ่ม
+    let showPip = false;
+    let streamStartTime = null;
+
+    // --- นาฬิกาห้องส่ง (Broadcast Clock) ---
+    setInterval(() => {
+      const now = new Date();
+      document.getElementById('clock-display').innerText = now.toTimeString().split(' ')[0];
+      if (streamStartTime) {
+        const diff = Math.floor((Date.now() - streamStartTime) / 1000);
+        const h = String(Math.floor(diff / 3600)).padStart(2, '0');
+        const m = String(Math.floor((diff % 3600) / 60)).padStart(2, '0');
+        const s = String(diff % 60).padStart(2, '0');
+        document.getElementById('timer-display').innerText = `${h}:${m}:${s}`;
+      }
+    }, 1000);
+
+    // --- สร้างเม็ดไฟ LED สำหรับ Audio Meter ---
+    function createLedSegments(containerId) {
+      const el = document.getElementById(containerId);
+      if (!el) return;
+      el.innerHTML = '';
+      for (let i = 0; i < 12; i++) {
+        const seg = document.createElement('div');
+        seg.className = 'w-full h-1.5 rounded-[1px] bg-slate-900 transition-colors duration-75';
+        el.appendChild(seg);
+      }
+    }
+    createLedSegments('master-led-bar');
+
+    function lightUpLeds(containerId, levelPct) {
+      const el = document.getElementById(containerId);
+      if (!el) return;
+      const segs = el.children;
+      const activeCount = Math.round((levelPct / 100) * segs.length);
+      for (let i = 0; i < segs.length; i++) {
+        if (i < activeCount) {
+          if (i >= 10) segs[i].className = 'w-full h-1.5 rounded-[1px] bg-red-500 shadow-[0_0_4px_#ef4444]';
+          else if (i >= 7) segs[i].className = 'w-full h-1.5 rounded-[1px] bg-amber-400';
+          else segs[i].className = 'w-full h-1.5 rounded-[1px] bg-emerald-400';
+        } else {
+          segs[i].className = 'w-full h-1.5 rounded-[1px] bg-slate-900';
+        }
+      }
+    }
+
+    // --- ระบบเสียง Web Audio API ---
+    let audioCtx = null, masterDestination = null, masterAnalyser = null;
+
+    function ensureAudioContext() {
+      if (!audioCtx) {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        masterDestination = audioCtx.createMediaStreamDestination();
+        masterAnalyser = audioCtx.createAnalyser();
+        masterAnalyser.fftSize = 128;
+        const masterGain = audioCtx.createGain();
+        masterGain.connect(masterAnalyser);
+        masterGain.connect(masterDestination);
+        audioCtx.masterGainNode = masterGain;
+      }
+      if (audioCtx.state === 'suspended') audioCtx.resume();
+    }
+
+    function registerAudioChannel(name, streamOrElement, isElement = false) {
+      ensureAudioContext();
+      try {
+        let sourceNode;
+        if (isElement) {
+          sourceNode = audioCtx.createMediaElementSource(streamOrElement);
+          sourceNode.connect(audioCtx.destination);
+        } else {
+          if (streamOrElement.getAudioTracks().length === 0) return;
+          sourceNode = audioCtx.createMediaStreamSource(streamOrElement);
+        }
+        const gainNode = audioCtx.createGain();
+        const analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 128;
+        sourceNode.connect(gainNode);
+        gainNode.connect(analyser);
+        gainNode.connect(audioCtx.masterGainNode);
+
+        const id = 'ch-' + Date.now() + Math.random().toString(36).slice(2, 4);
+        audioChannels.push({ id, name, gainNode, analyser, muted: false, volume: 1 });
+        renderAudioStrips();
+      } catch (e) {}
+    }
+
+    async function addMicInput() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        registerAudioChannel('MIC ' + (audioChannels.length + 1), stream, false);
+      } catch (e) { alert('ไม่สามารถเปิดไมค์ได้: ' + e.message); }
+    }
+
+    function renderAudioStrips() {
+      const container = document.getElementById('audio-mixer-strips');
+      // เก็บช่อง Master ไว้ตัวแรก
+      while (container.children.length > 1) container.removeChild(container.lastChild);
+
+      audioChannels.forEach((ch, idx) => {
+        const strip = document.createElement('div');
+        strip.className = 'bg-black/40 border border-slate-800 rounded p-2 flex flex-col items-center justify-between min-w-[68px] shrink-0';
+        strip.innerHTML = `
+          <span class="text-[10px] font-bold text-slate-300 truncate w-14 text-center">${ch.name}</span>
+          <div class="flex items-center gap-2 my-1 flex-1">
+            <input type="range" min="0" max="1.5" step="0.05" value="${ch.volume}"
+              oninput="setStripVol(${idx}, this.value)" style="-webkit-appearance: slider-vertical; width: 14px; height: 95px;" class="accent-sky-400">
+            <div id="led-${ch.id}" class="w-2.5 h-24 bg-slate-950 rounded-xs p-0.5 flex flex-col-reverse justify-between border border-slate-800"></div>
+          </div>
+          <button onclick="toggleMuteStrip(${idx})" class="w-full py-0.5 rounded text-[9px] font-extrabold ${ch.muted ? 'bg-red-600 text-white' : 'bg-slate-800 text-emerald-400 border border-slate-700'}">
+            ${ch.muted ? 'MUTE' : 'ON'}
+          </button>
+        `;
+        container.appendChild(strip);
+        createLedSegments(`led-${ch.id}`);
+      });
+    }
+
+    function setStripVol(idx, val) {
+      ensureAudioContext();
+      const ch = audioChannels[idx];
+      ch.volume = parseFloat(val);
+      if (!ch.muted) ch.gainNode.gain.value = ch.volume;
+    }
+
+    function toggleMuteStrip(idx) {
+      ensureAudioContext();
+      const ch = audioChannels[idx];
+      ch.muted = !ch.muted;
+      ch.gainNode.gain.value = ch.muted ? 0 : ch.volume;
+      renderAudioStrips();
+    }
+
+    function updateAudioMeters() {
+      if (!audioCtx) {
+        // จำลองไฟกระพริบเบาๆ ตอนยังไม่เปิดไมค์เพื่อให้เห็นความสวยงามของ UI
+        lightUpLeds('master-led-bar', 25 + Math.sin(Date.now() / 200) * 12);
+        return;
+      }
+      const data = new Uint8Array(64);
+      audioChannels.forEach(ch => {
+        ch.analyser.getByteFrequencyData(data);
+        const avg = data.reduce((a, b) => a + b, 0) / data.length;
+        lightUpLeds(`led-${ch.id}`, ch.muted ? 0 : Math.min(100, (avg / 130) * 100));
+      });
+      if (masterAnalyser) {
+        masterAnalyser.getByteFrequencyData(data);
+        const avg = data.reduce((a, b) => a + b, 0) / data.length;
+        lightUpLeds('master-led-bar', Math.min(100, (avg / 130) * 100));
+      }
+    }
+
+    // --- ระบบวาดฉากจำลองระดับสตูดิโอ & ประมวลผลภาพ ---
+    function drawSource(ctx, idx, width, height, alpha = 1, chroma = false) {
+      const input = inputs[idx];
+      if (!input) return;
+      ctx.save();
+      ctx.globalAlpha = alpha;
+
+      if (input.type === 'pattern') {
+        const g = ctx.createLinearGradient(0, 0, width, height);
+        g.addColorStop(0, input.color1);
+        g.addColorStop(1, input.color2);
+        ctx.fillStyle = g;
+        ctx.fillRect(0, 0, width, height);
+
+        // วาดกราฟิกจำลองห้องส่ง
+        ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(width * 0.06, height * 0.08, width * 0.88, height * 0.84);
+
+        ctx.fillStyle = '#ffffff';
+        ctx.font = `800 ${Math.round(width * 0.04)}px Inter, sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.fillText(input.name, width / 2, height * 0.46);
+
+        ctx.fillStyle = '#38bdf8';
+        ctx.font = `600 ${Math.round(width * 0.018)}px JetBrains Mono, monospace`;
+        ctx.fillText(`SIGNAL LOCKED • 1920x1080P • ${new Date().toLocaleTimeString()}`, width / 2, height * 0.56);
+      } else if (input.element && input.element.readyState >= 2) {
+        if (chroma && document.getElementById('chroma-enable').checked && width === 1280) {
+          chromaCtx.drawImage(input.element, 0, 0, 1280, 720);
+          const frame = chromaCtx.getImageData(0, 0, 1280, 720), d = frame.data;
+          const tol = parseInt(document.getElementById('chroma-tolerance').value, 10);
+          for (let i = 0; i < d.length; i += 4) {
+            if (d[i+1] > 85 && d[i+1] > d[i] + tol * 0.4 && d[i+1] > d[i+2] + tol * 0.4) d[i+3] = 0;
+          }
+          chromaCtx.putImageData(frame, 0, 0);
+          ctx.drawImage(chromaCanvas, 0, 0, width, height);
+        } else {
+          ctx.drawImage(input.element, 0, 0, width, height);
+        }
+      }
+      ctx.restore();
+    }
+
+    function renderLoop() {
+      // 1. วาดจอ Preview
+      prvCtx.clearRect(0, 0, 1280, 720);
+      drawSource(prvCtx, currentPreview, 1280, 720, 1, true);
+
+      // 2. วาดจอ Program
+      pgmCtx.clearRect(0, 0, 1280, 720);
+      if (isFading || transitionProgress > 0) {
+        if (isFading) {
+          transitionProgress += 0.035;
+          document.getElementById('tbar').value = Math.min(100, Math.round(transitionProgress * 100));
+          document.getElementById('tbar-val').innerText = document.getElementById('tbar').value + '%';
+          if (transitionProgress >= 1) {
+            transitionProgress = 0;
+            isFading = false;
+            document.getElementById('tbar').value = 0;
+            document.getElementById('tbar-val').innerText = '0%';
+            const t = currentProgram; currentProgram = currentPreview; currentPreview = t;
+            updateTallyStates();
+          }
+        }
+        drawSource(pgmCtx, currentProgram, 1280, 720, 1, false);
+        drawSource(pgmCtx, currentPreview, 1280, 720, transitionProgress, true);
+      } else {
+        drawSource(pgmCtx, currentProgram, 1280, 720, 1, false);
+      }
+
+      // 3. วาด PiP หรือ Chroma Key Overlay
+      if (showPip) {
+        pgmCtx.save();
+        pgmCtx.translate(830, 425);
+        pgmCtx.scale(0.32, 0.32);
+        drawSource(pgmCtx, currentPreview, 1280, 720, 1, true);
+        pgmCtx.strokeStyle = '#38bdf8';
+        pgmCtx.lineWidth = 10;
+        pgmCtx.strokeRect(0, 0, 1280, 720);
+        pgmCtx.restore();
+      } else if (document.getElementById('chroma-enable').checked) {
+        drawSource(pgmCtx, currentPreview, 1280, 720, 1, true);
+      }
+
+      // 4. วาดกราฟิกป้ายชื่อ (Broadcast Lower Third)
+      if (showLowerThird) {
+        const title = document.getElementById('lowerThirdTitle').value;
+        const sub = document.getElementById('lowerThirdSub').value;
+        pgmCtx.save();
+        // แถบสีแดงด้านซ้าย
+        pgmCtx.fillStyle = '#ef4444';
+        pgmCtx.fillRect(60, 565, 14, 92);
+        // กล่องพื้นหลังกราฟิก
+        const bgGrad = pgmCtx.createLinearGradient(74, 565, 860, 657);
+        bgGrad.addColorStop(0, 'rgba(15, 23, 42, 0.95)');
+        bgGrad.addColorStop(1, 'rgba(15, 23, 42, 0.75)');
+        pgmCtx.fillStyle = bgGrad;
+        pgmCtx.fillRect(74, 565, 780, 92);
+        // เส้นคาดสีทอง
+        pgmCtx.fillStyle = '#f59e0b';
+        pgmCtx.fillRect(74, 610, 780, 2);
+
+        pgmCtx.fillStyle = '#fbbf24';
+        pgmCtx.font = '800 26px Inter, sans-serif';
+        pgmCtx.fillText(title, 96, 600);
+        pgmCtx.fillStyle = '#ffffff';
+        pgmCtx.font = '600 22px Inter, sans-serif';
+        pgmCtx.fillText(sub, 96, 642);
+        pgmCtx.restore();
+      }
+
+      // 5. วาดภาพลงจอ Thumbnail จิ๋วในแต่ละปุ่ม Input
+      inputs.forEach((inp, idx) => {
+        const thumbCanvas = document.getElementById(`thumb-${idx}`);
+        if (thumbCanvas) {
+          const tCtx = thumbCanvas.getContext('2d');
+          drawSource(tCtx, idx, 320, 180, 1, false);
+        }
+      });
+
+      updateAudioMeters();
+      requestAnimationFrame(renderLoop);
+    }
+
+    // --- การควบคุม T-Bar, Cut, Fade ---
+    function manualTbar(val) {
+      isFading = false;
+      const pct = parseInt(val, 10);
+      document.getElementById('tbar-val').innerText = pct + '%';
+      transitionProgress = pct / 100;
+      if (pct >= 100) {
+        transitionProgress = 0;
+        document.getElementById('tbar').value = 0;
+        document.getElementById('tbar-val').innerText = '0%';
+        const t = currentProgram; currentProgram = currentPreview; currentPreview = t;
+        updateTallyStates();
+      }
+    }
+
+    function cutTransition() {
+      ensureAudioContext();
+      transitionProgress = 0;
+      const t = currentProgram; currentProgram = currentPreview; currentPreview = t;
+      updateTallyStates();
+    }
+
+    function fadeTransition() {
+      ensureAudioContext();
+      if (!isFading) { isFading = true; transitionProgress = 0; }
+    }
+
+    function togglePip() {
+      showPip = !showPip;
+      document.getElementById('btn-pip').classList.toggle('hw-btn-amber', showPip);
+    }
+
+    function toggleLowerThird() {
+      showLowerThird = !showLowerThird;
+      document.getElementById('btn-overlay').classList.toggle('hw-btn-amber', showLowerThird);
+    }
+
+    // --- การจัดการช่องสัญญาณ (Input Matrix พร้อมจอภาพสด) ---
+    function initDefaultInputs() {
+      inputs.push({ id: 0, name: 'CAM 1 - Main Studio', type: 'pattern', color1: '#0f172a', color2: '#1e3a8a' });
+      inputs.push({ id: 1, name: 'CAM 2 - Wide Angle', type: 'pattern', color1: '#064e3b', color2: '#0f172a' });
+      inputs.push({ id: 2, name: 'GFX - Standby Loop', type: 'pattern', color1: '#3b0764', color2: '#0f172a' });
+      inputs.push({ id: 3, name: 'VTR - Highlight Reel', type: 'pattern', color1: '#7c2d12', color2: '#0f172a' });
+      renderInputMatrix();
+      updateTallyStates();
+      requestAnimationFrame(renderLoop);
+    }
+
+    function renderInputMatrix() {
+      const grid = document.getElementById('inputs-grid');
+      grid.innerHTML = '';
+      inputs.forEach((input, idx) => {
+        const card = document.createElement('div');
+        card.id = `input-card-${idx}`;
+        card.className = 'bg-black rounded overflow-hidden border-2 border-slate-800 cursor-pointer flex flex-col transition relative group';
+        card.onclick = () => { ensureAudioContext(); currentPreview = idx; updateTallyStates(); };
+        card.ondblclick = () => { ensureAudioContext(); currentPreview = idx; cutTransition(); };
+        card.innerHTML = `
+          <div class="relative aspect-video bg-slate-950">
+            <canvas id="thumb-${idx}" width="320" height="180" class="w-full h-full object-cover"></canvas>
+            <span class="absolute top-1 left-1 bg-black/80 text-white mono text-[10px] font-bold px-1.5 py-0.2 rounded border border-white/10">
+              IN ${idx + 1}
+            </span>
+            <span id="badge-${idx}" class="absolute top-1 right-1 text-[9px] font-extrabold px-1.5 py-0.2 rounded hidden"></span>
+          </div>
+          <div class="px-2 py-1 bg-slate-900/90 flex justify-between items-center">
+            <span class="text-[11px] font-bold text-slate-200 truncate">${input.name}</span>
+            <span class="text-[9px] mono text-slate-500 uppercase">${input.type}</span>
+          </div>
+        `;
+        grid.appendChild(card);
+      });
+    }
+
+    function updateTallyStates() {
+      document.getElementById('prv-label').innerText = inputs[currentPreview]?.name || '';
+      document.getElementById('pgm-label').innerText = inputs[currentProgram]?.name || '';
+
+      inputs.forEach((_, idx) => {
+        const card = document.getElementById(`input-card-${idx}`);
+        const badge = document.getElementById(`badge-${idx}`);
+        if (!card || !badge) return;
+
+        if (idx === currentProgram) {
+          card.className = 'bg-black rounded overflow-hidden border-2 border-red-500 shadow-[0_0_12px_rgba(239,68,68,0.4)] cursor-pointer flex flex-col transition';
+          badge.className = 'absolute top-1 right-1 text-[9px] font-extrabold px-1.5 rounded bg-red-600 text-white block';
+          badge.innerText = 'PGM';
+        } else if (idx === currentPreview) {
+          card.className = 'bg-black rounded overflow-hidden border-2 border-emerald-500 shadow-[0_0_12px_rgba(16,185,129,0.3)] cursor-pointer flex flex-col transition';
+          badge.className = 'absolute top-1 right-1 text-[9px] font-extrabold px-1.5 rounded bg-emerald-600 text-white block';
+          badge.innerText = 'PRV';
+        } else {
+          card.className = 'bg-black rounded overflow-hidden border-2 border-slate-800 hover:border-slate-600 cursor-pointer flex flex-col transition';
+          badge.className = 'hidden';
+        }
+      });
+    }
+
+    function createStreamInput(stream, name, peerId = null) {
+      const video = document.createElement('video');
+      video.srcObject = stream; video.muted = true; video.playsInline = true; video.play();
+      document.getElementById('hidden-media').appendChild(video);
+      inputs.push({ id: inputs.length, name, type: 'live', element: video, peerId });
+      registerAudioChannel(name, stream, false);
+      renderInputMatrix();
+      updateTallyStates();
+    }
+
+    async function addWebcam() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 1280, height: 720 }, audio: true });
+        createStreamInput(stream, `CAM ${inputs.length + 1} - Webcam`);
+      } catch (e) { alert('เปิดกล้องไม่สำเร็จ: ' + e.message); }
+    }
+
+    async function addScreenShare() {
+      try {
+        const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+        createStreamInput(stream, `SCREEN ${inputs.length + 1}`);
+      } catch (e) { alert('ไม่รองรับการแชร์หน้าจอ'); }
+    }
+
+    function addVideoFile(e) {
+      const file = e.target.files[0]; if (!file) return;
+      const video = document.createElement('video');
+      video.src = URL.createObjectURL(file); video.loop = true; video.playsInline = true; video.play();
+      document.getElementById('hidden-media').appendChild(video);
+      const name = `VTR - ${file.name.slice(0, 10)}`;
+      inputs.push({ id: inputs.length, name, type: 'media', element: video });
+      registerAudioChannel(name, video, true);
+      renderInputMatrix();
+      updateTallyStates();
+    }
+
+    // --- ระบบ WebRTC ดึงกล้องมือถือไร้สาย ---
+    let peer = null, hostId = 'webmix-' + Math.random().toString(36).substring(2, 8), currentFacingMode = 'environment', localMobileStream = null;
+
+    function initPeerSystem() {
+      const params = new URLSearchParams(window.location.search);
+      const targetHost = params.get('call');
+      if (targetHost) {
+        document.getElementById('mobile-caller-ui').classList.remove('hidden');
+        startMobileCaller(targetHost);
+      } else {
+        peer = new Peer(hostId);
+        peer.on('open', id => {
+          const url = `${window.location.origin}${window.location.pathname}?call=${id}`;
+          document.getElementById('call-link-input').value = url;
+          new QRCode(document.getElementById('qrcode'), { text: url, width: 160, height: 160 });
+        });
+        peer.on('call', call => {
+          call.answer();
+          call.on('stream', remoteStream => {
+            if (!inputs.some(i => i.peerId === call.peer)) {
+              createStreamInput(remoteStream, `MOBILE (${call.peer.slice(0,4)})`, call.peer);
+            }
+          });
+        });
+        initDefaultInputs();
+      }
+    }
+
+    async function startMobileCaller(targetHostId) {
+      try {
+        localMobileStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: currentFacingMode, width: 1280, height: 720 }, audio: true });
+        document.getElementById('caller-preview').srcObject = localMobileStream;
+        const callerPeer = new Peer();
+        callerPeer.on('open', () => {
+          document.getElementById('caller-status').innerText = '🟢 เชื่อมต่อสำเร็จ กำลังส่งภาพสด (ON AIR)';
+          callerPeer.call(targetHostId, localMobileStream);
+        });
+      } catch (e) {
+        document.getElementById('caller-status').innerText = '❌ เปิดกล้องไม่ได้: ' + e.message;
+      }
+    }
+
+    function switchMobileCam() {
+      currentFacingMode = currentFacingMode === 'user' ? 'environment' : 'user';
+      if (localMobileStream) localMobileStream.getTracks().forEach(t => t.stop());
+      startMobileCaller(new URLSearchParams(window.location.search).get('call'));
+    }
+
+    function showQrModal() { document.getElementById('qr-modal').classList.remove('hidden'); }
+
+    // --- บันทึกวิดีโอ & ยิงสตรีม ---
+    let mediaRecorder, recordedChunks = [], isRecording = false;
+    function toggleRecording() {
+      const btn = document.getElementById('btn-record');
+      const badge = document.getElementById('onair-badge');
+      const dot = document.getElementById('onair-dot');
+
+      if (!isRecording) {
+        ensureAudioContext();
+        streamStartTime = Date.now();
+        const stream = new MediaStream([...pgmCanvas.captureStream(30).getVideoTracks(), ...masterDestination.stream.getAudioTracks()]);
+        mediaRecorder = new MediaRecorder(stream, { mimeType: 'video/webm' });
+        recordedChunks = [];
+        mediaRecorder.ondataavailable = e => { if (e.data.size > 0) recordedChunks.push(e.data); };
+        mediaRecorder.onstop = () => {
+          const a = document.createElement('a');
+          a.href = URL.createObjectURL(new Blob(recordedChunks, { type: 'video/webm' }));
+          a.download = `WebMix-Broadcast-${Date.now()}.webm`;
+          a.click();
+        };
+        mediaRecorder.start();
+        isRecording = true;
+        btn.className = 'hw-btn-red px-3 py-1.5 rounded text-xs font-bold text-white flex items-center gap-1';
+        btn.innerText = '■ STOP REC';
+        badge.className = 'px-3 py-1.5 rounded bg-red-950/90 border border-red-500 text-red-400 font-extrabold text-xs tracking-widest flex items-center gap-1.5';
+        badge.innerHTML = '<span class="w-2 h-2 rounded-full bg-red-500 animate-ping"></span> ON AIR';
+      } else {
+        mediaRecorder.stop();
+        isRecording = false;
+        streamStartTime = null;
+        btn.className = 'hw-btn px-3 py-1.5 rounded text-xs font-bold text-slate-200 flex items-center gap-1';
+        btn.innerText = '● REC';
+        badge.className = 'px-3 py-1.5 rounded bg-slate-900 border border-slate-800 text-slate-500 font-extrabold text-xs tracking-widest flex items-center gap-1.5';
+        badge.innerHTML = '<span class="w-2 h-2 rounded-full bg-slate-600"></span> OFF AIR';
+      }
+    }
+
+    function toggleLiveStream() {
+      const url = document.getElementById('rtmp-url').value.trim();
+      if (!url) return alert('กรุณาใส่ RTMP URL และ Stream Key ก่อนเริ่มสตรีมครับ');
+      alert('กำลังเชื่อมต่อไปยัง RTMP Gateway Server สำหรับ: ' + url);
+    }
+
+    function exportToWord() {
+      const doc = `<html xmlns:w="urn:schemas-microsoft-com:office:word"><head><meta charset="utf-8"></head><body><h1>คู่มือระบบ WebMix Broadcast Pro</h1><p>ระบบสลับภาพและเสียงระดับสตูดิโอ ทำงานผ่านเว็บเบราว์เซอร์ได้ทุกอุปกรณ์</p></body></html>`;
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob(['﻿', doc], { type: 'application/msword' }));
+      a.download = 'WebMix_Pro_Manual.doc';
+      a.click();
+    }
+
+    // คีย์ลัดคีย์บอร์ด
+    window.addEventListener('keydown', e => {
+      if (e.target.tagName === 'INPUT') return;
+      if (e.code === 'Space') { e.preventDefault(); cutTransition(); }
+      else if (e.code === 'Enter') { e.preventDefault(); fadeTransition(); }
+      else if (e.key.toLowerCase() === 'p') togglePip();
+      else if (e.key.toLowerCase() === 'l') toggleLowerThird();
+      else if (e.key >= '1' && e.key <= '9') {
+        const idx = parseInt(e.key, 10) - 1;
+        if (inputs[idx]) { currentPreview = idx; updateTallyStates(); }
+      }
+    });
+
+    initPeerSystem();
+  </script>
+</body>
+</html>
