@@ -125,6 +125,7 @@
 
     <!-- ปุ่มบันทึกและสตรีม + ส่งออกไฟล์ -->
     <div class="flex items-center gap-1.5">
+      <input type="text" id="gateway-url" placeholder="wss://gateway.example.com:8080" title="Stream Gateway (WebSocket) — ดูวิธีติดตั้งใน README" class="bg-black/60 text-[11px] mono px-2.5 py-1.5 rounded border border-slate-800 w-40 text-slate-200 focus:outline-none focus:border-amber-500">
       <input type="text" id="rtmp-url" placeholder="rtmp://a.rtmp.youtube.com/live2/KEY" class="bg-black/60 text-[11px] mono px-2.5 py-1.5 rounded border border-slate-800 w-48 text-slate-200 focus:outline-none focus:border-amber-500">
       <button onclick="toggleLiveStream()" id="btn-stream" class="hw-btn px-3 py-1.5 rounded text-xs font-bold text-rose-400 flex items-center gap-1">
         📡 STREAM
@@ -311,6 +312,7 @@
       <div class="text-xs font-bold text-emerald-400 uppercase tracking-wider mb-1">WebRTC Wireless Camera</div>
       <h3 class="font-extrabold text-base text-white mb-2">สแกนเพื่อเชื่อมต่อกล้องมือถือ</h3>
       <p class="text-xs text-slate-400 mb-4">นำโทรศัพท์หรือแท็บเล็ตสแกน QR Code เพื่อส่งภาพและเสียงเข้าสู่ช่อง Input อัตโนมัติ</p>
+      <p id="qr-warning" class="hidden text-[11px] text-amber-300 bg-amber-950/60 border border-amber-700/60 rounded p-2 mb-3 text-left"></p>
       <div id="qrcode" class="bg-white p-3 rounded-lg inline-block mb-3 shadow-lg"></div>
       <input type="text" id="call-link-input" readonly class="w-full bg-black text-[11px] mono p-2 rounded border border-slate-800 text-slate-300 mb-3 text-center">
       <button onclick="document.getElementById('qr-modal').classList.add('hidden')" class="hw-btn w-full py-2 rounded text-xs font-bold text-white">ปิดหน้าต่าง</button>
@@ -416,9 +418,19 @@
         gainNode.connect(audioCtx.masterGainNode);
 
         const id = 'ch-' + Date.now() + Math.random().toString(36).slice(2, 4);
-        audioChannels.push({ id, name, gainNode, analyser, muted: false, volume: 1 });
+        audioChannels.push({ id, name, sourceNode, gainNode, analyser, muted: false, volume: 1 });
         renderAudioStrips();
       } catch (e) {}
+    }
+
+    // เปลี่ยนแหล่งเสียงของช่องเดิม (ใช้ตอนกล้องมือถือเชื่อมต่อกลับเข้ามาใหม่)
+    function replaceAudioSource(name, stream) {
+      const ch = audioChannels.find(c => c.name === name);
+      if (!ch) return registerAudioChannel(name, stream, false);
+      if (stream.getAudioTracks().length === 0) return;
+      try { ch.sourceNode.disconnect(); } catch (e) {}
+      ch.sourceNode = audioCtx.createMediaStreamSource(stream);
+      ch.sourceNode.connect(ch.gainNode);
     }
 
     async function addMicInput() {
@@ -656,6 +668,8 @@
       inputs.push({ id: 3, name: 'VTR - Highlight Reel', type: 'pattern', color1: '#7c2d12', color2: '#0f172a' });
       renderInputMatrix();
       updateTallyStates();
+      // ให้ไฟปุ่ม TITLE ตรงกับสถานะป้ายชื่อที่เปิดไว้ตั้งแต่เริ่ม
+      document.getElementById('btn-overlay').classList.toggle('hw-btn-amber', showLowerThird);
       requestAnimationFrame(renderLoop);
     }
 
@@ -711,7 +725,7 @@
 
     function createStreamInput(stream, name, peerId = null) {
       const video = document.createElement('video');
-      video.srcObject = stream; video.muted = true; video.playsInline = true; video.play();
+      video.srcObject = stream; video.muted = true; video.playsInline = true; video.play().catch(() => {});
       document.getElementById('hidden-media').appendChild(video);
       inputs.push({ id: inputs.length, name, type: 'live', element: video, peerId });
       registerAudioChannel(name, stream, false);
@@ -745,8 +759,21 @@
       updateTallyStates();
     }
 
+    // --- ตัวช่วยเก็บค่าตั้งค่าในเบราว์เซอร์ (ใช้ไม่ได้ในโหมดส่วนตัวก็ไม่พัง) ---
+    function loadSetting(key) { try { return localStorage.getItem(key); } catch (e) { return null; } }
+    function saveSetting(key, val) { try { localStorage.setItem(key, val); } catch (e) {} }
+
     // --- ระบบ WebRTC ดึงกล้องมือถือไร้สาย ---
-    let peer = null, hostId = 'webmix-' + Math.random().toString(36).substring(2, 8), currentFacingMode = 'environment', localMobileStream = null;
+    const randomHostId = () => 'webmix-' + Math.random().toString(36).substring(2, 8);
+    let peer = null, currentFacingMode = 'environment', localMobileStream = null;
+    let callerPeer = null, callerCall = null, callerTargetId = null, callerRetryTimer = null;
+
+    // ใช้ Host ID เดิมทุกครั้งที่เปิดหน้า เพื่อให้ QR / ลิงก์ไม่เปลี่ยนหลังรีเฟรช
+    function loadHostId() {
+      let id = loadSetting('webmix-host-id');
+      if (!id) { id = randomHostId(); saveSetting('webmix-host-id', id); }
+      return id;
+    }
 
     function initPeerSystem() {
       const params = new URLSearchParams(window.location.search);
@@ -755,87 +782,252 @@
         document.getElementById('mobile-caller-ui').classList.remove('hidden');
         startMobileCaller(targetHost);
       } else {
-        peer = new Peer(hostId);
-        peer.on('open', id => {
-          const url = `${window.location.origin}${window.location.pathname}?call=${id}`;
-          document.getElementById('call-link-input').value = url;
-          new QRCode(document.getElementById('qrcode'), { text: url, width: 160, height: 160 });
-        });
-        peer.on('call', call => {
-          call.answer();
-          call.on('stream', remoteStream => {
-            if (!inputs.some(i => i.peerId === call.peer)) {
-              createStreamInput(remoteStream, `MOBILE (${call.peer.slice(0,4)})`, call.peer);
-            }
-          });
-        });
         initDefaultInputs();
+        createHostPeer(loadHostId(), 0);
       }
+    }
+
+    function createHostPeer(id, attempt) {
+      if (typeof Peer === 'undefined') {
+        document.getElementById('call-link-input').value = 'โหลดไลบรารี PeerJS ไม่สำเร็จ — ตรวจสอบอินเทอร์เน็ต';
+        return;
+      }
+      peer = new Peer(id);
+      peer.on('open', openedId => {
+        const url = `${window.location.origin}${window.location.pathname}?call=${openedId}`;
+        document.getElementById('call-link-input').value = url;
+        const qrEl = document.getElementById('qrcode');
+        qrEl.innerHTML = '';
+        new QRCode(qrEl, { text: url, width: 160, height: 160 });
+      });
+      peer.on('error', err => {
+        if (err.type !== 'unavailable-id') return;
+        // หลังรีเฟรช เซิร์ฟเวอร์อาจยังจอง ID เดิมไว้สักครู่ — ลองใหม่ก่อน ถ้ายังไม่ได้ (เช่นเปิดซ้อน 2 แท็บ) ใช้ ID ชั่วคราว
+        peer.destroy();
+        if (attempt < 3) setTimeout(() => createHostPeer(id, attempt + 1), 2000);
+        else createHostPeer(randomHostId(), 99);
+      });
+      peer.on('call', call => {
+        call.answer();
+        call.on('stream', remoteStream => {
+          const existing = inputs.find(i => i.peerId === call.peer);
+          if (existing) {
+            // มือถือตัวเดิมเชื่อมต่อกลับมา: เปลี่ยนสัญญาณในช่องเดิมแทนการเพิ่มช่องใหม่
+            existing.element.srcObject = remoteStream;
+            existing.element.play().catch(() => {});
+            replaceAudioSource(existing.name, remoteStream);
+          } else {
+            createStreamInput(remoteStream, `MOBILE (${call.peer.slice(0,4)})`, call.peer);
+          }
+        });
+      });
+    }
+
+    function setCallerStatus(text) { document.getElementById('caller-status').innerText = text; }
+
+    function getCameraStream(withAudio) {
+      return navigator.mediaDevices.getUserMedia({
+        video: { facingMode: currentFacingMode, width: 1280, height: 720 },
+        audio: withAudio
+      });
     }
 
     async function startMobileCaller(targetHostId) {
+      callerTargetId = targetHostId;
+      if (!window.isSecureContext || !navigator.mediaDevices) {
+        setCallerStatus('❌ ต้องเปิดลิงก์นี้ผ่าน HTTPS เท่านั้น เบราว์เซอร์จึงจะอนุญาตให้ใช้กล้อง');
+        return;
+      }
       try {
-        localMobileStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: currentFacingMode, width: 1280, height: 720 }, audio: true });
+        localMobileStream = await getCameraStream(true);
         document.getElementById('caller-preview').srcObject = localMobileStream;
-        const callerPeer = new Peer();
-        callerPeer.on('open', () => {
-          document.getElementById('caller-status').innerText = '🟢 เชื่อมต่อสำเร็จ กำลังส่งภาพสด (ON AIR)';
-          callerPeer.call(targetHostId, localMobileStream);
+        if (typeof Peer === 'undefined') throw new Error('โหลดไลบรารี PeerJS ไม่สำเร็จ');
+        callerPeer = new Peer();
+        callerPeer.on('open', placeCall);
+        callerPeer.on('error', err => {
+          // สตูดิโอยังไม่ออนไลน์ (เช่นกำลังรีเฟรช) → รอแล้วโทรใหม่
+          if (err.type === 'peer-unavailable') scheduleRecall();
+          else setCallerStatus('❌ การเชื่อมต่อมีปัญหา: ' + err.type);
         });
+        callerPeer.on('disconnected', () => { if (!callerPeer.destroyed) callerPeer.reconnect(); });
       } catch (e) {
-        document.getElementById('caller-status').innerText = '❌ เปิดกล้องไม่ได้: ' + e.message;
+        setCallerStatus('❌ เปิดกล้องไม่ได้: ' + e.message);
       }
     }
 
-    function switchMobileCam() {
-      currentFacingMode = currentFacingMode === 'user' ? 'environment' : 'user';
-      if (localMobileStream) localMobileStream.getTracks().forEach(t => t.stop());
-      startMobileCaller(new URLSearchParams(window.location.search).get('call'));
+    function placeCall() {
+      clearTimeout(callerRetryTimer);
+      setCallerStatus('⏳ กำลังเชื่อมต่อสตูดิโอ...');
+      const call = callerPeer.call(callerTargetId, localMobileStream);
+      callerCall = call;
+      call.on('stream', () => {});
+      call.peerConnection?.addEventListener('connectionstatechange', () => {
+        const st = call.peerConnection.connectionState;
+        if (st === 'connected') setCallerStatus('🟢 เชื่อมต่อสำเร็จ กำลังส่งภาพสด (ON AIR)');
+        else if (st === 'failed') call.close();
+      });
+      call.on('close', () => { if (callerCall === call) scheduleRecall(); });
     }
 
-    function showQrModal() { document.getElementById('qr-modal').classList.remove('hidden'); }
+    function scheduleRecall() {
+      setCallerStatus('🟡 ขาดการเชื่อมต่อกับสตูดิโอ กำลังลองใหม่...');
+      clearTimeout(callerRetryTimer);
+      callerRetryTimer = setTimeout(() => { if (callerPeer && callerPeer.open) placeCall(); }, 3000);
+    }
+
+    // สลับกล้องหน้า/หลังโดยเปลี่ยนแทร็กในสายเดิม (replaceTrack) ช่อง Input ที่สตูดิโอจึงไม่เพิ่มขึ้น
+    async function switchMobileCam() {
+      if (!localMobileStream) return;
+      const prevFacing = currentFacingMode;
+      currentFacingMode = currentFacingMode === 'user' ? 'environment' : 'user';
+      const oldTrack = localMobileStream.getVideoTracks()[0];
+      const sender = callerCall?.peerConnection?.getSenders().find(s => s.track && s.track.kind === 'video');
+      // มือถือหลายรุ่นเปิดกล้องสองตัวพร้อมกันไม่ได้ ต้องปิดตัวเดิมก่อน
+      if (oldTrack) { oldTrack.stop(); localMobileStream.removeTrack(oldTrack); }
+      let newTrack;
+      try {
+        newTrack = (await getCameraStream(false)).getVideoTracks()[0];
+      } catch (e) {
+        currentFacingMode = prevFacing;
+        try { newTrack = (await getCameraStream(false)).getVideoTracks()[0]; }
+        catch (e2) { setCallerStatus('❌ สลับกล้องไม่ได้: ' + e.message); return; }
+      }
+      localMobileStream.addTrack(newTrack);
+      document.getElementById('caller-preview').srcObject = localMobileStream;
+      if (sender) await sender.replaceTrack(newTrack);
+    }
+
+    function showQrModal() {
+      const warn = document.getElementById('qr-warning');
+      let msg = '';
+      if (location.protocol === 'file:') {
+        msg = '⚠️ ตอนนี้เปิดจากไฟล์ในเครื่อง (file://) มือถือจะเปิดลิงก์นี้ไม่ได้ ให้เปิดหน้านี้ผ่าน GitHub Pages หรือเว็บเซิร์ฟเวอร์ HTTPS ก่อน';
+      } else if (!window.isSecureContext || location.protocol !== 'https:') {
+        msg = '⚠️ หน้านี้ไม่ได้เปิดผ่าน HTTPS มือถือจะไม่ยอมให้ใช้กล้อง ให้เปิดผ่าน GitHub Pages หรือเว็บเซิร์ฟเวอร์ HTTPS';
+      }
+      warn.innerText = msg;
+      warn.classList.toggle('hidden', !msg);
+      document.getElementById('qr-modal').classList.remove('hidden');
+    }
 
     // --- บันทึกวิดีโอ & ยิงสตรีม ---
+    // เลือกฟอร์แมตที่เบราว์เซอร์รองรับจริง (Chrome/Firefox = WebM, Safari = MP4)
+    function pickRecorderMime() {
+      if (!window.MediaRecorder) return null;
+      const candidates = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm', 'video/mp4;codecs=avc1,mp4a.40.2', 'video/mp4'];
+      return candidates.find(t => MediaRecorder.isTypeSupported(t)) || '';
+    }
+
+    function createProgramRecorder(options = {}) {
+      ensureAudioContext();
+      const mime = pickRecorderMime();
+      if (mime === null) throw new Error('เบราว์เซอร์นี้ไม่รองรับ MediaRecorder');
+      const stream = new MediaStream([...pgmCanvas.captureStream(30).getVideoTracks(), ...masterDestination.stream.getAudioTracks()]);
+      return new MediaRecorder(stream, mime ? { ...options, mimeType: mime } : options);
+    }
+
+    function updateOnAirState() {
+      const badge = document.getElementById('onair-badge');
+      const live = isRecording || isStreaming;
+      if (live && !streamStartTime) streamStartTime = Date.now();
+      if (!live) {
+        streamStartTime = null;
+        document.getElementById('timer-display').innerText = '00:00:00';
+        badge.className = 'px-3 py-1.5 rounded bg-slate-900 border border-slate-800 text-slate-500 font-extrabold text-xs tracking-widest flex items-center gap-1.5';
+        badge.innerHTML = '<span class="w-2 h-2 rounded-full bg-slate-600"></span> OFF AIR';
+      } else {
+        badge.className = 'px-3 py-1.5 rounded bg-red-950/90 border border-red-500 text-red-400 font-extrabold text-xs tracking-widest flex items-center gap-1.5';
+        badge.innerHTML = '<span class="w-2 h-2 rounded-full bg-red-500 animate-ping"></span> ON AIR';
+      }
+    }
+
     let mediaRecorder, recordedChunks = [], isRecording = false;
     function toggleRecording() {
       const btn = document.getElementById('btn-record');
-      const badge = document.getElementById('onair-badge');
-      const dot = document.getElementById('onair-dot');
 
       if (!isRecording) {
-        ensureAudioContext();
-        streamStartTime = Date.now();
-        const stream = new MediaStream([...pgmCanvas.captureStream(30).getVideoTracks(), ...masterDestination.stream.getAudioTracks()]);
-        mediaRecorder = new MediaRecorder(stream, { mimeType: 'video/webm' });
+        try { mediaRecorder = createProgramRecorder(); }
+        catch (e) { return alert('เริ่มบันทึกไม่ได้: ' + e.message); }
         recordedChunks = [];
         mediaRecorder.ondataavailable = e => { if (e.data.size > 0) recordedChunks.push(e.data); };
         mediaRecorder.onstop = () => {
+          const type = mediaRecorder.mimeType || 'video/webm';
+          const ext = type.includes('mp4') ? 'mp4' : 'webm';
           const a = document.createElement('a');
-          a.href = URL.createObjectURL(new Blob(recordedChunks, { type: 'video/webm' }));
-          a.download = `WebMix-Broadcast-${Date.now()}.webm`;
+          a.href = URL.createObjectURL(new Blob(recordedChunks, { type }));
+          a.download = `WebMix-Broadcast-${Date.now()}.${ext}`;
           a.click();
         };
-        mediaRecorder.start();
+        mediaRecorder.start(1000);
         isRecording = true;
         btn.className = 'hw-btn-red px-3 py-1.5 rounded text-xs font-bold text-white flex items-center gap-1';
         btn.innerText = '■ STOP REC';
-        badge.className = 'px-3 py-1.5 rounded bg-red-950/90 border border-red-500 text-red-400 font-extrabold text-xs tracking-widest flex items-center gap-1.5';
-        badge.innerHTML = '<span class="w-2 h-2 rounded-full bg-red-500 animate-ping"></span> ON AIR';
       } else {
         mediaRecorder.stop();
         isRecording = false;
-        streamStartTime = null;
         btn.className = 'hw-btn px-3 py-1.5 rounded text-xs font-bold text-slate-200 flex items-center gap-1';
         btn.innerText = '● REC';
-        badge.className = 'px-3 py-1.5 rounded bg-slate-900 border border-slate-800 text-slate-500 font-extrabold text-xs tracking-widest flex items-center gap-1.5';
-        badge.innerHTML = '<span class="w-2 h-2 rounded-full bg-slate-600"></span> OFF AIR';
+      }
+      updateOnAirState();
+    }
+
+    // สตรีมสด: ส่งภาพ Program เป็นก้อนวิดีโอผ่าน WebSocket ไปที่ Stream Gateway (server/stream-gateway.js)
+    // แล้ว Gateway ใช้ FFmpeg แปลงเป็น RTMP ส่งต่อไป YouTube / Facebook ฯลฯ
+    let streamSocket = null, streamRecorder = null, isStreaming = false;
+
+    function setStreamButton(state) {
+      const btn = document.getElementById('btn-stream');
+      if (state === 'live') {
+        btn.className = 'hw-btn-red px-3 py-1.5 rounded text-xs font-bold text-white flex items-center gap-1';
+        btn.innerText = '■ STOP STREAM';
+      } else if (state === 'connecting') {
+        btn.className = 'hw-btn-amber px-3 py-1.5 rounded text-xs font-bold text-white flex items-center gap-1';
+        btn.innerText = '⏳ CONNECTING';
+      } else {
+        btn.className = 'hw-btn px-3 py-1.5 rounded text-xs font-bold text-rose-400 flex items-center gap-1';
+        btn.innerText = '📡 STREAM';
       }
     }
 
     function toggleLiveStream() {
-      const url = document.getElementById('rtmp-url').value.trim();
-      if (!url) return alert('กรุณาใส่ RTMP URL และ Stream Key ก่อนเริ่มสตรีมครับ');
-      alert('กำลังเชื่อมต่อไปยัง RTMP Gateway Server สำหรับ: ' + url);
+      if (streamSocket) { streamSocket.close(1000, 'stopped by user'); return; }
+
+      const rtmp = document.getElementById('rtmp-url').value.trim();
+      const gateway = document.getElementById('gateway-url').value.trim();
+      if (!rtmp) return alert('กรุณาใส่ RTMP URL และ Stream Key ก่อนเริ่มสตรีมครับ');
+      if (!/^rtmps?:\/\//i.test(rtmp)) return alert('RTMP URL ต้องขึ้นต้นด้วย rtmp:// หรือ rtmps://');
+      if (!/^wss?:\/\//i.test(gateway)) return alert('กรุณาใส่ Stream Gateway URL (ws:// หรือ wss://)\nวิธีติดตั้ง Gateway ดูได้ใน README ของโปรเจกต์');
+      if (location.protocol === 'https:' && gateway.toLowerCase().startsWith('ws://')) {
+        return alert('หน้านี้เปิดผ่าน HTTPS จึงต้องใช้ Gateway แบบ wss:// (เบราว์เซอร์บล็อก ws:// บนหน้า HTTPS)');
+      }
+      saveSetting('webmix-gateway-url', gateway);
+
+      let recorder;
+      try { recorder = createProgramRecorder({ videoBitsPerSecond: 4500000, audioBitsPerSecond: 128000 }); }
+      catch (e) { return alert('เริ่มสตรีมไม่ได้: ' + e.message); }
+
+      const ws = new WebSocket(`${gateway}${gateway.includes('?') ? '&' : '?'}rtmp=${encodeURIComponent(rtmp)}`);
+      streamSocket = ws;
+      setStreamButton('connecting');
+
+      ws.onopen = () => {
+        streamRecorder = recorder;
+        recorder.ondataavailable = e => { if (e.data.size > 0 && ws.readyState === WebSocket.OPEN) ws.send(e.data); };
+        recorder.start(1000);
+        isStreaming = true;
+        setStreamButton('live');
+        updateOnAirState();
+      };
+      ws.onclose = ev => {
+        const stoppedByUser = ev.code === 1000;
+        if (streamRecorder && streamRecorder.state !== 'inactive') streamRecorder.stop();
+        streamRecorder = null;
+        streamSocket = null;
+        isStreaming = false;
+        setStreamButton('idle');
+        updateOnAirState();
+        if (!stoppedByUser) alert('การสตรีมหยุดลง: ' + (ev.reason || 'เชื่อมต่อ Stream Gateway ไม่ได้'));
+      };
     }
 
     function exportToWord() {
@@ -859,6 +1051,7 @@
       }
     });
 
+    document.getElementById('gateway-url').value = loadSetting('webmix-gateway-url') || '';
     initPeerSystem();
   </script>
 </body>
