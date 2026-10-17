@@ -2,7 +2,10 @@
 <html lang="th">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#07090e">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
   <title>WebMix Broadcast Pro — Studio Switcher</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
@@ -19,7 +22,18 @@
       color: #e2e8f0;
       font-family: 'Inter', sans-serif;
       user-select: none;
-      overflow: hidden;
+      -webkit-user-select: none;
+      -webkit-tap-highlight-color: transparent;
+      touch-action: manipulation; /* ปิดการซูมเมื่อแตะสองครั้ง เพื่อให้ double-tap ใช้ตัดภาพได้ */
+    }
+    /* จอใหญ่: ล็อกทั้งหน้าไว้ในจอเดียวแบบคอนโซล | มือถือ/แท็บเล็ต: เลื่อนหน้าได้ตามปกติ */
+    @media (min-width: 1024px) {
+      body { overflow: hidden; }
+    }
+    @media (max-width: 1023px) {
+      body { padding-left: max(0.5rem, env(safe-area-inset-left)); padding-right: max(0.5rem, env(safe-area-inset-right)); padding-bottom: max(0.5rem, env(safe-area-inset-bottom)); }
+      /* iOS จะซูมหน้าเองถ้าช่องกรอกตัวอักษรเล็กกว่า 16px */
+      input[type="text"] { font-size: 16px; }
     }
     .mono { font-family: 'JetBrains Mono', monospace; }
     .studio-panel {
@@ -64,10 +78,15 @@
     .tally-pgm { border: 2px solid #ef4444; box-shadow: 0 0 25px rgba(239, 68, 68, 0.25); }
 
     /* T-Bar Slider แนวตั้ง */
-    .tbar-slider {
+    .v-slider {
+      writing-mode: vertical-lr;
+      direction: rtl;
       -webkit-appearance: slider-vertical;
+    }
+    .tbar-slider {
       width: 28px;
       height: 110px;
+      touch-action: none;
       background: #090c12;
       accent-color: #f59e0b;
       cursor: ns-resize;
@@ -77,25 +96,25 @@
     ::-webkit-scrollbar-thumb { background: #2a3246; border-radius: 3px; }
   </style>
 </head>
-<body class="h-screen flex flex-col p-2 gap-2">
+<body class="min-h-[100dvh] lg:h-screen flex flex-col p-2 gap-2">
 
   <!-- โหมดกล้องมือถือไร้สาย (แสดงเมื่อสแกน QR เข้ามา) -->
   <div id="mobile-caller-ui" class="hidden fixed inset-0 bg-black z-50 flex flex-col items-center justify-center p-4">
     <div class="text-xs font-bold px-2 py-0.5 bg-red-600 rounded mb-2 animate-pulse">LIVE WIRELESS CAMERA</div>
     <h2 class="text-lg font-bold text-white mb-1">WebMix Pro Camera</h2>
     <p id="caller-status" class="text-xs text-slate-400 mb-3">กำลังส่งสัญญาณเข้าสตูดิโอ...</p>
-    <video id="caller-preview" autoplay muted playsinline class="w-full max-w-md rounded border-2 border-emerald-500 mb-4 bg-slate-950"></video>
-    <button onclick="switchMobileCam()" class="hw-btn px-5 py-2.5 rounded text-xs font-bold">🔄 สลับกล้อง หน้า / หลัง</button>
+    <video id="caller-preview" autoplay muted playsinline class="w-full max-w-md max-h-[65dvh] object-contain rounded border-2 border-emerald-500 mb-4 bg-slate-950"></video>
+    <button onclick="switchMobileCam()" class="hw-btn px-6 py-3.5 rounded text-sm font-bold">🔄 สลับกล้อง หน้า / หลัง</button>
   </div>
 
   <!-- 1. TOP BROADCAST BAR (แถบสถานะห้องส่งด้านบน) -->
-  <header class="studio-panel rounded-md px-3 py-1.5 flex flex-wrap justify-between items-center shrink-0">
+  <header class="studio-panel rounded-md px-3 py-1.5 flex flex-wrap justify-between items-center gap-y-2 gap-x-3 lg:gap-x-0 shrink-0">
     <!-- โลโก้ & สถานะระบบ -->
     <div class="flex items-center gap-4">
       <div class="flex items-center gap-2">
         <div class="w-3 h-3 rounded-sm bg-gradient-to-br from-amber-400 to-red-600 shadow"></div>
         <span class="font-extrabold tracking-wider text-sm text-white">WEBMIX <span class="text-amber-400">PRO HD</span></span>
-        <span class="text-[10px] mono bg-slate-800 text-slate-300 px-1.5 py-0.5 rounded border border-slate-700">1080p / 60fps Engine</span>
+        <span class="hidden sm:inline text-[10px] mono bg-slate-800 text-slate-300 px-1.5 py-0.5 rounded border border-slate-700">1080p / 60fps Engine</span>
       </div>
       <div class="hidden xl:flex items-center gap-3 text-[11px] text-slate-400 border-l border-slate-800 pl-4">
         <span>CPU: <b class="text-emerald-400 mono">12%</b></span>
@@ -124,9 +143,9 @@
     </div>
 
     <!-- ปุ่มบันทึกและสตรีม + ส่งออกไฟล์ -->
-    <div class="flex items-center gap-1.5">
-      <input type="text" id="gateway-url" placeholder="wss://gateway.example.com:8080" title="Stream Gateway (WebSocket) — ดูวิธีติดตั้งใน README" class="bg-black/60 text-[11px] mono px-2.5 py-1.5 rounded border border-slate-800 w-40 text-slate-200 focus:outline-none focus:border-amber-500">
-      <input type="text" id="rtmp-url" placeholder="rtmp://a.rtmp.youtube.com/live2/KEY" class="bg-black/60 text-[11px] mono px-2.5 py-1.5 rounded border border-slate-800 w-48 text-slate-200 focus:outline-none focus:border-amber-500">
+    <div class="flex flex-wrap items-center gap-1.5 w-full lg:w-auto">
+      <input type="text" id="gateway-url" placeholder="wss://gateway.example.com:8080" title="Stream Gateway (WebSocket) — ดูวิธีติดตั้งใน README" class="bg-black/60 text-[11px] mono px-2.5 py-1.5 rounded border border-slate-800 flex-1 min-w-[140px] lg:flex-none lg:w-40 text-slate-200 focus:outline-none focus:border-amber-500">
+      <input type="text" id="rtmp-url" placeholder="rtmp://a.rtmp.youtube.com/live2/KEY" class="bg-black/60 text-[11px] mono px-2.5 py-1.5 rounded border border-slate-800 flex-1 min-w-[140px] lg:flex-none lg:w-48 text-slate-200 focus:outline-none focus:border-amber-500">
       <button onclick="toggleLiveStream()" id="btn-stream" class="hw-btn px-3 py-1.5 rounded text-xs font-bold text-rose-400 flex items-center gap-1">
         📡 STREAM
       </button>
@@ -142,49 +161,49 @@
   <!-- 2. UPPER WORKSPACE: PREVIEW + SWITCHER DECK + PROGRAM -->
   <div class="grid grid-cols-12 gap-2 shrink-0">
 
-    <!-- จอ PREVIEW (5 Cols) -->
-    <div class="col-span-12 lg:col-span-5 studio-panel rounded-md p-2 flex flex-col">
+    <!-- จอ PREVIEW (5 Cols | มือถือ: ครึ่งจอซ้าย) -->
+    <div class="col-span-6 lg:col-span-5 order-1 studio-panel rounded-md p-2 flex flex-col">
       <div class="flex justify-between items-center mb-1.5 px-1">
-        <div class="flex items-center gap-2">
-          <span class="w-2.5 h-2.5 rounded-xs bg-emerald-500 shadow-[0_0_8px_#10b981]"></span>
+        <div class="flex items-center gap-2 min-w-0">
+          <span class="shrink-0 w-2.5 h-2.5 rounded-xs bg-emerald-500 shadow-[0_0_8px_#10b981]"></span>
           <span class="text-xs font-extrabold tracking-wider text-emerald-400">PREVIEW</span>
-          <span id="prv-label" class="text-xs font-semibold text-white bg-slate-800/90 px-2 py-0.5 rounded">CAM 2 - Standby</span>
+          <span id="prv-label" class="hidden sm:inline truncate min-w-0 text-xs font-semibold text-white bg-slate-800/90 px-2 py-0.5 rounded">CAM 2 - Standby</span>
         </div>
-        <span class="mono text-[10px] text-slate-400">NEXT SOURCE</span>
+        <span class="hidden xl:inline shrink-0 mono text-[10px] text-slate-400">NEXT SOURCE</span>
       </div>
       <div class="monitor-frame tally-prv">
         <canvas id="previewCanvas" width="1280" height="720" class="w-full h-full object-contain"></canvas>
         <!-- เส้น Safe Area & Crosshair แบบกล้องโปร -->
-        <div id="safe-grid" class="absolute inset-4 border border-white/15 pointer-events-none flex items-center justify-center">
+        <div id="safe-grid" class="absolute inset-[6%] border border-white/15 pointer-events-none flex items-center justify-center">
           <div class="w-4 h-[1px] bg-white/20"></div>
           <div class="h-4 w-[1px] bg-white/20 absolute"></div>
         </div>
       </div>
     </div>
 
-    <!-- แผงควบคุมการสลับภาพกลาง (CENTER SWITCHER DECK - 2 Cols) -->
-    <div class="col-span-12 lg:col-span-2 studio-panel rounded-md p-2.5 flex flex-col justify-between">
+    <!-- แผงควบคุมการสลับภาพกลาง (CENTER SWITCHER DECK - 2 Cols | มือถือ: เต็มแถวใต้จอ) -->
+    <div class="col-span-12 lg:col-span-2 order-3 lg:order-2 studio-panel rounded-md p-2.5 flex flex-col justify-between">
       <div class="text-center border-b border-slate-800 pb-1.5">
         <span class="text-[10px] font-bold tracking-widest text-slate-400 uppercase">Transition Deck</span>
       </div>
 
       <!-- ปุ่ม CUT / AUTO FADE + คันโยก T-BAR -->
       <div class="flex items-center justify-around my-1 py-2 bg-black/40 rounded border border-slate-800/80">
-        <div class="flex flex-col gap-2 w-24">
-          <button onclick="cutTransition()" class="hw-btn-red py-3 rounded font-extrabold text-xs tracking-wider text-white">
+        <div class="flex flex-row lg:flex-col gap-2 flex-1 lg:flex-none lg:w-24 px-2 lg:px-0">
+          <button onclick="cutTransition()" class="hw-btn-red flex-1 py-5 lg:py-3 rounded font-extrabold text-xs tracking-wider text-white">
             CUT
-            <span class="block text-[9px] font-normal opacity-80 mono">[SPACE]</span>
+            <span class="hidden lg:block text-[9px] font-normal opacity-80 mono">[SPACE]</span>
           </button>
-          <button onclick="fadeTransition()" class="hw-btn-amber py-3 rounded font-extrabold text-xs tracking-wider text-white">
+          <button onclick="fadeTransition()" class="hw-btn-amber flex-1 py-5 lg:py-3 rounded font-extrabold text-xs tracking-wider text-white">
             AUTO FADE
-            <span class="block text-[9px] font-normal opacity-80 mono">[ENTER]</span>
+            <span class="hidden lg:block text-[9px] font-normal opacity-80 mono">[ENTER]</span>
           </button>
         </div>
 
         <!-- T-Bar Manual Fader -->
         <div class="flex flex-col items-center">
           <span class="text-[9px] mono text-slate-400 mb-1">T-BAR</span>
-          <input type="range" id="tbar" min="0" max="100" value="0" oninput="manualTbar(this.value)" class="tbar-slider">
+          <input type="range" id="tbar" min="0" max="100" value="0" oninput="manualTbar(this.value)" class="tbar-slider v-slider">
           <span id="tbar-val" class="text-[10px] mono text-amber-400 mt-1">0%</span>
         </div>
       </div>
@@ -192,10 +211,10 @@
       <!-- ปุ่ม DSK Overlays (PiP / ป้ายชื่อ / ฉากเขียว) -->
       <div class="flex flex-col gap-1.5">
         <div class="grid grid-cols-2 gap-1.5">
-          <button onclick="togglePip()" id="btn-pip" class="hw-btn py-1.5 rounded text-[11px] font-bold text-slate-200">
+          <button onclick="togglePip()" id="btn-pip" class="hw-btn py-2.5 lg:py-1.5 rounded text-[11px] font-bold text-slate-200">
             🖼️ PiP [P]
           </button>
-          <button onclick="toggleLowerThird()" id="btn-overlay" class="hw-btn py-1.5 rounded text-[11px] font-bold text-slate-200">
+          <button onclick="toggleLowerThird()" id="btn-overlay" class="hw-btn py-2.5 lg:py-1.5 rounded text-[11px] font-bold text-slate-200">
             🔤 TITLE [L]
           </button>
         </div>
@@ -207,20 +226,20 @@
             </label>
             <span class="text-[9px] mono text-slate-400">GREEN</span>
           </div>
-          <input type="range" id="chroma-tolerance" min="20" max="180" value="90" class="w-full h-1.5 accent-emerald-500">
+          <input type="range" id="chroma-tolerance" min="20" max="180" value="90" class="w-full h-1.5 accent-emerald-500 py-2 lg:py-0">
         </div>
       </div>
     </div>
 
-    <!-- จอ PROGRAM (5 Cols) -->
-    <div class="col-span-12 lg:col-span-5 studio-panel rounded-md p-2 flex flex-col">
+    <!-- จอ PROGRAM (5 Cols | มือถือ: ครึ่งจอขวา) -->
+    <div class="col-span-6 lg:col-span-5 order-2 lg:order-3 studio-panel rounded-md p-2 flex flex-col">
       <div class="flex justify-between items-center mb-1.5 px-1">
-        <div class="flex items-center gap-2">
-          <span class="w-2.5 h-2.5 rounded-xs bg-red-500 shadow-[0_0_8px_#ef4444] animate-pulse"></span>
+        <div class="flex items-center gap-2 min-w-0">
+          <span class="shrink-0 w-2.5 h-2.5 rounded-xs bg-red-500 shadow-[0_0_8px_#ef4444] animate-pulse"></span>
           <span class="text-xs font-extrabold tracking-wider text-red-500">PROGRAM</span>
-          <span id="pgm-label" class="text-xs font-semibold text-white bg-red-950/80 border border-red-800/60 px-2 py-0.5 rounded">CAM 1 - Main Studio</span>
+          <span id="pgm-label" class="hidden sm:inline truncate min-w-0 text-xs font-semibold text-white bg-red-950/80 border border-red-800/60 px-2 py-0.5 rounded">CAM 1 - Main Studio</span>
         </div>
-        <span class="mono text-[10px] text-red-400 font-bold">MASTER OUTPUT</span>
+        <span class="hidden xl:inline shrink-0 mono text-[10px] text-red-400 font-bold">MASTER OUTPUT</span>
       </div>
       <div class="monitor-frame tally-pgm">
         <canvas id="programCanvas" width="1280" height="720" class="w-full h-full object-contain"></canvas>
@@ -230,14 +249,14 @@
   </div>
 
   <!-- 3. LOWER WORKSPACE: MULTI-VIEW INPUT MATRIX + GRAPHICS + PRO AUDIO MIXER -->
-  <div class="flex-1 grid grid-cols-12 gap-2 overflow-hidden min-h-[210px]">
+  <div class="flex-1 grid grid-cols-12 gap-2 lg:overflow-hidden lg:min-h-[210px]">
 
     <!-- แผง MULTI-VIEW INPUTS พร้อมจอพรีวิวสดในปุ่ม (7 Cols) -->
-    <div class="col-span-12 lg:col-span-7 studio-panel rounded-md p-2.5 flex flex-col overflow-hidden">
+    <div class="col-span-12 lg:col-span-7 studio-panel rounded-md p-2.5 flex flex-col lg:overflow-hidden">
       <div class="flex flex-wrap justify-between items-center mb-2 gap-1.5 shrink-0 border-b border-slate-800 pb-2">
         <div class="flex items-center gap-2">
           <span class="text-xs font-extrabold tracking-wider text-slate-300 uppercase">🎬 Input Matrix</span>
-          <span class="text-[10px] text-slate-500">(คลิกซ้าย = ส่งเข้า Preview | ดับเบิลคลิก = ตัดเข้า Program ทันที)</span>
+          <span class="text-[10px] text-slate-500">(แตะ/คลิก = ส่งเข้า Preview | แตะสองครั้ง = ตัดเข้า Program ทันที)</span>
         </div>
         <div class="flex flex-wrap gap-1.5">
           <button onclick="showQrModal()" class="hw-btn-green px-2.5 py-1 rounded text-[11px] font-bold text-white flex items-center gap-1 shadow">
@@ -253,11 +272,11 @@
       </div>
 
       <!-- ตารางแสดงกล้องพร้อม Live Thumbnail -->
-      <div id="inputs-grid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 overflow-y-auto pr-1 flex-1"></div>
+      <div id="inputs-grid" class="grid content-start grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 lg:overflow-y-auto pr-1 flex-1"></div>
     </div>
 
     <!-- แผงควบคุมป้ายชื่อ CG & PTZ (2 Cols) -->
-    <div class="col-span-12 lg:col-span-2 studio-panel rounded-md p-2.5 flex flex-col justify-between overflow-y-auto">
+    <div class="col-span-12 lg:col-span-2 studio-panel rounded-md p-2.5 flex flex-col justify-between lg:overflow-y-auto">
       <div>
         <div class="text-xs font-extrabold tracking-wider text-slate-300 uppercase border-b border-slate-800 pb-1.5 mb-2">
           🔤 CG Lower Thirds
@@ -273,7 +292,7 @@
         </button>
       </div>
 
-      <div class="border-t border-slate-800 pt-2 mt-2">
+      <div class="hidden lg:block border-t border-slate-800 pt-2 mt-2">
         <div class="flex justify-between items-center text-[10px] text-slate-400">
           <span>คีย์ลัด: <b>1-9</b> เลือกกล้อง</span>
           <span><b>Space</b> = Cut</span>
@@ -282,7 +301,7 @@
     </div>
 
     <!-- แผง DIGITAL AUDIO MIXER พร้อมไฟ LED แนวตั้ง (3 Cols) -->
-    <div class="col-span-12 lg:col-span-3 studio-panel rounded-md p-2.5 flex flex-col overflow-hidden">
+    <div class="col-span-12 lg:col-span-3 studio-panel rounded-md p-2.5 flex flex-col overflow-hidden min-h-[200px] lg:min-h-0">
       <div class="flex justify-between items-center border-b border-slate-800 pb-1.5 mb-2 shrink-0">
         <span class="text-xs font-extrabold tracking-wider text-slate-300 uppercase">🎚️ Audio Console</span>
         <button onclick="addMicInput()" class="hw-btn px-2 py-0.5 rounded text-[10px] font-bold text-emerald-400">
@@ -452,7 +471,7 @@
           <span class="text-[10px] font-bold text-slate-300 truncate w-14 text-center">${ch.name}</span>
           <div class="flex items-center gap-2 my-1 flex-1">
             <input type="range" min="0" max="1.5" step="0.05" value="${ch.volume}"
-              oninput="setStripVol(${idx}, this.value)" style="-webkit-appearance: slider-vertical; width: 14px; height: 95px;" class="accent-sky-400">
+              oninput="setStripVol(${idx}, this.value)" style="width: 14px; height: 95px; touch-action: none;" class="v-slider accent-sky-400">
             <div id="led-${ch.id}" class="w-2.5 h-24 bg-slate-950 rounded-xs p-0.5 flex flex-col-reverse justify-between border border-slate-800"></div>
           </div>
           <button onclick="toggleMuteStrip(${idx})" class="w-full py-0.5 rounded text-[9px] font-extrabold ${ch.muted ? 'bg-red-600 text-white' : 'bg-slate-800 text-emerald-400 border border-slate-700'}">
@@ -673,6 +692,7 @@
       requestAnimationFrame(renderLoop);
     }
 
+    let lastCardTap = { idx: -1, time: 0 };
     function renderInputMatrix() {
       const grid = document.getElementById('inputs-grid');
       grid.innerHTML = '';
@@ -680,8 +700,15 @@
         const card = document.createElement('div');
         card.id = `input-card-${idx}`;
         card.className = 'bg-black rounded overflow-hidden border-2 border-slate-800 cursor-pointer flex flex-col transition relative group';
-        card.onclick = () => { ensureAudioContext(); currentPreview = idx; updateTallyStates(); };
-        card.ondblclick = () => { ensureAudioContext(); currentPreview = idx; cutTransition(); };
+        card.onclick = () => {
+          ensureAudioContext();
+          const now = Date.now();
+          const isDoubleTap = lastCardTap.idx === idx && now - lastCardTap.time < 350;
+          lastCardTap = isDoubleTap ? { idx: -1, time: 0 } : { idx, time: now };
+          currentPreview = idx;
+          if (isDoubleTap && idx !== currentProgram) cutTransition();
+          else updateTallyStates();
+        };
         card.innerHTML = `
           <div class="relative aspect-video bg-slate-950">
             <canvas id="thumb-${idx}" width="320" height="180" class="w-full h-full object-cover"></canvas>
@@ -763,6 +790,25 @@
     function loadSetting(key) { try { return localStorage.getItem(key); } catch (e) { return null; } }
     function saveSetting(key, val) { try { localStorage.setItem(key, val); } catch (e) {} }
 
+    // --- กันหน้าจอมือถือดับระหว่างออกอากาศ / ส่งภาพ (Screen Wake Lock) ---
+    let wakeLock = null, wantWakeLock = false;
+    async function keepScreenOn(on) {
+      wantWakeLock = on;
+      try {
+        if (on && !wakeLock && 'wakeLock' in navigator) {
+          wakeLock = await navigator.wakeLock.request('screen');
+          wakeLock.addEventListener('release', () => { wakeLock = null; });
+        } else if (!on && wakeLock) {
+          await wakeLock.release();
+          wakeLock = null;
+        }
+      } catch (e) {}
+    }
+    // ระบบจะปล่อย wake lock เองเมื่อสลับแอป จึงขอใหม่เมื่อกลับมาที่หน้านี้
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible' && wantWakeLock) keepScreenOn(true);
+    });
+
     // --- ระบบ WebRTC ดึงกล้องมือถือไร้สาย ---
     const randomHostId = () => 'webmix-' + Math.random().toString(36).substring(2, 8);
     let peer = null, currentFacingMode = 'environment', localMobileStream = null;
@@ -841,6 +887,7 @@
       try {
         localMobileStream = await getCameraStream(true);
         document.getElementById('caller-preview').srcObject = localMobileStream;
+        keepScreenOn(true);
         if (typeof Peer === 'undefined') throw new Error('โหลดไลบรารี PeerJS ไม่สำเร็จ');
         callerPeer = new Peer();
         callerPeer.on('open', placeCall);
@@ -929,6 +976,7 @@
     function updateOnAirState() {
       const badge = document.getElementById('onair-badge');
       const live = isRecording || isStreaming;
+      keepScreenOn(live);
       if (live && !streamStartTime) streamStartTime = Date.now();
       if (!live) {
         streamStartTime = null;
