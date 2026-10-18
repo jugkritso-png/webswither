@@ -517,14 +517,14 @@ kbd {
 .empty-state { grid-column: 1 / -1; padding: 28px 12px; text-align: center; color: var(--dim); font-size: 12px; }
 
 /* Overlays */
-.tabs { display: grid; grid-template-columns: repeat(3, 1fr); border-bottom: 1px solid var(--line); flex: none; }
+.tabs { display: grid; grid-template-columns: repeat(4, 1fr); border-bottom: 1px solid var(--line); flex: none; }
 .tab {
   display: flex; align-items: center; justify-content: center; gap: 7px;
   height: 38px;
   border: 0; border-bottom: 2px solid transparent;
   background: none;
   color: var(--muted);
-  font-size: 11px; font-weight: 700; letter-spacing: .14em;
+  font-size: 11px; font-weight: 700; letter-spacing: .06em; padding: 0 2px; min-width: 0;
   cursor: pointer;
 }
 .tab:hover { color: var(--text); }
@@ -929,3 +929,45 @@ kbd {
   .statusbar { gap: 4px 14px; }
   .toasts { left: 16px; right: 16px; width: auto; }
 }
+
+/* ---------------------------------------------------------- overlay (แบบ vMix) */
+.deck-ovl { display: flex; flex-direction: column; }
+.ovl-keys { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.key-ovl { min-height: 46px; padding: 4px 2px; gap: 1px; font-size: 15px; color: var(--muted); border-color: var(--line-2); background: linear-gradient(#1c2029, #14171e); }
+.key-ovl span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 9px; font-weight: 600; letter-spacing: 0; color: var(--dim); }
+.key-ovl.is-staged { border-color: var(--pvw); color: #bbf7d0; }
+.key-ovl.is-on { color: #fff; background: linear-gradient(#c22a2a, #8f1d1d); border-color: #f87171; box-shadow: 0 0 14px var(--pgm-glow); }
+.key-ovl.is-on span { color: #fecaca; }
+.ovl-rows { display: flex; flex-direction: column; gap: 8px; }
+.ovl-row { display: grid; grid-template-columns: 44px minmax(0, 1fr) minmax(0, 0.55fr) 46px; grid-template-areas: "take src src pvw" "take fx dur pvw"; gap: 4px 6px; align-items: stretch;
+  padding: 6px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); }
+.ovl-row .ovl-take { grid-area: take; height: auto; font-size: 16px; }
+.ovl-row .ovl-src { grid-area: src; }
+.ovl-row .ovl-fx { grid-area: fx; }
+.ovl-row .ovl-dur { grid-area: dur; }
+.ovl-row .ovl-pvw { grid-area: pvw; height: auto; }
+.ovl-row .select { height: 28px; font-size: 12px; padding-left: 8px; }
+.ovl-take { height: 30px; border-radius: 6px; border: 1px solid var(--line-2); background: var(--panel-2); color: var(--text); font: 700 13px var(--mono); cursor: pointer; }
+.ovl-take.is-on { background: var(--pgm); border-color: #f87171; color: #fff; box-shadow: 0 0 10px var(--pgm-glow); }
+.ovl-pvw { height: 30px; border-radius: 6px; border: 1px solid var(--line-2); background: none; color: var(--muted); font: 700 10px var(--mono); cursor: pointer; }
+.ovl-pvw.is-on { border-color: var(--pvw); color: #bbf7d0; background: rgba(34, 197, 94, .12); }
+/* ปุ่ม Overlay ใต้การ์ด Input */
+.card-ovl { display: flex; gap: 3px; padding: 0 6px 6px; background: var(--panel-2); }
+.card-ovl button { flex: 1; height: 20px; min-width: 0; padding: 0; border-radius: 4px; border: 1px solid var(--line-2); background: #0f1218; color: var(--dim); font: 700 10px var(--mono); cursor: pointer; }
+.card-ovl button:hover { color: var(--text); border-color: #4a5366; }
+.card-ovl button.is-on { background: var(--pgm); border-color: #f87171; color: #fff; }
+.card-ovl button.is-staged { border-color: var(--pvw); color: #bbf7d0; }
+.card-ovl .ovl-pos { flex: 0 0 26px; }
+.card-ovl .ovl-pos.is-set { color: var(--amber); border-color: rgba(245, 165, 36, .6); }
+.card.is-ovl { border-color: var(--pgm); box-shadow: 0 0 0 1px rgba(239, 68, 68, .55); }
+.card.is-ovl .card-tally { display: block; background: #b91c1c; }
+/* หน้าต่างตำแหน่ง */
+.layout-preview { width: 100%; aspect-ratio: 16 / 9; display: block; border-radius: 6px; border: 1px solid var(--line-2);
+  background: repeating-conic-gradient(#1b1f27 0 25%, #12151b 0 50%) 0 0 / 20px 20px; }
+.layout-presets { display: flex; flex-wrap: wrap; gap: 6px; }
+.layout-presets button { height: 28px; padding: 0 10px; border-radius: 6px; border: 1px solid var(--line-2); background: var(--panel-2); color: var(--text); font: inherit; font-size: 12px; cursor: pointer; }
+.layout-presets button:hover { border-color: var(--text); }
+.layout-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 14px; }
+.layout-grid label { display: flex; flex-direction: column; gap: 0; font-size: 12px; color: var(--muted); }
+.layout-grid label b { color: var(--text); font-family: var(--mono); font-weight: 500; }
+@media (max-width: 560px) { .layout-grid { grid-template-columns: 1fr; } }

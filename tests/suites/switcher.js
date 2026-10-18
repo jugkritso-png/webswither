@@ -47,7 +47,7 @@ const px = (page, sel, x, y) => page.evaluate(([sel, x, y]) => { const c = docum
   const back = await px(p, '#pgm-canvas', 100, 100); ok('FTB off', back.some(v => v > 5), JSON.stringify(back));
 
   // Title
-  await p.fill('#title-headline', 'ข่าวด่วน TEST');
+  await p.click('.tab[data-tab=title]'); await p.fill('#title-headline', 'ข่าวด่วน TEST');
   await p.keyboard.press('Escape'); await p.click('#pgm-canvas', { position: { x: 5, y: 5 } }); 
   await p.click('[data-action=title]'); await p.waitForTimeout(700);
   const tpx = await px(p, '#pgm-canvas', 1280 * 0.06 + 3, 720 * 0.735 + 20); ok('TITLE on air (red bar)', tpx[0] > 200 && tpx[1] < 90, JSON.stringify(tpx));

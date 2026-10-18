@@ -10,7 +10,7 @@ const http = require('http');
 const { spawn, spawnSync } = require('child_process');
 const { ROOT, WORK } = require('./lib');
 
-const ALL = ['switcher', 'multistream', 'mobile', 'srt-output', 'srt-input', 'uhd-4k', 'reconnect', 'record-disk', 'audio-fx', 'show', 'gateway-admin'];
+const ALL = ['switcher', 'multistream', 'mobile', 'srt-output', 'srt-input', 'uhd-4k', 'reconnect', 'record-disk', 'audio-fx', 'show', 'gateway-admin', 'overlay'];
 const selected = process.argv.slice(2).length ? process.argv.slice(2) : ALL;
 const SUITE_TIMEOUT = 6 * 60 * 1000;
 
@@ -26,6 +26,7 @@ function makeFixtures() {
   const f = n => path.join(WORK, n);
   if (!fs.existsSync(f('clip.webm'))) ffmpeg(['-f', 'lavfi', '-i', 'testsrc2=size=640x360:rate=30', '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000', '-t', '4', '-c:v', 'libvpx', '-b:v', '800k', '-c:a', 'libopus', '-shortest', f('clip.webm')]);
   if (!fs.existsSync(f('logo.png'))) ffmpeg(['-f', 'lavfi', '-i', 'testsrc=size=400x400', '-frames:v', '1', f('logo.png')]);
+  if (!fs.existsSync(f('green.png'))) ffmpeg(['-f', 'lavfi', '-i', 'color=c=0x00ff00:s=640x360', '-vf', 'drawbox=x=270:y=130:w=100:h=100:color=red:t=fill', '-frames:v', '1', f('green.png')]);
   if (!fs.existsSync(f('loud.webm'))) ffmpeg(['-f', 'lavfi', '-i', 'testsrc2=size=640x360:rate=30', '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000,volume=7', '-t', '20', '-c:v', 'libvpx', '-b:v', '500k', '-c:a', 'libopus', '-b:a', '128k', '-shortest', f('loud.webm')]);
 }
 

@@ -40,6 +40,7 @@ const results = []; const ok = (n, c, x = '') => results.push(`${c ? 'PASS' : 'F
     w.audio.masterStrip.db = -3;
   });
   // title preset
+  await p.click('.tab[data-tab=title]');
   await p.fill('#title-headline', 'สมชาย ใจดี'); await p.fill('#title-subtitle', 'ผู้ประกาศข่าว');
   await p.click('#title-presets [data-preset-add]');
   await p.fill('#title-headline', 'ข่าวด่วน'); await p.fill('#title-subtitle', 'รายงานสด'); await p.click('#title-colors [data-color="#3b82f6"]');

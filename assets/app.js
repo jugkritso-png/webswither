@@ -475,7 +475,8 @@
     camera: { icon: 'video', label: 'CAMERA' },
     screen: { icon: 'monitor', label: 'SCREEN' },
     wireless: { icon: 'phone', label: 'MOBILE' },
-    srt: { icon: 'broadcast', label: 'SRT' }
+    srt: { icon: 'broadcast', label: 'SRT' },
+    title: { icon: 'type', label: 'TITLE' }
   };
   const LIVE_TYPES = ['camera', 'screen', 'wireless'];
 
@@ -587,6 +588,7 @@
       case 'black': fillBlack(ctx, w, h); break;
       case 'slate': drawSlate(ctx, w, h, inp); break;
       case 'clock': drawClock(ctx, w, h, inp); break;
+      case 'title': fillBlack(ctx, w, h); drawTitleInput(ctx, inp, w, h); break;
       case 'image':
         if (inp.status !== 'live') { drawNoSignal(ctx, w, h, inp); break; }
         fillBlack(ctx, w, h);
@@ -699,6 +701,8 @@
   })();
   const keySrc = document.createElement('canvas');
   const keySrcCtx = keySrc.getContext('2d');
+  const keyOut = document.createElement('canvas');
+  const keyOutCtx = keyOut.getContext('2d');
 
   function updateKeyFrame() {
     overlays.key.ready = false;
@@ -710,7 +714,11 @@
       if (keySrc.width !== kw) { keySrc.width = kw; keySrc.height = kh; }
       drawSource(keySrcCtx, src, kw, kh);
       if (keyer.run(keySrc, settings.key)) {
-        overlays.key.canvas = keyer.canvas;
+        // คัดลอกออกมา เพราะ Overlay ที่เปิดคีย์ใช้ตัวคีย์ WebGL ตัวเดียวกันในเฟรมเดียวกัน
+        if (keyOut.width !== kw || keyOut.height !== kh) { keyOut.width = kw; keyOut.height = kh; }
+        keyOutCtx.clearRect(0, 0, kw, kh);
+        keyOutCtx.drawImage(keyer.canvas, 0, 0);
+        overlays.key.canvas = keyOut;
         overlays.key.ready = true;
         return;
       }
@@ -742,8 +750,7 @@
     return { x: pos[1] === 'l' ? m : w - pw - m, y: pos[0] === 't' ? m : h - ph - m, w: pw, h: ph };
   }
 
-  function drawTitle(ctx, w, h, a) {
-    const t = settings.title;
+  function drawTitle(ctx, w, h, a, t = settings.title) {
     if (!t.headline && !t.subtitle) return;
     const s = h / 720, e = easeOut(a);
     const x = w * 0.06, y = h * 0.735;
@@ -802,16 +809,198 @@
     if (overlays.title.anim > 0) drawTitle(ctx, w, h, overlays.title.anim);
   }
 
+
+  /* ------------------------------------------------------- overlay channels (แบบ vMix)
+     Overlay 1–4 วางแหล่งภาพใดก็ได้ซ้อนบน Program โดยไม่กระทบการตัดภาพหลัก (4 อยู่บนสุด)
+     แต่ละ Input มี "ตำแหน่ง" ของตัวเอง: ตำแหน่ง ขนาด ครอป ความทึบ คีย์ฉากเขียว/ฟ้า และขอบ
+     แต่ละช่องเลือกเอฟเฟกต์เข้า-ออกได้ (Cut, Fade, Zoom, Slide, Wipe) และพักไว้ดูบน Preview ก่อนได้ */
+  const OVL_EFFECTS = { cut: 'Cut', fade: 'Fade', zoom: 'Zoom', 'slide-left': 'Slide ←', 'slide-right': 'Slide →', 'slide-up': 'Slide ↑', 'slide-down': 'Slide ↓', wipe: 'Wipe' };
+  const OVL_DURATIONS = [250, 500, 1000, 2000];
+  const OVL_KEYS = ['q', 'w', 'e', 'r'];
+  const ovl = [0, 1, 2, 3].map(i => ({ n: i + 1, inputId: null, on: false, staged: false, anim: 0, effect: 'fade', duration: 500 }));
+  const onOverlay = id => !!id && ovl.some(c => c.on && c.inputId === id);
+  const isOnAir = id => !!id && (id === state.programId || onOverlay(id));
+
+  const DEFAULT_LAYOUT = { x: 0.5, y: 0.5, scale: 1, crop: { l: 0, r: 0, t: 0, b: 0 }, opacity: 1, key: 'none', tolerance: 60, border: false };
+  const layoutOf = inp => inp.layout || DEFAULT_LAYOUT;
+  function sanitizeLayout(l) {
+    if (!l || typeof l !== 'object') return null;
+    const n = (v, a, b, d) => Number.isFinite(+v) ? clamp(+v, a, b) : d;
+    const c = l.crop || {};
+    return {
+      x: n(l.x, -0.5, 1.5, 0.5), y: n(l.y, -0.5, 1.5, 0.5), scale: n(l.scale, 0.05, 1, 1),
+      crop: { l: n(c.l, 0, 0.45, 0), r: n(c.r, 0, 0.45, 0), t: n(c.t, 0, 0.45, 0), b: n(c.b, 0, 0.45, 0) },
+      opacity: n(l.opacity, 0, 1, 1), key: ['none', 'green', 'blue'].includes(l.key) ? l.key : 'none',
+      tolerance: n(l.tolerance, 10, 150, 60), border: !!l.border
+    };
+  }
+  const isDefaultLayout = l => JSON.stringify(l) === JSON.stringify(DEFAULT_LAYOUT);
+
+  // กรอบของ Input ในเฟรม (ก่อนครอป) และส่วนที่มองเห็นหลังครอป
+  function layoutRects(L, w, h) {
+    const bw = w * L.scale, bh = h * L.scale;
+    const box = { x: L.x * w - bw / 2, y: L.y * h - bh / 2, w: bw, h: bh };
+    const vis = { x: box.x + bw * L.crop.l, y: box.y + bh * L.crop.t, w: bw * (1 - L.crop.l - L.crop.r), h: bh * (1 - L.crop.t - L.crop.b) };
+    return { box, vis };
+  }
+
+  // วาดแหล่งภาพแบบพื้นหลังโปร่งใส (รูป PNG, วิดีโอที่มี alpha, Title) — ไม่มีสัญญาณก็ไม่วาดอะไรทับ Program
+  function drawSourceT(ctx, inp, w, h) {
+    switch (inp.type) {
+      case 'title': drawTitleInput(ctx, inp, w, h); return;
+      case 'image': if (inp.status === 'live') drawFit(ctx, inp.el, inp.el.naturalWidth, inp.el.naturalHeight, w, h); return;
+      case 'bars': case 'black': case 'slate': case 'clock': drawSource(ctx, inp, w, h); return;
+      default: {
+        const v = inp.el;
+        if (inp.status === 'live' && v && v.readyState >= 2 && v.videoWidth) drawFit(ctx, v, v.videoWidth, v.videoHeight, w, h);
+      }
+    }
+  }
+
+  // คีย์ฉากเขียว/ฟ้าของ Input นั้น (คำนวณครั้งเดียวต่อเฟรม ใช้ได้ทั้ง Program และ Preview)
+  const keyWork = document.createElement('canvas');
+  const keyWorkCtx = keyWork.getContext('2d', { willReadFrequently: !keyer });
+  function keyedCanvas(inp, L) {
+    const kw = Math.max(64, Math.round(Math.min(W * L.scale, keyer ? 1920 : 640))), kh = Math.round(kw * 9 / 16);
+    const cache = inp._key || (inp._key = { canvas: document.createElement('canvas'), frame: -1 });
+    if (cache.frame === frameNo && cache.canvas.width === kw) return cache.canvas;
+    if (keyWork.width !== kw || keyWork.height !== kh) { keyWork.width = kw; keyWork.height = kh; }
+    keyWorkCtx.clearRect(0, 0, kw, kh);
+    drawSourceT(keyWorkCtx, inp, kw, kh);
+    const out = cache.canvas;
+    if (out.width !== kw || out.height !== kh) { out.width = kw; out.height = kh; }
+    const octx = out.getContext('2d');
+    octx.clearRect(0, 0, kw, kh);
+    if (keyer && keyer.run(keyWork, { tolerance: L.tolerance, color: L.key })) {
+      octx.drawImage(keyer.canvas, 0, 0);
+    } else {
+      const img = keyWorkCtx.getImageData(0, 0, kw, kh), d = img.data;
+      const hard = L.tolerance, soft = hard * 0.5, blue = L.key === 'blue';
+      for (let i = 0; i < d.length; i += 4) {
+        const k = blue ? d[i + 2] : d[i + 1], o = blue ? Math.max(d[i], d[i + 1]) : Math.max(d[i], d[i + 2]), diff = k - o;
+        if (diff <= 0) continue;
+        d[i + 3] = diff > hard ? 0 : diff > soft ? Math.min(d[i + 3], 255 * (hard - diff) / (hard - soft)) : d[i + 3];
+        if (blue) d[i + 2] = o; else d[i + 1] = o;
+      }
+      octx.putImageData(img, 0, 0);
+    }
+    cache.frame = frameNo;
+    return out;
+  }
+
+  // วาด Input ตามตำแหน่ง/ครอป/คีย์ของมัน
+  function drawLayout(ctx, inp, L, w, h) {
+    const { box, vis } = layoutRects(L, w, h);
+    if (vis.w <= 0 || vis.h <= 0) return;
+    ctx.save();
+    ctx.beginPath(); ctx.rect(vis.x, vis.y, vis.w, vis.h); ctx.clip();
+    if (L.key !== 'none') ctx.drawImage(keyedCanvas(inp, L), box.x, box.y, box.w, box.h);
+    else { ctx.translate(box.x, box.y); drawSourceT(ctx, inp, box.w, box.h); }
+    ctx.restore();
+    if (L.border && L.scale < 1) {
+      ctx.strokeStyle = 'rgba(255,255,255,.92)'; ctx.lineWidth = Math.max(1, 3 * h / 720);
+      ctx.strokeRect(vis.x, vis.y, vis.w, vis.h);
+    }
+  }
+
+  function drawOverlayChannel(ctx, c, w, h, a) {
+    const inp = byId(c.inputId);
+    if (!inp || a <= 0) return;
+    const L = layoutOf(inp), e = c.effect === 'cut' ? 1 : easeInOut(a);
+    const { vis } = layoutRects(L, w, h);
+    ctx.save();
+    let alpha = L.opacity;
+    switch (c.effect) {
+      case 'fade': alpha *= e; break;
+      case 'zoom': {
+        const cx = vis.x + vis.w / 2, cy = vis.y + vis.h / 2, k = 0.5 + 0.5 * e;
+        ctx.translate(cx, cy); ctx.scale(k, k); ctx.translate(-cx, -cy);
+        alpha *= e;
+        break;
+      }
+      case 'slide-left': ctx.translate((1 - e) * (w - vis.x), 0); break;
+      case 'slide-right': ctx.translate(-(1 - e) * (vis.x + vis.w), 0); break;
+      case 'slide-up': ctx.translate(0, (1 - e) * (h - vis.y)); break;
+      case 'slide-down': ctx.translate(0, -(1 - e) * (vis.y + vis.h)); break;
+      case 'wipe': ctx.beginPath(); ctx.rect(vis.x, vis.y, vis.w * e, vis.h); ctx.clip(); break;
+    }
+    ctx.globalAlpha = alpha;
+    drawLayout(ctx, inp, L, w, h);
+    ctx.restore();
+  }
+
+  function stepOverlays(dt) {
+    for (const c of ovl) {
+      const target = c.on && byId(c.inputId) ? 1 : 0;
+      if (c.anim === target) continue;
+      if (c.effect === 'cut') { c.anim = target; continue; }
+      const step = dt / c.duration;
+      c.anim = target > c.anim ? Math.min(1, c.anim + step) : Math.max(0, c.anim - step);
+    }
+  }
+
+  function drawOverlayChannels(ctx, w, h, preview) {
+    for (const c of ovl) {
+      if (c.anim > 0) drawOverlayChannel(ctx, c, w, h, c.anim);
+      else if (preview && c.staged && byId(c.inputId)) drawOverlayChannel(ctx, c, w, h, 1);
+    }
+  }
+
+  // Title Input: กราฟิกข้อความบนพื้นโปร่งใส ใช้เป็น Overlay ได้ทันที
+  const TITLE_STYLES = { lower: 'ป้ายชื่อล่าง (Lower third)', top: 'แถบหัวข้อด้านบน', live: 'ป้าย LIVE มุมขวาบน', center: 'ข้อความกลางจอ' };
+  function drawTitleInput(ctx, inp, w, h) {
+    const t = inp.title || {};
+    const s = h / 720;
+    const dark = t.color === '#e5e7eb' ? '#0b0d12' : '#fff';
+    ctx.save();
+    ctx.textBaseline = 'middle';
+    if (t.style === 'top') {
+      const bh = (t.subtitle ? 92 : 58) * s;
+      ctx.fillStyle = 'rgba(10,13,20,.88)'; ctx.fillRect(0, 0, w, bh);
+      ctx.fillStyle = t.color || '#ef4444'; ctx.fillRect(0, bh - 5 * s, w, 5 * s);
+      ctx.textAlign = 'left';
+      ctx.fillStyle = '#fff'; fitFont(ctx, t.headline || '', 800, 30 * s, FONT, w * 0.9);
+      ctx.fillText(t.headline || '', w * 0.04, (t.subtitle ? 32 : 28) * s);
+      if (t.subtitle) { ctx.fillStyle = '#c9cfdb'; fitFont(ctx, t.subtitle, 500, 21 * s, FONT, w * 0.9); ctx.fillText(t.subtitle, w * 0.04, 66 * s); }
+    } else if (t.style === 'live') {
+      ctx.textAlign = 'left';
+      ctx.font = `800 ${24 * s}px ${FONT}`;
+      const badge = 'LIVE', bw = ctx.measureText(badge).width + 34 * s;
+      ctx.font = `600 ${20 * s}px ${FONT}`;
+      const text = [t.headline, t.subtitle].filter(Boolean).join(' · ');
+      const tw = text ? Math.min(w * 0.5, ctx.measureText(text).width + 28 * s) : 0;
+      const x = w - w * 0.03 - bw - tw, y = h * 0.05;
+      ctx.fillStyle = t.color || '#ef4444'; ctx.fillRect(x, y, bw, 44 * s);
+      ctx.fillStyle = dark; ctx.beginPath(); ctx.arc(x + 15 * s, y + 22 * s, 6 * s, 0, Math.PI * 2); ctx.fill();
+      ctx.font = `800 ${24 * s}px ${FONT}`; ctx.fillText(badge, x + 27 * s, y + 23 * s);
+      if (text) {
+        ctx.fillStyle = 'rgba(10,13,20,.85)'; ctx.fillRect(x + bw, y, tw, 44 * s);
+        ctx.fillStyle = '#fff'; fitFont(ctx, text, 600, 20 * s, FONT, tw - 28 * s); ctx.fillText(text, x + bw + 14 * s, y + 23 * s);
+      }
+    } else if (t.style === 'center') {
+      ctx.textAlign = 'center';
+      ctx.shadowColor = 'rgba(0,0,0,.7)'; ctx.shadowBlur = 18 * s;
+      ctx.fillStyle = '#fff'; fitFont(ctx, t.headline || '', 800, 72 * s, FONT, w * 0.86);
+      ctx.fillText(t.headline || '', w / 2, h * (t.subtitle ? 0.45 : 0.5));
+      if (t.subtitle) { ctx.fillStyle = t.color || '#f5a524'; fitFont(ctx, t.subtitle, 600, 32 * s, FONT, w * 0.8); ctx.fillText(t.subtitle, w / 2, h * 0.57); }
+    } else {
+      drawTitle(ctx, w, h, 1, { headline: t.headline || '', subtitle: t.subtitle || '', color: t.color || '#ef4444' });
+    }
+    ctx.restore();
+  }
+
   /* ----------------------------------------------------------- render loop */
   const thumbs = new Map();
-  let lastFrame = 0, lastThumbs = 0, frameCount = 0, fps = 0, fpsSince = performance.now(), renderMs = 0;
+  let lastFrame = 0, lastThumbs = 0, frameCount = 0, fps = 0, fpsSince = performance.now(), renderMs = 0, frameNo = 0;
 
   function frame(now) {
     const dt = lastFrame ? Math.min(100, now - lastFrame) : 16;
     lastFrame = now;
     const t0 = performance.now();
+    frameNo++;
 
     stepTransition(now);
+    stepOverlays(dt);
     if (ftb.level !== ftb.target) {
       const step = dt / settings.duration;
       ftb.level = ftb.target > ftb.level ? Math.min(ftb.target, ftb.level + step) : Math.max(ftb.target, ftb.level - step);
@@ -825,10 +1014,12 @@
     updateKeyFrame();
 
     drawProgramBase(pgmCtx, W, H);
+    drawOverlayChannels(pgmCtx, W, H, false);
     drawOverlays(pgmCtx, W, H);
     if (ftb.level > 0) { pgmCtx.fillStyle = `rgba(0,0,0,${ftb.level})`; pgmCtx.fillRect(0, 0, W, H); }
 
     drawSource(pvwCtx, byId(state.previewId), PW, PH);
+    drawOverlayChannels(pvwCtx, PW, PH, true);
     drawOverlays(pvwCtx, PW, PH);
 
     if (now - lastThumbs > 100) {
@@ -946,9 +1137,16 @@
     for (const card of $$('#inputs-grid .card')) {
       const id = card.dataset.id;
       const isPgm = id === state.programId, isPvw = id === state.previewId && !isPgm;
+      const ovIdx = ovl.findIndex(c => c.on && c.inputId === id);
       card.classList.toggle('is-pgm', isPgm);
       card.classList.toggle('is-pvw', isPvw);
-      card.querySelector('.card-tally').textContent = isPgm ? 'PGM' : isPvw ? 'PVW' : '';
+      card.classList.toggle('is-ovl', !isPgm && ovIdx >= 0);
+      card.querySelector('.card-tally').textContent = isPgm ? 'PGM' : ovIdx >= 0 ? `OV${ovIdx + 1}` : isPvw ? 'PVW' : '';
+      card.querySelectorAll('[data-card-ovl]').forEach(b => {
+        const c = ovl[+b.dataset.cardOvl];
+        b.classList.toggle('is-on', c.on && c.inputId === id);
+        b.classList.toggle('is-staged', !c.on && c.staged && c.inputId === id);
+      });
     }
     audio.applyAfv();
     wireless.sendTally();
@@ -1041,7 +1239,8 @@
             <button class="mini danger" data-card="remove" title="ลบ Input">${icon('x')}</button>
           </div>
         </div>
-        <div class="card-foot">${icon(meta.icon)}<span class="card-name">${esc(inp.name)}</span><span class="card-sub">${inp.status !== 'live' ? 'NO SIGNAL' : inp.name.toUpperCase() === meta.label ? '' : meta.label}</span></div>`;
+        <div class="card-foot">${icon(meta.icon)}<span class="card-name">${esc(inp.name)}</span><span class="card-sub">${inp.status !== 'live' ? 'NO SIGNAL' : inp.name.toUpperCase() === meta.label ? '' : meta.label}</span></div>
+        <div class="card-ovl">${ovl.map((c, k) => `<button type="button" data-card-ovl="${k}" title="ซ้อนเข้า Overlay ${c.n}">${c.n}</button>`).join('')}<button type="button" class="ovl-pos ${inp.layout ? 'is-set' : ''}" data-card="layout" title="ตำแหน่ง / ขนาด / ครอป / คีย์ฉาก">⧉</button></div>`;
       grid.appendChild(card);
       const ctx = card.querySelector('canvas').getContext('2d');
       thumbs.set(inp.id, ctx);
@@ -1057,12 +1256,15 @@
     const inp = byId(card.dataset.id);
     if (!inp) return;
     audio.ensure();
+    const ovlBtn = e.target.closest('[data-card-ovl]');
+    if (ovlBtn) { toggleInputOverlay(inp.id, +ovlBtn.dataset.cardOvl); return; }
     const actionBtn = e.target.closest('[data-card]');
     if (actionBtn) {
       const act = actionBtn.dataset.card;
       if (act === 'remove') removeInput(inp.id);
       else if (act === 'rename') renameInput(inp);
       else if (act === 'relink') relinkInput(inp);
+      else if (act === 'layout') openLayoutDialog(inp);
       else if (act === 'play') { inp.el.paused ? inp.el.play().catch(() => {}) : inp.el.pause(); }
       else if (act === 'restart') { inp.el.currentTime = 0; inp.el.play().catch(() => {}); }
       else if (act === 'loop') { inp.el.loop = !inp.el.loop; actionBtn.classList.toggle('is-on', inp.el.loop); }
@@ -1129,6 +1331,7 @@
     if (state.previewId === id || state.previewId === state.programId) {
       state.previewId = (inputs.find(i => i.id !== state.programId) || {}).id || null;
     }
+    for (const c of ovl) if (c.inputId === id) Object.assign(c, { inputId: null, on: false, staged: false, anim: 0 });
     for (const name of ['pip', 'key']) {
       if (overlays[name].sourceId === id) {
         overlays[name].sourceId = null;
@@ -1138,6 +1341,7 @@
   }
 
   async function renameInput(inp) {
+    if (inp.type === 'title') return openTitleDialog(inp);
     const hasText = inp.type === 'slate' || inp.type === 'clock';
     const result = await dialog({
       title: 'แก้ไข Input',
@@ -1404,6 +1608,203 @@
     }
   }
 
+
+  /* ------------------------------------------------------ overlay controls */
+  function playIfMedia(inp) {
+    if (inp && inp.type === 'media' && inp.el.paused) inp.el.play().catch(() => {});
+  }
+  function setChannel(i, on) {
+    const c = ovl[i];
+    if (on && !byId(c.inputId)) { toast(`เลือก Input ให้ Overlay ${c.n} ก่อน (แท็บ OVERLAY หรือปุ่ม ${c.n} ใต้การ์ด Input)`, 'warn'); return; }
+    c.on = on;
+    if (on) { c.staged = false; playIfMedia(byId(c.inputId)); }
+    updateOverlayUI();
+  }
+  // ปุ่ม 1–4 ใต้การ์ด: ซ้อน Input นี้เข้า Overlay นั้น (กดซ้ำเพื่อเอาออก) — ถ้าช่องนั้นมี Input อื่นอยู่ จะแทนที่ทันที
+  function toggleInputOverlay(id, i) {
+    const c = ovl[i];
+    if (c.on && c.inputId === id) c.on = false;
+    else {
+      if (c.inputId !== id) c.anim = 0;
+      c.inputId = id;
+      c.on = true;
+      c.staged = false;
+      playIfMedia(byId(id));
+    }
+    updateOverlayUI();
+  }
+  function setStaged(i) {
+    const c = ovl[i];
+    if (!byId(c.inputId)) { toast(`เลือก Input ให้ Overlay ${c.n} ก่อน`, 'warn'); return; }
+    c.staged = !c.staged;
+    updateOverlayUI();
+  }
+
+  function renderOverlayControls() {
+    $('#ovl-keys').innerHTML = ovl.map((c, i) => `<button class="key key-ovl" data-ovl="${i}" title="Overlay ${c.n} — เปิด/ปิดบน Program (${OVL_KEYS[i].toUpperCase()})"><b>${c.n}</b><span></span><kbd>${OVL_KEYS[i].toUpperCase()}</kbd></button>`).join('');
+    $('#ovl-rows').innerHTML = ovl.map((c, i) => `
+      <div class="ovl-row" data-row="${i}">
+        <button type="button" class="ovl-take" data-ovl="${i}" title="Overlay ${c.n} — เปิด/ปิดบน Program (${OVL_KEYS[i].toUpperCase()})">${c.n}</button>
+        <select class="select ovl-src" data-ovl-src="${i}" aria-label="Input ของ Overlay ${c.n}"></select>
+        <select class="select ovl-fx" data-ovl-fx="${i}" aria-label="เอฟเฟกต์ของ Overlay ${c.n}">${Object.entries(OVL_EFFECTS).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}</select>
+        <select class="select ovl-dur" data-ovl-dur="${i}" aria-label="ระยะเวลาของ Overlay ${c.n}">${OVL_DURATIONS.map(d => `<option value="${d}">${d / 1000}s</option>`).join('')}</select>
+        <button type="button" class="ovl-pvw" data-ovl-pvw="${i}" title="แสดง Overlay ${c.n} บน Preview เพื่อตรวจก่อนขึ้นจอ">PVW</button>
+      </div>`).join('');
+    refreshOverlaySelects();
+  }
+
+  function refreshOverlaySelects() {
+    ovl.forEach((c, i) => {
+      if (c.inputId && !byId(c.inputId)) Object.assign(c, { inputId: null, on: false, staged: false, anim: 0 });
+      const sel = $(`[data-ovl-src="${i}"]`);
+      if (!sel) return;
+      sel.innerHTML = '<option value="">— ไม่มี —</option>' + inputs.map((inp, n) => `<option value="${inp.id}">${n + 1}. ${esc(inp.name)}</option>`).join('');
+      sel.value = c.inputId || '';
+      $(`[data-ovl-fx="${i}"]`).value = c.effect;
+      $(`[data-ovl-dur="${i}"]`).value = String(c.duration);
+    });
+    updateOverlayUI();
+  }
+
+  function updateOverlayUI() {
+    ovl.forEach((c, i) => {
+      const inp = byId(c.inputId);
+      const key = $(`.key-ovl[data-ovl="${i}"]`);
+      if (key) {
+        key.classList.toggle('is-on', c.on);
+        key.classList.toggle('is-staged', c.staged && !c.on);
+        key.querySelector('span').textContent = inp ? inp.name : '—';
+      }
+      const take = $(`.ovl-take[data-ovl="${i}"]`);
+      if (take) take.classList.toggle('is-on', c.on);
+      const pvw = $(`[data-ovl-pvw="${i}"]`);
+      if (pvw) pvw.classList.toggle('is-on', c.staged);
+      const sel = $(`[data-ovl-src="${i}"]`);
+      if (sel && sel.value !== (c.inputId || '')) sel.value = c.inputId || '';
+    });
+    $('.tab[data-tab="overlay"]').classList.toggle('is-live', ovl.some(c => c.on));
+    updateTally();
+  }
+
+  function initOverlayControls() {
+    renderOverlayControls();
+    const onClick = e => {
+      const take = e.target.closest('[data-ovl]'), pvw = e.target.closest('[data-ovl-pvw]');
+      if (take) { audio.ensure(); setChannel(+take.dataset.ovl, !ovl[+take.dataset.ovl].on); }
+      else if (pvw) setStaged(+pvw.dataset.ovlPvw);
+    };
+    $('#ovl-keys').addEventListener('click', onClick);
+    $('#ovl-rows').addEventListener('click', onClick);
+    $('#ovl-rows').addEventListener('change', e => {
+      const t = e.target;
+      if (t.dataset.ovlSrc != null) {
+        const c = ovl[+t.dataset.ovlSrc];
+        if (c.inputId !== (t.value || null)) c.anim = 0;
+        c.inputId = t.value || null;
+        if (!c.inputId) { c.on = false; c.staged = false; }
+        else if (c.on) playIfMedia(byId(c.inputId));
+        updateOverlayUI();
+      } else if (t.dataset.ovlFx != null) ovl[+t.dataset.ovlFx].effect = OVL_EFFECTS[t.value] ? t.value : 'fade';
+      else if (t.dataset.ovlDur != null) ovl[+t.dataset.ovlDur].duration = OVL_DURATIONS.includes(+t.value) ? +t.value : 500;
+    });
+  }
+
+  // ตำแหน่งของ Input (ใช้ตอนเป็น Overlay): ตำแหน่ง ขนาด ครอป ความทึบ คีย์ฉาก ขอบ
+  const LAYOUT_PRESETS = [
+    ['เต็มจอ', { x: 0.5, y: 0.5, scale: 1 }], ['มุมขวาบน', { x: 0.82, y: 0.2, scale: 0.3 }], ['มุมขวาล่าง', { x: 0.82, y: 0.8, scale: 0.3 }],
+    ['มุมซ้ายบน', { x: 0.18, y: 0.2, scale: 0.3 }], ['มุมซ้ายล่าง', { x: 0.18, y: 0.8, scale: 0.3 }],
+    ['ครึ่งซ้าย', { x: 0.25, y: 0.5, scale: 0.5 }], ['ครึ่งขวา', { x: 0.75, y: 0.5, scale: 0.5 }], ['กลางจอ', { x: 0.5, y: 0.5, scale: 0.6 }]
+  ];
+  async function openLayoutDialog(inp) {
+    const L = sanitizeLayout(inp.layout || DEFAULT_LAYOUT);
+    inp.layout = L;
+    const pct = v => Math.round(v * 100);
+    const slider = (name, label, min, max, val) => `<label>${label} <b data-val="${name}">${val}</b><input type="range" class="range" name="${name}" min="${min}" max="${max}" value="${val}"></label>`;
+    const result = await dialog({
+      title: `ตำแหน่ง — ${inp.name}`,
+      body: `
+        <canvas class="layout-preview" width="480" height="270"></canvas>
+        <div class="layout-presets">${LAYOUT_PRESETS.map(([label], i) => `<button type="button" data-preset="${i}">${label}</button>`).join('')}</div>
+        <div class="layout-grid">
+          ${slider('x', 'แนวนอน (X) %', -20, 120, pct(L.x))}${slider('y', 'แนวตั้ง (Y) %', -20, 120, pct(L.y))}
+          ${slider('scale', 'ขนาด %', 5, 100, pct(L.scale))}${slider('opacity', 'ความทึบ %', 0, 100, pct(L.opacity))}
+          ${slider('cl', 'ครอปซ้าย %', 0, 45, pct(L.crop.l))}${slider('cr', 'ครอปขวา %', 0, 45, pct(L.crop.r))}
+          ${slider('ct', 'ครอปบน %', 0, 45, pct(L.crop.t))}${slider('cb', 'ครอปล่าง %', 0, 45, pct(L.crop.b))}
+        </div>
+        <div class="field"><span>คีย์ฉาก (Chroma key)</span>
+          <div class="seg" data-seg="key"><button type="button" data-value="none">ไม่ใช้</button><button type="button" data-value="green">GREEN</button><button type="button" data-value="blue">BLUE</button></div>
+        </div>
+        <div class="layout-grid">${slider('tol', 'ความไว (Tolerance)', 10, 150, L.tolerance)}
+          <label class="check"><input type="checkbox" name="border" ${L.border ? 'checked' : ''}> ขอบสีขาว (เมื่อย่อภาพ)</label></div>
+        <p class="note">ค่านี้ใช้เมื่อ Input นี้ขึ้นเป็น Overlay — เห็นผลทันทีบน Program/Preview (กด PVW ในแท็บ OVERLAY เพื่อดูก่อนขึ้นจอ)</p>`,
+      actions: [{ label: 'รีเซ็ต', value: 'reset' }, { label: 'เสร็จ', primary: true, value: 'ok' }],
+      onOpen(modal) {
+        const f = $('form', modal).elements;
+        const paintSeg = () => $$('[data-seg="key"] button', modal).forEach(b => b.classList.toggle('is-active', b.dataset.value === L.key));
+        const sync = () => {
+          for (const [name, v] of Object.entries({ x: pct(L.x), y: pct(L.y), scale: pct(L.scale), opacity: pct(L.opacity), cl: pct(L.crop.l), cr: pct(L.crop.r), ct: pct(L.crop.t), cb: pct(L.crop.b), tol: L.tolerance })) {
+            f[name].value = v;
+            $(`[data-val="${name}"]`, modal).textContent = v;
+          }
+          paintSeg();
+        };
+        sync();
+        modal.addEventListener('input', e => {
+          const t = e.target, v = +t.value;
+          const map = { x: () => { L.x = v / 100; }, y: () => { L.y = v / 100; }, scale: () => { L.scale = v / 100; }, opacity: () => { L.opacity = v / 100; },
+            cl: () => { L.crop.l = v / 100; }, cr: () => { L.crop.r = v / 100; }, ct: () => { L.crop.t = v / 100; }, cb: () => { L.crop.b = v / 100; }, tol: () => { L.tolerance = v; } };
+          if (map[t.name]) { map[t.name](); $(`[data-val="${t.name}"]`, modal).textContent = t.value; }
+          if (t.name === 'border') L.border = t.checked;
+        });
+        modal.addEventListener('click', e => {
+          const p = e.target.closest('[data-preset]'), k = e.target.closest('[data-seg="key"] button');
+          if (p) { Object.assign(L, LAYOUT_PRESETS[+p.dataset.preset][1]); sync(); }
+          if (k) { L.key = k.dataset.value; paintSeg(); }
+        });
+        // ภาพตัวอย่าง: Program ปัจจุบันจาง ๆ เป็นพื้นหลัง แล้ววาด Input นี้ตามตำแหน่ง
+        const cv = $('.layout-preview', modal), ctx = cv.getContext('2d');
+        const draw = () => {
+          if (!document.body.contains(cv)) return;
+          ctx.clearRect(0, 0, cv.width, cv.height);
+          ctx.globalAlpha = 0.35; ctx.drawImage(pgmCanvas, 0, 0, cv.width, cv.height); ctx.globalAlpha = 1;
+          ctx.save(); ctx.globalAlpha = L.opacity; drawLayout(ctx, inp, L, cv.width, cv.height); ctx.restore();
+          requestAnimationFrame(draw);
+        };
+        draw();
+      }
+    });
+    if (result?.value === 'reset' || isDefaultLayout(inp.layout)) inp.layout = null;
+    renderInputs();
+  }
+
+  // Title Input
+  function addTitleInput() {
+    const n = inputs.filter(i => i.type === 'title').length + 1;
+    const inp = addInput({ type: 'title', name: `TITLE ${n}`, title: { headline: 'ชื่อ นามสกุล', subtitle: 'ตำแหน่ง / หน่วยงาน', color: TITLE_COLORS[0], style: 'lower' } });
+    openTitleDialog(inp);
+    return inp;
+  }
+  async function openTitleDialog(inp) {
+    const t = inp.title || (inp.title = { headline: '', subtitle: '', color: TITLE_COLORS[0], style: 'lower' });
+    const result = await dialog({
+      title: 'แก้ไข Title',
+      body: `
+        <label class="field"><span>ชื่อ Input</span><input name="name" class="input" maxlength="40" value="${esc(inp.name)}"></label>
+        <label class="field"><span>รูปแบบ</span><select name="style" class="select">${Object.entries(TITLE_STYLES).map(([k, v]) => `<option value="${k}" ${k === t.style ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
+        <label class="field"><span>ข้อความหลัก</span><input name="headline" class="input" maxlength="80" value="${esc(t.headline)}"></label>
+        <label class="field"><span>ข้อความรอง</span><input name="subtitle" class="input" maxlength="120" value="${esc(t.subtitle)}"></label>
+        <label class="field"><span>สี</span><select name="color" class="select">${TITLE_COLORS.map(c => `<option value="${c}" ${c === t.color ? 'selected' : ''}>${c}</option>`).join('')}</select></label>
+        <p class="note">พื้นหลังโปร่งใส — กดปุ่ม 1–4 ใต้การ์ดเพื่อซ้อนบน Program (แก้ข้อความแล้วบนจอเปลี่ยนทันที)</p>`,
+      actions: [{ label: 'ยกเลิก' }, { label: 'บันทึก', primary: true, value: 'save' }]
+    });
+    if (result?.value !== 'save') return;
+    const f = result.form;
+    inp.name = f.name.value.trim() || inp.name;
+    inp.title = { headline: f.headline.value.trim(), subtitle: f.subtitle.value.trim(), color: TITLE_COLORS.includes(f.color.value) ? f.color.value : TITLE_COLORS[0], style: TITLE_STYLES[f.style.value] ? f.style.value : 'lower' };
+    renderInputs();
+    refreshSourceSelects();
+  }
+
   /* ------------------------------------------------------- source selects */
   function refreshSourceSelects() {
     for (const name of ['pip', 'key']) {
@@ -1420,6 +1821,7 @@
         ? inputs.map((i, n) => `<option value="${i.id}" ${i.id === o.sourceId ? 'selected' : ''}>${n + 1}. ${esc(i.name)}</option>`).join('')
         : '<option value="">— ไม่มี Input —</option>';
     }
+    refreshOverlaySelects();
   }
 
   /* ------------------------------------------------------------- audio */
@@ -1580,7 +1982,7 @@
     applyAfv() {
       if (!this.ctx) return;
       for (const ch of this.channels) {
-        const on = !ch.afv || ch.inputId === state.programId || ((tr.progress > 0 || tr.auto) && ch.inputId === state.previewId);
+        const on = !ch.afv || ch.inputId === state.programId || onOverlay(ch.inputId) || ((tr.progress > 0 || tr.auto) && ch.inputId === state.previewId);
         ch.afvGain.gain.setTargetAtTime(on ? 1 : 0, this.ctx.currentTime, 0.06);
       }
     },
@@ -1891,7 +2293,7 @@
     sendTallyTo(conn) {
       if (!conn.open) return;
       const inp = inputs.find(i => i.peerId === conn.peer);
-      const tally = !inp ? 'off' : inp.id === state.programId ? 'pgm' : inp.id === state.previewId ? 'pvw' : 'off';
+      const tally = !inp ? 'off' : isOnAir(inp.id) ? 'pgm' : inp.id === state.previewId ? 'pvw' : 'off';
       try { conn.send({ type: 'tally', tally }); } catch (e) {}
     },
     sendTally() { for (const conn of this.conns.values()) this.sendTallyTo(conn); },
@@ -2937,6 +3339,7 @@
     ['T', 'แสดง / ซ่อนป้ายชื่อ (Title)'],
     ['P', 'แสดง / ซ่อนภาพซ้อน (PIP)'],
     ['K', 'เปิด / ปิด Chroma Key'],
+    ['Q W E R', 'เปิด / ปิด Overlay 1 – 4'],
     ['Esc', 'ปิดหน้าต่าง / ออกจากเต็มจอ']
   ];
   const MANUAL = [
@@ -2956,6 +3359,12 @@
     ['กล้องมือถือไร้สาย', ['กดปุ่ม “กล้องมือถือ” แล้วสแกน QR ด้วยมือถือ (ต้องเปิดเว็บผ่าน HTTPS)',
       'บนมือถือสลับกล้องหน้า/หลัง ปิดไมค์ หรือหยุดส่งภาพได้ และจะเห็นกรอบแดง ON AIR เมื่อภาพของเครื่องนั้นออกอากาศ',
       'ถ้าสัญญาณหลุด มือถือจะเชื่อมต่อกลับเข้าช่องเดิมเอง']],
+    ['Overlay (แบบ vMix)', ['Overlay 1–4 ซ้อนแหล่งภาพใดก็ได้บน Program โดยไม่กระทบการตัดภาพหลัก (เลข 4 อยู่บนสุด) — ใช้กับโลโก้, ป้ายชื่อ, ภาพซ้อนมุมจอ, ผู้บรรยายฉากเขียว, วิดีโอแทรก',
+      'กดปุ่ม 1–4 ใต้การ์ด Input เพื่อซ้อนเข้า Overlay นั้นทันที (กดซ้ำเพื่อเอาออก) · ปุ่ม OVERLAY 1–4 ในแผง TRANSITION หรือคีย์ Q W E R เปิด/ปิดแต่ละช่อง',
+      'แท็บ OVERLAY: เลือก Input ของแต่ละช่อง, เอฟเฟกต์เข้า-ออก (Cut, Fade, Zoom, Slide 4 ทิศ, Wipe) และระยะเวลา · PVW ดูบน Preview ก่อนขึ้นจอ',
+      'ปุ่ม ⧉ บนการ์ด: ตั้งตำแหน่ง ขนาด ครอป ความทึบ ขอบ และคีย์ฉากเขียว/ฟ้าของ Input นั้น (มี preset มุมจอ/ครึ่งจอ) — เห็นผลทันที',
+      'Input “Title กราฟิกข้อความ” มีพื้นโปร่งใส 4 แบบ (ป้ายชื่อล่าง, แถบหัวข้อบน, ป้าย LIVE, ข้อความกลางจอ) · รูป PNG โปร่งใสก็ซ้อนได้ทันที',
+      'ภาพที่อยู่บน Overlay นับว่าออกอากาศ: การ์ดขึ้น OV1–OV4, กล้องมือถือขึ้นกรอบแดง และเสียงที่ตั้ง AFV จะเปิดตาม']],
     ['กราฟิก (TITLE / PIP / KEY)', ['TITLE: ป้ายชื่อ Lower Third พิมพ์ข้อความแล้วเปลี่ยนบนจอได้ทันที เลือกสีป้ายได้ กด TAKE เพื่อแสดง (มีแอนิเมชันเข้า-ออก)',
       'Preset ป้ายชื่อ: กด “+ บันทึกป้ายนี้” เพื่อเก็บชื่อ/ตำแหน่ง/สีไว้หลายชุด แล้วแตะเพื่อสลับ (ถ้าป้ายขึ้นจออยู่จะเปลี่ยนทันที) · × ลบ preset',
       'PIP: ภาพซ้อนมุมจอ เลือกแหล่งภาพ ตำแหน่ง และขนาด',
@@ -3022,6 +3431,7 @@
       ['bars', 'Color Bars', () => addGenerator('bars')],
       ['type', 'Slate ข้อความ', () => addGenerator('slate')],
       ['clock', 'นาฬิกา', () => addGenerator('clock')],
+      ['type', 'Title กราฟิกข้อความ (พื้นโปร่งใส)', addTitleInput],
       ['square', 'Black', () => addGenerator('black')]
     ];
     const menu = document.createElement('div');
@@ -3133,6 +3543,7 @@
   }
 
   function initControls() {
+    initOverlayControls();
     initSeg('#seg-transition', settings.transition, v => { settings.transition = v; });
     initSeg('#seg-duration', settings.duration, v => { settings.duration = +v; });
     initSeg('#seg-pip-pos', settings.pip.position, v => { settings.pip.position = v; });
@@ -3228,6 +3639,7 @@
       }
       const k = e.key.toLowerCase();
       const map = { ' ': cut, enter: autoTransition, f: toggleFtb, t: actions.title, l: actions.title, p: actions.pip, k: actions.key };
+      OVL_KEYS.forEach((key, i) => { map[key] = () => setChannel(i, !ovl[i].on); });
       if (map[k]) {
         e.preventDefault();
         audio.ensure();
@@ -3291,7 +3703,7 @@
     }
   };
 
-  const SHOW_TYPES = ['bars', 'black', 'slate', 'clock', 'image', 'media', 'camera', 'screen', 'wireless', 'srt'];
+  const SHOW_TYPES = ['bars', 'black', 'slate', 'clock', 'image', 'media', 'camera', 'screen', 'wireless', 'srt', 'title'];
   const show = {
     ready: false, last: '', savedAt: 0,
     get name() { return store.get('showName', '') || 'โชว์ใหม่'; },
@@ -3312,10 +3724,14 @@
           if (i.type === 'image') o.file = i.fileName || '';
           if (i.type === 'wireless') o.peerId = i.peerId;
           if (i.type === 'srt') o.srt = { ...i.srt, passphrase: secrets ? i.srt.passphrase : '' };
+          if (i.type === 'title') o.title = { ...i.title };
+          if (i.layout) o.layout = JSON.parse(JSON.stringify(i.layout));
           return o;
         }),
         program: state.programId, preview: state.previewId,
         overlays: { pip: overlays.pip.sourceId, key: overlays.key.sourceId },
+        // ช่อง Overlay 1–4: Input ที่ผูกไว้และเอฟเฟกต์ (ไม่จำสถานะขึ้นจอ — เปิดหน้าใหม่แล้วไม่มีอะไรขึ้นจอเอง)
+        overlayChannels: ovl.map(c => ({ inputId: c.inputId, effect: c.effect, duration: c.duration })),
         audio: {
           master: { db: audio.masterStrip.db === -Infinity ? null : audio.masterStrip.db, muted: audio.masterStrip.muted },
           inputs: Object.fromEntries(audio.channels.filter(c => c.inputId).map(c => [c.inputId, chan(c)])),
@@ -3337,6 +3753,7 @@
     // สร้างโชว์กลับมาจากข้อมูลที่บันทึกไว้ (ตอนเปิดหน้า)
     restore(data) {
       const ids = new Set();
+      const loading = [];
       let waitingMics = 0;
       for (const raw of data.inputs) {
         if (!raw || !SHOW_TYPES.includes(raw.type)) continue;
@@ -3344,7 +3761,18 @@
         ids.add(id);
         const base = { id, name: String(raw.name || raw.type.toUpperCase()).slice(0, 40) };
         if (data.audio?.inputs?.[raw.id]) audio.pending.set(id, data.audio.inputs[raw.id]);
-        try { this.restoreInput(raw, base); } catch (e) { console.warn('restore input', e); }
+        try { const job = this.restoreInput(raw, base); if (job) loading.push(job); } catch (e) { console.warn('restore input', e); }
+        const made = byId(id);
+        if (made && raw.layout) made.layout = sanitizeLayout(raw.layout);
+      }
+      if (Array.isArray(data.overlayChannels)) {
+        data.overlayChannels.slice(0, 4).forEach((c, i) => {
+          if (!c) return;
+          ovl[i].inputId = byId(c.inputId) ? c.inputId : null;
+          if (OVL_EFFECTS[c.effect]) ovl[i].effect = c.effect;
+          if (OVL_DURATIONS.includes(+c.duration)) ovl[i].duration = +c.duration;
+        });
+        refreshOverlaySelects();
       }
       if (byId(data.program)) state.programId = data.program;
       if (byId(data.preview) && data.preview !== state.programId) state.previewId = data.preview;
@@ -3367,8 +3795,11 @@
       refreshSourceSelects();
       renderMixer();
       updateTally();
-      const missing = inputs.filter(i => i.missing).length;
-      toast(`เปิดโชว์ “${this.name}” แล้ว — ${inputs.length} Input${missing ? ` (รอเชื่อมต่อ ${missing})` : ''}`, missing ? 'warn' : 'success', 5000);
+      // แจ้งหลังโหลดไฟล์/เปิดกล้องเสร็จ (รอไม่เกิน 5 วินาที) จะได้นับ Input ที่ต้องเชื่อมต่อใหม่ได้ถูกต้อง
+      Promise.race([Promise.allSettled(loading), new Promise(r => setTimeout(r, 5000))]).then(() => {
+        const missing = inputs.filter(i => i.missing && i.type !== 'wireless').length;
+        toast(`เปิดโชว์ “${this.name}” แล้ว — ${inputs.length} Input${missing ? ` (รอเชื่อมต่อ ${missing} — กดปุ่ม 🔗 บนการ์ด)` : ''}`, missing ? 'warn' : 'success', 5000);
+      });
       return waitingMics;
     },
 
@@ -3378,16 +3809,21 @@
         case 'bars': case 'black': case 'slate': case 'clock':
           addInput({ type: raw.type, ...base, text });
           break;
+        case 'title': {
+          const t = raw.title || {};
+          addInput({ type: 'title', ...base, title: { headline: String(t.headline || '').slice(0, 80), subtitle: String(t.subtitle || '').slice(0, 120),
+            color: TITLE_COLORS.includes(t.color) ? t.color : TITLE_COLORS[0], style: TITLE_STYLES[t.style] ? t.style : 'lower' } });
+          break;
+        }
         case 'media': case 'image': {
           const inp = raw.type === 'media'
             ? createMediaInput({ ...base, fileName: String(raw.file || ''), loop: raw.loop !== false, status: 'nosignal', missing: true })
             : createImageInput({ ...base, fileName: String(raw.file || ''), status: 'nosignal', missing: true });
-          mediaStore.get(base.id).then(file => {
+          return mediaStore.get(base.id).then(file => {
             if (inp.removed) return;
             if (file) setInputFile(inp, file, false, false);
             renderInputs();
           });
-          break;
         }
         case 'camera': {
           const inp = addInput({ type: 'camera', ...base, el: createVideo(null), status: 'nosignal', missing: true });
@@ -3395,7 +3831,7 @@
             inp.cam = { deviceId: raw.cam.deviceId, micId: String(raw.cam.micId || ''), w: +raw.cam.w || 1920, h: +raw.cam.h || 1080,
               label: String(raw.cam.label || ''), micLabel: String(raw.cam.micLabel || '') };
             if (window.isSecureContext && navigator.mediaDevices?.getUserMedia) {
-              startCamera(inp.cam).then(stream => { if (inp.removed) stream.getTracks().forEach(t => t.stop()); else attachStream(inp, stream); }).catch(() => {});
+              return startCamera(inp.cam).then(stream => { if (inp.removed) stream.getTracks().forEach(t => t.stop()); else attachStream(inp, stream); }).catch(() => {});
             }
           }
           break;
@@ -3589,7 +4025,7 @@
     requestAnimationFrame(rafLoop);
 
     // สำหรับดีบัก/ทดสอบอัตโนมัติ
-    window.webmix = { show, useRecFolder: dir => { recFolder = dir; }, inputs, state, settings, overlays, audio, rec, streamer, wireless, cut, autoTransition, setPreview, tr, ftb };
+    window.webmix = { show, ovl, setChannel, toggleInputOverlay, useRecFolder: dir => { recFolder = dir; }, inputs, state, settings, overlays, audio, rec, streamer, wireless, cut, autoTransition, setPreview, tr, ftb };
   }
 
   boot();

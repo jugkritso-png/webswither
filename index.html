@@ -130,6 +130,10 @@
             </div>
             <button id="btn-ftb" class="key key-ftb" data-action="ftb" title="Fade to Black — จางภาพ Program เป็นสีดำ">FTB<kbd>F</kbd></button>
           </div>
+          <div class="deck-ovl">
+            <span class="opt-label">OVERLAY</span>
+            <div id="ovl-keys" class="ovl-keys"></div>
+          </div>
         </div>
       </div>
 
@@ -165,12 +169,18 @@
 
       <div class="panel overlays-panel">
         <div class="tabs" role="tablist">
-          <button class="tab is-active" data-tab="title" role="tab">TITLE<span class="live-dot"></span></button>
+          <button class="tab is-active" data-tab="overlay" role="tab">OVERLAY<span class="live-dot"></span></button>
+          <button class="tab" data-tab="title" role="tab">TITLE<span class="live-dot"></span></button>
           <button class="tab" data-tab="pip" role="tab">PIP<span class="live-dot"></span></button>
           <button class="tab" data-tab="key" role="tab">KEY<span class="live-dot"></span></button>
         </div>
 
-        <div class="pane is-active" data-pane="title">
+        <div class="pane is-active" data-pane="overlay">
+          <div id="ovl-rows" class="ovl-rows"></div>
+          <p class="note">กดปุ่ม <b>1–4</b> ใต้การ์ด Input เพื่อซ้อนเข้า Overlay นั้นทันที · ปุ่ม <b>⧉</b> บนการ์ดตั้งตำแหน่ง/ขนาด/ครอป/คีย์ฉากเขียว · <b>PVW</b> ดูบน Preview ก่อนขึ้นจอ</p>
+        </div>
+
+        <div class="pane" data-pane="title">
           <label class="field"><span>หัวข้อหลัก</span><input id="title-headline" class="input" maxlength="80"></label>
           <label class="field"><span>ข้อความรอง</span><input id="title-subtitle" class="input" maxlength="120"></label>
           <div class="field"><span>สีป้าย</span><div id="title-colors" class="swatches"></div></div>

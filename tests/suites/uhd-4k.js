@@ -34,7 +34,7 @@ async function setup(ctx) {
   ok('card shows 4K tag', /4K/.test(await p.locator('.card', { hasText: 'fake' }).first().locator('.card-sub').textContent().catch(() => '')) || /4K/.test(await p.textContent('#inputs-grid')), (await p.textContent('#inputs-grid')).match(/CAMERA[^A-Z]*/)?.[0]);
   // put camera on program; text overlay scales
   await p.evaluate(() => { const w = window.webmix; const c = w.inputs.find(i => i.type === 'camera'); w.setPreview(c.id); w.cut(); });
-  await p.click('[data-action=title]'); await p.waitForTimeout(2000);
+  await p.click('.tab[data-tab=title]'); await p.click('[data-action=title]'); await p.waitForTimeout(2000);
   const tpx = await p.evaluate(() => Array.from(document.querySelector('#pgm-canvas').getContext('2d').getImageData(Math.round(3840 * 0.06) + 8, Math.round(2160 * 0.735) + 60, 1, 1).data));
   ok('title drawn at 4K scale', tpx[0] > 200 && tpx[1] < 90, JSON.stringify(tpx));
   await p.click('[data-action=title]');
@@ -43,7 +43,8 @@ async function setup(ctx) {
   await p.click('.tab[data-tab=key]');
   const camId = await p.evaluate(() => window.webmix.inputs.find(i => i.type === 'camera').id);
   await p.selectOption('#key-source', camId); await p.click('#btn-key'); await p.waitForTimeout(600);
-  const usesGL = await p.evaluate(() => window.webmix.overlays.key.canvas && window.webmix.overlays.key.canvas.getContext && !!window.webmix.overlays.key.canvas.getContext('webgl'));
+  // WebGL keyer works at up to 1920 px wide (the CPU fallback works at 640)
+  const usesGL = await p.evaluate(() => window.webmix.overlays.key.canvas && window.webmix.overlays.key.canvas.width === 1920);
   ok('key uses WebGL keyer', usesGL);
   const kpx = await p.evaluate(() => Array.from(document.querySelector('#pgm-canvas').getContext('2d').getImageData(200, 200, 1, 1).data));
   ok('green removed by key (no pure green at corner)', !(kpx[1] > 150 && kpx[0] < 80 && kpx[2] < 80), JSON.stringify(kpx));
