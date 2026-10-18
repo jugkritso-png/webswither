@@ -20,6 +20,12 @@
 //            state: connecting | live | error | stopped
 //   url: rtmp://… rtmps://… หรือ srt://host:port?streamid=…&passphrase=…&latency=… (SRT ส่งเป็น MPEG-TS)
 //   (ยังรองรับแบบเดิม ?rtmp=URL สำหรับปลายทางเดียว)
+//
+// รับสัญญาณ SRT เข้ามาเป็น Input (ดูรายละเอียดที่ส่วน "SRT Input" ด้านล่าง):
+//   ws /srt-in?token=…        client → { type: 'open', mode: 'listener'|'caller', port, url, streamid, passphrase, latency }
+//                             server → { type: 'opened', id, port } แล้ว { type: 'status', state: waiting|connecting|live|error, info }
+//   ws /srt-in/data?token=…&id=…   ข้อมูลภาพ MPEG-TS (binary) สำหรับ mpegts.js
+//   SRT_PORTS     ช่วงพอร์ต UDP สำหรับโหมด listener (ค่าเริ่มต้น 9000-9009)
 
 const http = require('http');
 const { WebSocketServer } = require('ws');
@@ -73,15 +79,200 @@ const RETRY_MS = 5000;
 const maskUrl = url => (/^srt:/i.test(url) ? url.replace(/\?.*$/, '?***') : url.replace(/[^/]+$/, '***'));
 
 // หน้าเช็กสถานะ: เปิด https://โดเมน/ ในเบราว์เซอร์แล้วต้องเห็นข้อความ OK
+/* ==========================================================================
+   SRT Input — รับสัญญาณ SRT (จาก OBS, vMix, encoder, กล้อง) แล้วส่งต่อให้หน้า WebMix
+   เบราว์เซอร์รับ SRT เองไม่ได้ จึงแปลงเป็น MPEG-TS ผ่าน WebSocket ให้ mpegts.js เล่น
+   - /srt-in        ช่องควบคุม (JSON): เปิด/ปิด session และรายงานสถานะ
+   - /srt-in/data   ช่องข้อมูลภาพ (binary MPEG-TS) สำหรับตัวเล่นในเบราว์เซอร์
+   วิดีโอ H.264 ส่งต่อโดยไม่เข้ารหัสใหม่ (แทบไม่ใช้ CPU แม้เป็น 4K) — ถ้าเป็น HEVC ฯลฯ จะแปลงเป็น H.264 ให้อัตโนมัติ
+   ========================================================================== */
+const crypto = require('crypto');
+const SRT_PORT_RANGE = (() => {
+  const m = /^(\d+)\s*-\s*(\d+)$/.exec(process.env.SRT_PORTS || '9000-9009');
+  return m ? [Number(m[1]), Number(m[2])] : [9000, 9009];
+})();
+const SRT_LATENCIES_MS = [120, 200, 500, 1000, 2000, 4000];
+const ingests = new Map();
+const usedPorts = new Set();
+
+function ingestControl(ws, req) {
+  const tag = `[${req.socket.remoteAddress} srt-in]`;
+  let s = null;
+  const send = obj => { if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(obj)); };
+  const fail = message => { send({ type: 'error', message }); ws.close(1008, 'rejected'); };
+
+  ws.on('message', (data, isBinary) => {
+    if (isBinary || s) return;
+    let msg;
+    try { msg = JSON.parse(String(data)); } catch (e) { return; }
+    if (msg.type !== 'open') return;
+    if (!SRT_SUPPORTED) return fail('ffmpeg ในเซิร์ฟเวอร์นี้ไม่รองรับ SRT');
+
+    const mode = msg.mode === 'caller' ? 'caller' : 'listener';
+    const latency = SRT_LATENCIES_MS.includes(Number(msg.latency)) ? Number(msg.latency) : 500;
+    const passphrase = String(msg.passphrase || '');
+    if (passphrase && (passphrase.length < 10 || passphrase.length > 64)) return fail('รหัสผ่าน SRT ต้องยาว 10–64 ตัวอักษร');
+    let port = 0, target = '';
+    if (mode === 'listener') {
+      port = Number(msg.port);
+      if (!Number.isInteger(port) || port < SRT_PORT_RANGE[0] || port > SRT_PORT_RANGE[1]) {
+        return fail(`พอร์ตต้องอยู่ในช่วง ${SRT_PORT_RANGE[0]}–${SRT_PORT_RANGE[1]} (ตั้งด้วย SRT_PORTS บนเซิร์ฟเวอร์)`);
+      }
+      if (usedPorts.has(port)) return fail(`พอร์ต ${port} ถูกใช้โดย Input อื่นอยู่แล้ว`);
+      usedPorts.add(port);
+    } else {
+      target = String(msg.url || '').trim();
+      if (!SRT_RE.test(target)) return fail('URL ต้องอยู่ในรูปแบบ srt://host:port');
+    }
+
+    s = {
+      id: crypto.randomBytes(12).toString('hex'), mode, port, target, latency, passphrase,
+      streamid: String(msg.streamid || '').slice(0, 512),
+      transcode: false, proc: null, viewers: new Set(), state: 'starting', info: null, message: '', closed: false, timer: null
+    };
+    ingests.set(s.id, s);
+    console.log(`${tag} open ${mode} ${mode === 'listener' ? 'port ' + port : target.replace(/\?.*$/, '')}`);
+    send({ type: 'opened', id: s.id, mode, port, portRange: SRT_PORT_RANGE });
+    startIngest(s, send, tag);
+  });
+
+  ws.on('close', () => {
+    if (!s) return;
+    s.closed = true;
+    clearTimeout(s.timer);
+    if (s.proc) s.proc.kill('SIGKILL');
+    for (const v of s.viewers) v.close(1000, 'closed');
+    if (s.mode === 'listener') usedPorts.delete(s.port);
+    ingests.delete(s.id);
+    console.log(`${tag} closed`);
+  });
+}
+
+function startIngest(s, send, tag) {
+  if (s.closed) return;
+  const lat = String(s.latency * 1000);
+  let input;
+  if (s.mode === 'listener') {
+    // timeout = ตรวจว่าผู้ส่งหายไปภายใน 3 วินาที (ไม่กระทบการรอผู้ส่งเชื่อมต่อเข้ามา)
+    input = `srt://0.0.0.0:${s.port}?mode=listener&latency=${lat}&pkt_size=1316&timeout=3000000`;
+  } else {
+    const u = new URL(s.target);
+    u.searchParams.delete('passphrase');
+    u.searchParams.set('mode', 'caller');
+    u.searchParams.set('latency', lat);
+    u.searchParams.set('timeout', '3000000');
+    if (s.streamid) u.searchParams.set('streamid', s.streamid);
+    input = `srt://${u.host}?${u.searchParams.toString()}`;
+  }
+  // ขั้นที่ 1: รับ SRT แล้วส่งต่อวิดีโอแบบเดิม (copy) — ไม่ต้องตัดการเชื่อมต่อของผู้ส่งเมื่อต้องแปลง codec
+  const proc = spawn(FFMPEG, [
+    '-hide_banner', '-loglevel', 'info', '-nostats', '-progress', 'pipe:3',
+    ...(s.passphrase ? ['-passphrase', s.passphrase] : []),
+    '-fflags', '+nobuffer+genpts', '-probesize', '2000000', '-analyzeduration', '2500000',
+    '-i', input,
+    '-map', '0:v:0?', '-map', '0:a:0?',
+    '-c:v', 'copy', '-c:a', 'aac', '-b:a', '160k', '-ar', '48000',
+    '-f', 'mpegts', '-mpegts_flags', '+resend_headers', 'pipe:1'
+  ], { stdio: ['ignore', 'pipe', 'pipe', 'pipe'] });
+  s.proc = proc;
+  s.info = null;
+  s.transcode = false;
+  setState(s, s.mode === 'listener' ? 'waiting' : 'connecting', '', send);
+
+  const toViewers = chunk => {
+    for (const v of s.viewers) {
+      // ตัวเล่นที่รับไม่ทัน (เน็ตช้า) ข้ามข้อมูลไปก่อน ไม่ให้หน่วยความจำบวม
+      if (v.readyState === v.OPEN && v.bufferedAmount < 16 * 1024 * 1024) v.send(chunk);
+    }
+  };
+  // ขั้นที่ 2 (เฉพาะเมื่อไม่ใช่ H.264): แปลงเป็น H.264 เพื่อให้ทุกเบราว์เซอร์เล่นได้
+  let route = null, pending = [], pendingBytes = 0, transcoder = null;
+  const decide = codec => {
+    if (route) return;
+    if (codec === 'h264') {
+      route = toViewers;
+    } else {
+      console.log(`${tag} source is ${codec} → transcoding to H.264`);
+      s.transcode = true;
+      transcoder = spawn(FFMPEG, [
+        '-hide_banner', '-loglevel', 'error', '-probesize', '1000000', '-analyzeduration', '1000000', '-f', 'mpegts', '-i', 'pipe:0',
+        '-map', '0:v:0?', '-map', '0:a:0?',
+        '-c:v', 'libx264', '-preset', 'veryfast', '-tune', 'zerolatency', '-pix_fmt', 'yuv420p', '-g', '60',
+        '-c:a', 'copy', '-f', 'mpegts', '-mpegts_flags', '+resend_headers', 'pipe:1'
+      ], { stdio: ['pipe', 'pipe', 'ignore'] });
+      transcoder.stdin.on('error', () => {});
+      transcoder.stdout.on('data', toViewers);
+      transcoder.on('error', () => {});
+      route = chunk => { if (transcoder.stdin.writable) transcoder.stdin.write(chunk); };
+    }
+    pending.forEach(route);
+    pending = [];
+  };
+
+  let inputSection = true, lastErr = '';
+  proc.stderr.on('data', b => {
+    for (const line of String(b).split('\n')) {
+      if (/^Output #0/.test(line)) {
+        inputSection = false;
+        if (!route) decide(s.info ? s.info.codec : 'h264');
+      }
+      const v = inputSection && /Stream #0:\d+.*?: Video: (\w+).*?, (\d{2,5})x(\d{2,5})/.exec(line);
+      if (v) {
+        const fps = /([\d.]+) fps/.exec(line);
+        s.info = { codec: v[1], width: Number(v[2]), height: Number(v[3]), fps: fps ? Number(fps[1]) : 0 };
+      }
+      if (/error|failed|refused|reject|invalid/i.test(line)) lastErr = line.trim().slice(0, 200);
+    }
+  });
+  proc.stdio[3].on('data', b => {
+    const m = /out_time_us=(\d+)/.exec(String(b));
+    if (m && Number(m[1]) > 0 && s.state !== 'live' && s.proc === proc) setState(s, 'live', '', send);
+  });
+  proc.stdout.on('data', chunk => {
+    if (route) return route(chunk);
+    if (pendingBytes < 32 * 1024 * 1024) { pending.push(chunk); pendingBytes += chunk.length; }
+  });
+  proc.on('error', err => { lastErr = err.message; });
+  proc.on('close', () => {
+    if (transcoder) { transcoder.stdin.end(); setTimeout(() => transcoder.kill('SIGKILL'), 1000).unref(); }
+    if (s.proc !== proc) return;
+    s.proc = null;
+    if (s.closed) return;
+    // แหล่งสัญญาณหยุด/หลุด — ปิดตัวเล่นเดิม แล้วรอรับ/ดึงสัญญาณใหม่อัตโนมัติ
+    for (const v of s.viewers) v.close(4000, 'restart');
+    const wasLive = s.state === 'live';
+    setState(s, 'error', wasLive ? 'สัญญาณหยุด — กำลังรอสัญญาณใหม่' : (lastErr || 'เชื่อมต่อไม่ได้'), send);
+    s.timer = setTimeout(() => startIngest(s, send, tag), s.mode === 'listener' ? 1000 : 3000);
+  });
+}
+
+function setState(s, state, message, send) {
+  s.state = state;
+  s.message = message;
+  send({ type: 'status', state, message, info: s.info, transcode: s.transcode });
+}
+
+function ingestData(ws, url) {
+  const s = ingests.get(url.searchParams.get('id') || '');
+  if (!s) return ws.close(1008, 'unknown input');
+  s.viewers.add(ws);
+  ws.on('close', () => s.viewers.delete(ws));
+}
+
 const server = http.createServer((req, res) => {
   res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' });
-  res.end(`WebMix Stream Gateway: OK (${wss.clients.size} active)\n`);
+  res.end(`WebMix Stream Gateway: OK (${wss.clients.size} active, ${ingests.size} SRT inputs)\n`);
 });
 const wss = new WebSocketServer({ server });
 server.listen(PORT);
 
 wss.on('connection', (ws, req) => {
-  const params = new URL(req.url, 'http://localhost').searchParams;
+  const reqUrl = new URL(req.url, 'http://localhost');
+  if (reqUrl.pathname === '/srt-in' || reqUrl.pathname === '/srt-in/data') {
+    if (TOKEN && reqUrl.searchParams.get('token') !== TOKEN) return ws.close(1008, 'invalid token');
+    return reqUrl.pathname === '/srt-in' ? ingestControl(ws, req) : ingestData(ws, reqUrl);
+  }
+  const params = reqUrl.searchParams;
   const tag = `[${req.socket.remoteAddress}]`;
   if (TOKEN && params.get('token') !== TOKEN) return ws.close(1008, 'invalid token');
 

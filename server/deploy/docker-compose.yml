@@ -10,8 +10,12 @@ services:
       MAX_DESTINATIONS: ${MAX_DESTINATIONS:-6}
       VIDEO_ENCODER: ${VIDEO_ENCODER:-libx264}
       X264_PRESET: ${X264_PRESET:-}
+      SRT_PORTS: ${SRT_PORTS:-9000-9009}
     expose:
       - "8080"
+    ports:
+      # รับสัญญาณ SRT จาก OBS / vMix / encoder (UDP)
+      - "${SRT_PORTS:-9000-9009}:${SRT_PORTS:-9000-9009}/udp"
     logging:
       driver: json-file
       options: { max-size: "10m", max-file: "3" }

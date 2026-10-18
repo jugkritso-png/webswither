@@ -310,7 +310,8 @@
     destinations: [], rememberKey: false,
     title: { headline: 'BREAKING NEWS', subtitle: 'รายงานสดจากสตูดิโอ WebMix Pro', color: '#ef4444' },
     pip: { position: 'br', size: 0.32 },
-    key: { color: 'green', tolerance: 60 }
+    key: { color: 'green', tolerance: 60 },
+    srtInputs: []
   };
   const saved = store.get('settings', {}) || {};
   const settings = {
@@ -351,7 +352,10 @@
 
   function saveSettings() {
     const copy = JSON.parse(JSON.stringify(settings));
-    if (!settings.rememberKey) copy.destinations.forEach(d => { d.key = ''; d.passphrase = ''; });
+    if (!settings.rememberKey) {
+      copy.destinations.forEach(d => { d.key = ''; d.passphrase = ''; });
+      (copy.srtInputs || []).forEach(c => { c.passphrase = ''; });
+    }
     store.set('settings', copy);
   }
 
@@ -437,7 +441,8 @@
     media: { icon: 'film', label: 'VIDEO' },
     camera: { icon: 'video', label: 'CAMERA' },
     screen: { icon: 'monitor', label: 'SCREEN' },
-    wireless: { icon: 'phone', label: 'MOBILE' }
+    wireless: { icon: 'phone', label: 'MOBILE' },
+    srt: { icon: 'broadcast', label: 'SRT' }
   };
   const LIVE_TYPES = ['camera', 'screen', 'wireless'];
 
@@ -513,12 +518,19 @@
     ctx.strokeStyle = 'rgba(255,255,255,.035)'; ctx.lineWidth = 18 * s;
     for (let x = -h; x < w; x += 60 * s) { ctx.beginPath(); ctx.moveTo(x, h); ctx.lineTo(x + h, 0); ctx.stroke(); }
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillStyle = '#f87171';
+    const srtWaiting = inp.type === 'srt' && inp.srtState !== 'live';
+    ctx.fillStyle = srtWaiting && inp.srtState !== 'error' ? '#f5a524' : '#f87171';
     ctx.font = `800 ${44 * s}px ${FONT}`;
-    ctx.fillText('NO SIGNAL', w / 2, h * 0.46);
+    ctx.fillText(srtWaiting ? (inp.srtState === 'waiting' ? 'WAITING FOR SRT' : inp.srtState === 'connecting' ? 'CONNECTING SRT…' : 'NO SIGNAL') : 'NO SIGNAL', w / 2, h * 0.46);
     ctx.fillStyle = '#8b94a7';
     fitFont(ctx, inp.name, 500, 22 * s, FONT, w * 0.8);
     ctx.fillText(inp.name, w / 2, h * 0.56);
+    if (inp.type === 'srt') {
+      const hint = inp.srt.mode === 'listener' ? `UDP ${inp.srt.port} · ${inp.srt.latency} ms` : inp.srt.url.replace(/\?.*$/, '');
+      ctx.fillStyle = '#5d6578';
+      fitFont(ctx, hint, 500, 18 * s, MONO, w * 0.8);
+      ctx.fillText(hint, w / 2, h * 0.64);
+    }
   }
 
   function drawSource(ctx, inp, w, h) {
@@ -1041,8 +1053,10 @@
     }
     if (inp.url) URL.revokeObjectURL(inp.url);
     if (inp.peerId) wireless.release(inp.peerId);
+    if (inp.type === 'srt') closeSrtInput(inp);
     audio.removeForInput(id);
     inputs.splice(inputs.indexOf(inp), 1);
+    if (inp.type === 'srt') saveSrtInputs();
 
     tr.auto = false; tr.progress = 0; tbar.set(tr.base);
     $('[data-action="auto"]').classList.remove('is-running');
@@ -1076,6 +1090,7 @@
     const name = result.form.name.value.trim();
     if (name) inp.name = name;
     if (hasText) inp.text = result.form.text.value.trim();
+    if (inp.type === 'srt') saveSrtInputs();
     const ch = audio.channels.find(c => c.inputId === inp.id);
     if (ch) { ch.name = inp.name; renderMixer(); }
     renderInputs();
@@ -1576,6 +1591,249 @@
     },
     connectedCount() { return inputs.filter(i => i.type === 'wireless' && i.status === 'live').length; }
   };
+
+  /* ------------------------------------------------------ SRT input */
+  // รับสัญญาณ SRT (จาก OBS / vMix / encoder / กล้อง) ผ่าน Stream Gateway แล้วเล่นด้วย mpegts.js
+  const SRT_IN_STATES = { waiting: 'WAITING', connecting: 'CONNECTING', error: 'NO SIGNAL', offline: 'OFFLINE' };
+  let mpegtsLoading = null;
+  function loadMpegts() {
+    if (window.mpegts) return Promise.resolve(window.mpegts);
+    if (!mpegtsLoading) {
+      mpegtsLoading = new Promise((resolve, reject) => {
+        const el = document.createElement('script');
+        el.src = 'assets/vendor/mpegts-1.7.3.min.js';
+        el.onload = () => resolve(window.mpegts);
+        el.onerror = () => { mpegtsLoading = null; reject(new Error('โหลดตัวเล่น SRT ไม่สำเร็จ')); };
+        document.head.appendChild(el);
+      });
+    }
+    return mpegtsLoading;
+  }
+
+  function gatewayEndpoint(path, extra = {}) {
+    const u = new URL(settings.gateway.trim());
+    u.pathname = path;
+    for (const [k, v] of Object.entries(extra)) u.searchParams.set(k, v);
+    return u.toString();
+  }
+
+  function saveSrtInputs() {
+    settings.srtInputs = inputs.filter(i => i.type === 'srt').map(i => ({ ...i.srt, name: i.name }));
+    saveSettings();
+  }
+
+  // ที่อยู่สำหรับใส่ใน OBS / vMix (โหมด listener: ผู้ส่งเป็นฝ่ายเชื่อมต่อเข้ามาที่ Gateway)
+  function srtSenderUrl(cfg) {
+    let host = '';
+    try { host = new URL(settings.gateway.trim()).hostname; } catch (e) {}
+    let url = `srt://${host}:${cfg.port}?mode=caller&latency=${cfg.latency * 1000}`;
+    if (cfg.passphrase) url += `&passphrase=${cfg.passphrase}&pbkeylen=16`;
+    return url;
+  }
+
+  async function openSrtInputDialog() {
+    const gwErr = gatewayProblem();
+    if (gwErr) { toast(`${gwErr} — การรับสัญญาณ SRT ต้องใช้ Stream Gateway`, 'warn'); openSettings('stream'); return; }
+    const used = inputs.filter(i => i.type === 'srt' && i.srt.mode === 'listener').map(i => i.srt.port);
+    const port = [9000, 9001, 9002, 9003, 9004, 9005, 9006, 9007, 9008, 9009].find(p => !used.includes(p)) || 9000;
+    const n = inputs.filter(i => i.type === 'srt').length + 1;
+    const result = await dialog({
+      title: 'เพิ่มสัญญาณ SRT',
+      body: `
+        <label class="field"><span>ชื่อ Input</span><input name="name" class="input" maxlength="32" value="SRT ${n}"></label>
+        <div class="field"><span>วิธีรับสัญญาณ</span>
+          <div class="seg srt-mode"><button type="button" data-value="listener" class="is-active">รอรับ (ผู้ส่งเชื่อมต่อเข้ามา)</button><button type="button" data-value="caller">ดึงจาก SRT Server</button></div>
+        </div>
+        <div class="srt-listener">
+          <label class="field"><span>พอร์ต UDP บน Gateway</span><input name="port" class="input mono" type="number" min="1" max="65535" value="${port}"></label>
+          <p class="note">ให้ OBS / vMix / encoder ส่ง SRT แบบ <b>caller</b> มาที่เซิร์ฟเวอร์ Gateway พอร์ตนี้ (ค่าเริ่มต้นรองรับพอร์ต 9000–9009 และต้องเปิดพอร์ต UDP ในไฟร์วอลล์ของเซิร์ฟเวอร์)</p>
+        </div>
+        <div class="srt-caller" hidden>
+          <label class="field"><span>SRT URL ของต้นทาง (ต้นทางต้องเป็นโหมด listener)</span><input name="url" class="input mono" placeholder="srt://encoder.example.com:9000"></label>
+          <label class="field"><span>Stream ID (ถ้ามี)</span><input name="streamid" class="input mono" placeholder="เช่น #!::r=live/cam1,m=request"></label>
+        </div>
+        <div class="field-row">
+          <label class="field"><span>รหัสผ่านเข้ารหัส (ถ้ามี, 10–64 ตัว)</span><input name="passphrase" class="input mono" type="password" autocomplete="off"></label>
+          <label class="field"><span>Latency</span><select name="latency" class="select">
+            ${SRT_LATENCIES.map(ms => `<option value="${ms}" ${ms === 500 ? 'selected' : ''}>${ms} ms</option>`).join('')}
+          </select></label>
+        </div>`,
+      actions: [{ label: 'ยกเลิก' }, { label: 'เพิ่ม Input', primary: true, value: 'add' }],
+      onOpen(modal) {
+        let mode = 'listener';
+        const seg = $('.srt-mode', modal);
+        seg.addEventListener('click', e => {
+          const b = e.target.closest('button');
+          if (!b) return;
+          mode = b.dataset.value;
+          $$('button', seg).forEach(x => x.classList.toggle('is-active', x === b));
+          $('.srt-listener', modal).hidden = mode !== 'listener';
+          $('.srt-caller', modal).hidden = mode !== 'caller';
+          modal.dataset.mode = mode;
+        });
+        modal.dataset.mode = mode;
+      }
+    });
+    if (result?.value !== 'add') return;
+    const f = result.form;
+    const mode = f.url.closest('.modal').dataset.mode || 'listener';
+    const cfg = {
+      mode,
+      port: +f.port.value || 9000,
+      url: f.url.value.trim(),
+      streamid: f.streamid.value.trim(),
+      passphrase: f.passphrase.value,
+      latency: +f.latency.value || 500
+    };
+    if (cfg.passphrase && (cfg.passphrase.length < 10 || cfg.passphrase.length > 64)) { toast('รหัสผ่าน SRT ต้องยาว 10–64 ตัวอักษร', 'warn'); return; }
+    if (mode === 'caller' && !SRT_RE.test(cfg.url)) { toast('SRT URL ต้องอยู่ในรูปแบบ srt://host:port', 'warn'); return; }
+    if (mode === 'listener' && inputs.some(i => i.type === 'srt' && i.srt.mode === 'listener' && i.srt.port === cfg.port)) {
+      toast(`พอร์ต ${cfg.port} ถูกใช้โดย Input อื่นแล้ว`, 'warn'); return;
+    }
+    const inp = createSrtInput(cfg, f.name.value.trim() || 'SRT');
+    saveSrtInputs();
+    if (mode === 'listener') showSrtSenderInfo(inp);
+  }
+
+  function createSrtInput(cfg, name) {
+    const v = document.createElement('video');
+    v.playsInline = true; v.autoplay = true; v.muted = false;
+    v.disableRemotePlayback = true;
+    pool.appendChild(v);
+    const inp = addInput({ type: 'srt', name, el: v, status: 'nosignal', srt: cfg, srtState: 'connecting' });
+    v.addEventListener('playing', () => setInputStatus(inp, 'live'));
+    audio.addElement(inp, v);
+    connectSrtInput(inp);
+    return inp;
+  }
+
+  function connectSrtInput(inp) {
+    if (inp.removed) return;
+    clearTimeout(inp.srtRetry);
+    if (gatewayProblem()) { inp.srtState = 'offline'; inp.srtMessage = 'ยังไม่ได้ตั้งค่า Stream Gateway'; return; }
+    const ws = new WebSocket(gatewayEndpoint('/srt-in'));
+    inp.srtCtl = ws;
+    inp.srtState = 'connecting';
+    ws.onopen = () => {
+      const c = inp.srt;
+      ws.send(JSON.stringify({ type: 'open', mode: c.mode, port: c.port, url: c.url, streamid: c.streamid, passphrase: c.passphrase, latency: c.latency }));
+    };
+    ws.onmessage = ev => {
+      let msg;
+      try { msg = JSON.parse(ev.data); } catch (e) { return; }
+      if (msg.type === 'opened') {
+        inp.srtSession = msg.id;
+      } else if (msg.type === 'status') {
+        const prev = inp.srtState;
+        inp.srtState = msg.state;
+        inp.srtMessage = msg.message || '';
+        inp.srtInfo = msg.info || null;
+        if (msg.state === 'live') {
+          startSrtPlayer(inp);
+          if (prev !== 'live') toast(`${inp.name}: รับสัญญาณ SRT แล้ว${msg.info ? ` (${msg.info.width}×${msg.info.height}${msg.transcode ? `, แปลง ${msg.info.codec.toUpperCase()} → H.264` : ''})` : ''}`, 'success', 3500);
+        } else {
+          stopSrtPlayer(inp);
+          setInputStatus(inp, 'nosignal');
+        }
+      } else if (msg.type === 'error') {
+        inp.srtFatal = true;
+        inp.srtState = 'error';
+        inp.srtMessage = msg.message;
+        toast(`${inp.name}: ${msg.message}`, 'error', 7000);
+      }
+    };
+    ws.onclose = () => {
+      if (inp.srtCtl !== ws) return;
+      stopSrtPlayer(inp);
+      setInputStatus(inp, 'nosignal');
+      if (inp.removed) return;
+      if (inp.srtFatal) { inp.srtFatal = false; inp.srtState = 'error'; return; }
+      // Gateway ปิด/รีสตาร์ท — ลองเชื่อมต่อใหม่เรื่อย ๆ
+      inp.srtState = 'offline';
+      inp.srtRetry = setTimeout(() => connectSrtInput(inp), 5000);
+    };
+  }
+
+  async function startSrtPlayer(inp) {
+    if (inp.player || inp.playerStarting || !inp.srtSession) return;
+    inp.playerStarting = true;
+    let mpegts;
+    try { mpegts = await loadMpegts(); }
+    catch (e) { toast(e.message, 'error'); inp.playerStarting = false; return; }
+    inp.playerStarting = false;
+    if (inp.removed || inp.srtState !== 'live' || inp.player) return;
+    // iPhone (iOS 17.1+) มี ManagedMediaSource แทน MediaSource
+    if (!window.MediaSource && window.ManagedMediaSource) window.MediaSource = window.ManagedMediaSource;
+    // Gateway ส่งภาพเป็น H.264 + AAC เสมอ — Chromium บางรุ่น (ไม่มี codec เชิงพาณิชย์) ถอดรหัสไม่ได้
+    if (window.MediaSource && !window.MediaSource.isTypeSupported('video/mp4; codecs="avc1.42E01E"')) {
+      if (!inp.codecWarned) {
+        inp.codecWarned = true;
+        toast('เบราว์เซอร์นี้ถอดรหัสวิดีโอ H.264 ไม่ได้ จึงแสดงสัญญาณ SRT ไม่ได้ — ใช้ Chrome, Edge, Safari หรือ Firefox', 'error', 9000);
+      }
+      return;
+    }
+    if (!mpegts.isSupported()) { toast('เบราว์เซอร์นี้เล่นสัญญาณ SRT ไม่ได้ (ต้องรองรับ Media Source Extensions)', 'error'); return; }
+    if (mpegts.LoggingControl) mpegts.LoggingControl.enableAll = false;
+    const player = mpegts.createPlayer(
+      { type: 'mpegts', isLive: true, url: gatewayEndpoint('/srt-in/data', { id: inp.srtSession }) },
+      { enableWorker: false, enableStashBuffer: false, lazyLoad: false, autoCleanupSourceBuffer: true,
+        liveBufferLatencyChasing: true, liveBufferLatencyMaxLatency: 1.2, liveBufferLatencyMinRemain: 0.2 }
+    );
+    inp.player = player;
+    player.attachMediaElement(inp.el);
+    player.on(mpegts.Events.ERROR, () => {
+      if (inp.player !== player) return;
+      stopSrtPlayer(inp);
+      setTimeout(() => { if (inp.srtState === 'live') startSrtPlayer(inp); }, 1500);
+    });
+    player.load();
+    inp.el.play().catch(() => { inp.el.muted = true; inp.el.play().catch(() => {}); });
+  }
+
+  function stopSrtPlayer(inp) {
+    const player = inp.player;
+    inp.player = null;
+    if (!player) return;
+    try { player.pause(); player.unload(); player.detachMediaElement(); player.destroy(); } catch (e) {}
+  }
+
+  function closeSrtInput(inp) {
+    inp.removed = true;
+    clearTimeout(inp.srtRetry);
+    stopSrtPlayer(inp);
+    if (inp.srtCtl) { const ws = inp.srtCtl; inp.srtCtl = null; ws.close(1000, 'removed'); }
+  }
+
+  function showSrtSenderInfo(inp) {
+    const c = inp.srt;
+    let host = '';
+    try { host = new URL(settings.gateway.trim()).hostname; } catch (e) {}
+    const url = srtSenderUrl(c);
+    dialog({
+      title: `ตั้งค่าผู้ส่งสำหรับ “${inp.name}”`,
+      body: `
+        <p class="modal-text">ใส่ค่าด้านล่างในโปรแกรม/อุปกรณ์ที่จะส่งภาพเข้ามา แล้วกดเริ่มส่ง ภาพจะขึ้นใน Input นี้อัตโนมัติ</p>
+        <label class="field"><span>OBS → ตั้งค่า → สตรีม → บริการ “กำหนดเอง” → เซิร์ฟเวอร์</span>
+          <div class="link-row"><input class="input" readonly value="${esc(url)}"><button type="button" class="btn btn-icon srt-copy" title="คัดลอก">${icon('copy')}</button></div></label>
+        <div class="kbd-grid">
+          <div class="kbd-row"><span>Host / Address</span><kbd>${esc(host)}</kbd></div>
+          <div class="kbd-row"><span>Port (UDP)</span><kbd>${c.port}</kbd></div>
+          <div class="kbd-row"><span>Mode</span><kbd>Caller</kbd></div>
+          <div class="kbd-row"><span>Latency</span><kbd>${c.latency} ms</kbd></div>
+          <div class="kbd-row"><span>Passphrase</span><kbd>${c.passphrase ? 'ตามที่ตั้งไว้ (AES-128)' : 'ไม่มี'}</kbd></div>
+          <div class="kbd-row"><span>Codec ที่แนะนำ</span><kbd>H.264 + AAC</kbd></div>
+        </div>
+        <p class="note">ต้องเปิดพอร์ต <b>UDP ${c.port}</b> ในไฟร์วอลล์ของเซิร์ฟเวอร์ Gateway · ถ้าส่งเป็น H.265/HEVC ระบบจะแปลงเป็น H.264 ให้อัตโนมัติ (ใช้ CPU ของเซิร์ฟเวอร์มากขึ้น)${c.passphrase && /[&#?\s]/.test(c.passphrase) ? ' · รหัสผ่านนี้มีอักขระ & # ? หรือช่องว่าง ซึ่ง OBS อ่านจาก URL ไม่ได้ — ควรเปลี่ยนรหัสผ่าน' : ''}</p>`,
+      actions: [{ label: 'ปิด', primary: true }],
+      onOpen(modal) {
+        $('.srt-copy', modal).addEventListener('click', () => {
+          (navigator.clipboard ? navigator.clipboard.writeText(url) : Promise.reject())
+            .then(() => toast('คัดลอกแล้ว', 'success'))
+            .catch(() => toast('คัดลอกไม่สำเร็จ — เลือกข้อความแล้วคัดลอกเอง', 'warn'));
+        });
+      }
+    });
+  }
 
   async function showWirelessDialog() {
     const insecure = location.protocol === 'file:' || !window.isSecureContext || (location.protocol !== 'https:' && !/^(localhost|127\.)/.test(location.hostname));
@@ -2162,6 +2420,7 @@
       'T-Bar เลื่อนเพื่อทำทรานซิชันด้วยมือ เลื่อนสุดแล้วภาพจะสลับ และครั้งต่อไปให้เลื่อนกลับอีกทาง เหมือนสวิตเชอร์จริง',
       'FTB จางภาพ Program ทั้งหมดเป็นสีดำ (รวมกราฟิก) กดอีกครั้งเพื่อกลับมา']],
     ['Input', ['เพิ่ม Input: กล้อง/แคปเจอร์การ์ด (เลือกอุปกรณ์ ความละเอียด และเสียงได้), แชร์หน้าจอ, ไฟล์วิดีโอ, ภาพนิ่ง/โลโก้, Color Bars, Slate ข้อความ, นาฬิกา, Black',
+      'สัญญาณ SRT: เพิ่ม Input → “สัญญาณ SRT” เพื่อรับภาพจาก OBS / vMix / encoder ผ่าน Stream Gateway — โหมดรอรับ (ผู้ส่งเชื่อมต่อเข้ามาที่พอร์ต UDP 9000–9009) หรือดึงจาก SRT Server ระบบแสดงค่าที่ต้องใส่ในโปรแกรมผู้ส่งให้ และเชื่อมต่อกลับเองเมื่อสัญญาณหลุด',
       'ไฟล์วิดีโอมีปุ่มเล่น/หยุด เล่นใหม่ และเล่นวนซ้ำ · ปุ่มดินสอใช้แก้ชื่อ (และข้อความของ Slate/นาฬิกา) · ปุ่ม ✕ ลบ Input',
       'ภาพแนวตั้งหรือสัดส่วนอื่นจะถูกย่อให้พอดีจอโดยไม่ยืดภาพ']],
     ['กล้องมือถือไร้สาย', ['กดปุ่ม “กล้องมือถือ” แล้วสแกน QR ด้วยมือถือ (ต้องเปิดเว็บผ่าน HTTPS)',
@@ -2223,6 +2482,7 @@
       ['film', 'ไฟล์วิดีโอ', () => pickFiles('video/*', addVideoFiles)],
       ['image', 'ภาพนิ่ง / โลโก้', () => pickFiles('image/*', addImageFiles)],
       ['phone', 'กล้องมือถือไร้สาย', showWirelessDialog],
+      ['broadcast', 'สัญญาณ SRT (OBS / vMix / encoder)', openSrtInputDialog],
       null,
       ['bars', 'Color Bars', () => addGenerator('bars')],
       ['type', 'Slate ข้อความ', () => addGenerator('slate')],
@@ -2298,7 +2558,9 @@
   function updateCardResolutions() {
     for (const inp of inputs) {
       const card = $(`#inputs-grid .card[data-id="${inp.id}"] .card-sub`);
-      if (!card || inp.status !== 'live') continue;
+      if (!card) continue;
+      if (inp.type === 'srt' && inp.status !== 'live') { card.textContent = `SRT · ${SRT_IN_STATES[inp.srtState] || 'NO SIGNAL'}`; continue; }
+      if (inp.status !== 'live') continue;
       const w = inp.el?.videoWidth || inp.el?.naturalWidth, h = inp.el?.videoHeight || inp.el?.naturalHeight;
       const meta = TYPE_META[inp.type];
       const label = inp.name.toUpperCase() === meta.label ? '' : meta.label;
@@ -2400,7 +2662,11 @@
     });
 
     // ปลดล็อกระบบเสียงเมื่อผู้ใช้แตะหน้าจอครั้งแรก (ข้อกำหนดของเบราว์เซอร์)
-    document.addEventListener('pointerdown', () => audio.ensure(), { once: true, capture: true });
+    document.addEventListener('pointerdown', () => {
+      audio.ensure();
+      // Input SRT ที่สร้างตอนเปิดหน้าอาจถูกเบราว์เซอร์บังคับปิดเสียงไว้ — เปิดเสียงคืนเมื่อผู้ใช้แตะครั้งแรก
+      for (const i of inputs) if (i.type === 'srt' && i.el.muted) { i.el.muted = false; i.el.play().catch(() => {}); }
+    }, { once: true, capture: true });
 
     document.addEventListener('keydown', e => {
       if (e.key === 'Escape') {
@@ -2452,6 +2718,14 @@
     updateTally();
 
     wireless.init();
+    // สร้าง Input SRT ที่ตั้งไว้ครั้งก่อนกลับมา (เชื่อมต่อ Gateway ใหม่ให้อัตโนมัติ)
+    if (Array.isArray(settings.srtInputs)) {
+      for (const c of settings.srtInputs) {
+        if (!c || (c.mode !== 'listener' && c.mode !== 'caller')) continue;
+        createSrtInput({ mode: c.mode, port: +c.port || 9000, url: String(c.url || ''), streamid: String(c.streamid || ''),
+          passphrase: String(c.passphrase || ''), latency: SRT_LATENCIES.includes(+c.latency) ? +c.latency : 500 }, String(c.name || 'SRT'));
+      }
+    }
     tickClock();
     setInterval(tickClock, 1000);
     requestAnimationFrame(rafLoop);

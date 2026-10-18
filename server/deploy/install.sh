@@ -24,6 +24,7 @@ REQ_DOMAIN="${DOMAIN:-}"
 REQ_MAX="${MAX_DESTINATIONS:-}"
 REQ_ENCODER="${VIDEO_ENCODER:-}"
 REQ_PRESET="${X264_PRESET:-}"
+REQ_SRT_PORTS="${SRT_PORTS:-}"
 
 say()  { printf '\033[1;33m==>\033[0m %s\n' "$*"; }
 ok()   { printf '\033[1;32m ✓\033[0m %s\n' "$*"; }
@@ -61,13 +62,14 @@ fi
 cd "$INSTALL_DIR/server/deploy"
 
 # ---------------------------------------------------------------- 3. Config
-DOMAIN="" STREAM_TOKEN="" MAX_DESTINATIONS="" VIDEO_ENCODER="" X264_PRESET=""
+DOMAIN="" STREAM_TOKEN="" MAX_DESTINATIONS="" VIDEO_ENCODER="" X264_PRESET="" SRT_PORTS=""
 # shellcheck disable=SC1091
 [ -f .env ] && . ./.env
 DOMAIN="${REQ_DOMAIN:-$DOMAIN}"
 MAX_DESTINATIONS="${REQ_MAX:-${MAX_DESTINATIONS:-6}}"
 VIDEO_ENCODER="${REQ_ENCODER:-${VIDEO_ENCODER:-libx264}}"
 X264_PRESET="${REQ_PRESET:-$X264_PRESET}"
+SRT_PORTS="${REQ_SRT_PORTS:-${SRT_PORTS:-9000-9009}}"
 
 PUBLIC_IP="$(curl -fsS4 --max-time 10 https://api.ipify.org || curl -fsS4 --max-time 10 https://ifconfig.me || true)"
 if [ -z "$DOMAIN" ]; then
@@ -83,13 +85,14 @@ STREAM_TOKEN=$STREAM_TOKEN
 MAX_DESTINATIONS=$MAX_DESTINATIONS
 VIDEO_ENCODER=$VIDEO_ENCODER
 X264_PRESET=$X264_PRESET
+SRT_PORTS=$SRT_PORTS
 EOF
 ok "โดเมน: $DOMAIN"
 
 # ------------------------------------------------------------- 4. Firewall
 if command -v ufw >/dev/null && ufw status 2>/dev/null | grep -q "Status: active"; then
-  ufw allow 80/tcp >/dev/null && ufw allow 443/tcp >/dev/null
-  ok "เปิดพอร์ต 80 และ 443 ใน ufw แล้ว"
+  ufw allow 80/tcp >/dev/null && ufw allow 443/tcp >/dev/null && ufw allow "${SRT_PORTS/-/:}/udp" >/dev/null
+  ok "เปิดพอร์ต 80, 443 (TCP) และ $SRT_PORTS (UDP สำหรับรับ SRT) ใน ufw แล้ว"
 fi
 
 # ---------------------------------------------------------------- 5. Start
@@ -121,6 +124,7 @@ echo "นำค่านี้ไปใส่ช่อง Stream Gateway ใน 
 echo
 printf '    \033[1;36m%s\033[0m\n' "$GATEWAY_URL"
 echo
+echo "รับสัญญาณ SRT:          srt://$DOMAIN:<พอร์ต $SRT_PORTS> (เปิด UDP $SRT_PORTS ในไฟร์วอลล์ของผู้ให้บริการด้วย)"
 echo "ตรวจสถานะในเบราว์เซอร์:  https://$DOMAIN/"
 echo "ดูค่านี้อีกครั้ง:         cat $INSTALL_DIR/server/deploy/gateway-url.txt"
 echo "ดู log:                  cd $INSTALL_DIR/server/deploy && docker compose logs -f gateway"
