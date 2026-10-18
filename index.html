@@ -41,6 +41,7 @@
     <symbol id="i-edit" viewBox="0 0 24 24"><path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></symbol>
     <symbol id="i-play" viewBox="0 0 24 24"><path d="m7 4 13 8-13 8V4z" fill="currentColor"/></symbol>
     <symbol id="i-pause" viewBox="0 0 24 24"><path d="M7 4h3v16H7zM14 4h3v16h-3z" fill="currentColor"/></symbol>
+    <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="8" height="8" rx="1"/><rect x="13" y="3" width="8" height="8" rx="1"/><rect x="3" y="13" width="8" height="8" rx="1"/><rect x="13" y="13" width="8" height="8" rx="1"/></symbol>
     <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></symbol>
     <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></symbol>
     <symbol id="i-restart" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></symbol>
@@ -80,6 +81,7 @@
         </button>
         <span class="divider"></span>
         <button class="btn btn-icon" data-action="snapshot" title="บันทึกภาพนิ่งจาก Program (PNG)"><svg class="i"><use href="#i-camera"/></svg></button>
+        <button class="btn btn-icon" data-action="multiview" title="Multiview — ทุก Input + Preview/Program พร้อม tally (สำหรับจอที่สอง)"><svg class="i"><use href="#i-grid"/></svg></button>
         <button class="btn btn-icon" data-action="output-window" title="เปิดหน้าต่าง Program Output (ต่อจอ/โปรเจกเตอร์)"><svg class="i"><use href="#i-external"/></svg></button>
         <button class="btn btn-icon" data-action="show" title="โชว์: บันทึก / เปิด / เริ่มใหม่"><svg class="i"><use href="#i-folder"/></svg></button>
         <button class="btn btn-icon" data-action="settings" title="ตั้งค่าเอาต์พุตและการสตรีม"><svg class="i"><use href="#i-sliders"/></svg></button>
@@ -237,7 +239,17 @@
 
   <!-- ===================================================== PHONE CAMERA -->
   <div id="caller" class="caller" hidden>
+    <video id="guest-return" class="guest-return" autoplay playsinline hidden></video>
     <video id="caller-video" autoplay muted playsinline></video>
+    <div id="guest-join" class="guest-join" hidden>
+      <div class="guest-card">
+        <span class="brand-mark"></span>
+        <h1>เข้าร่วมรายการสด</h1>
+        <p id="guest-join-name" class="guest-name"></p>
+        <p class="note">ระบบจะขอใช้กล้องและไมโครโฟน · แนะนำให้ใส่หูฟังเพื่อไม่ให้เสียงสะท้อน</p>
+        <button id="guest-join-btn" class="btn btn-primary btn-lg" type="button">เข้าร่วม</button>
+      </div>
+    </div>
     <div class="caller-top">
       <span class="brand-mark"></span>
       <span class="caller-title">WebMix Camera</span>
@@ -248,6 +260,7 @@
     <div class="caller-bottom">
       <button id="caller-mic" class="round" data-caller="mic" title="ปิด/เปิดไมค์"><svg class="i"><use href="#i-mic"/></svg></button>
       <button class="round lg" data-caller="flip" title="สลับกล้องหน้า/หลัง"><svg class="i"><use href="#i-flip"/></svg></button>
+      <button id="caller-cam" class="round" data-caller="cam" title="ปิด/เปิดกล้อง" hidden><svg class="i"><use href="#i-video"/></svg></button>
       <button id="caller-quality" class="round quality" data-caller="quality" title="คุณภาพภาพ">FHD</button>
       <button class="round" data-caller="end" title="หยุดส่งภาพ"><svg class="i"><use href="#i-power"/></svg></button>
     </div>

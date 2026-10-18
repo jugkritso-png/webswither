@@ -10,7 +10,7 @@ const http = require('http');
 const { spawn, spawnSync } = require('child_process');
 const { ROOT, WORK } = require('./lib');
 
-const ALL = ['switcher', 'multistream', 'mobile', 'srt-output', 'srt-input', 'uhd-4k', 'reconnect', 'record-disk', 'audio-fx', 'show', 'gateway-admin', 'overlay', 'gpu'];
+const ALL = ['switcher', 'multistream', 'mobile', 'srt-output', 'srt-input', 'uhd-4k', 'reconnect', 'record-disk', 'audio-fx', 'show', 'gateway-admin', 'overlay', 'gpu', 'guest', 'multiview'];
 const selected = process.argv.slice(2).length ? process.argv.slice(2) : ALL;
 const SUITE_TIMEOUT = 6 * 60 * 1000;
 
@@ -66,7 +66,7 @@ function runSuite(name) {
       const fail = lines.filter(l => !l.startsWith('PASS'));
       const bad = fail.length > 0 || code !== 0 || pass === 0;
       console.log(`\n${bad ? '✗' : '✓'} ${name}  ${pass} passed${fail.length ? `, ${fail.length} failed` : ''}  (${((Date.now() - started) / 1000).toFixed(0)}s)`);
-      for (const l of bad ? output.split('\n').filter(Boolean) : []) console.log('    ' + l);
+      for (const l of bad || process.env.VERBOSE ? output.split('\n').filter(Boolean) : []) console.log('    ' + l);
       resolve(!bad);
     });
   });

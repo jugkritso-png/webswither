@@ -113,13 +113,18 @@
     $('#studio').hidden = true;
     const root = $('#caller');
     root.hidden = false;
-    document.title = 'WebMix Camera';
+    // แขกรับเชิญทางไกล (?guest=<slot>): ส่งกล้อง+ไมค์ และรับภาพรายการพร้อมเสียง (ไม่มีเสียงตัวเองย้อนกลับ)
+    const params = new URLSearchParams(location.search);
+    const guestSlot = (params.get('guest') || '').replace(/[^a-z0-9]/gi, '').slice(0, 16);
+    const guestName = (params.get('n') || '').slice(0, 40);
+    document.title = guestSlot ? 'WebMix — แขกรับเชิญ' : 'WebMix Camera';
+    const returnVideo = $('#guest-return');
 
     const video = $('#caller-video');
     const statusEl = $('#caller-status');
     const msgEl = $('#caller-msg');
-    let facing = 'environment', stream = null, peer = null, call = null, conn = null;
-    let retryTimer = null, stopped = false, micOn = true;
+    let facing = guestSlot ? 'user' : 'environment', stream = null, peer = null, call = null, conn = null;
+    let retryTimer = null, stopped = false, micOn = true, camOn = true;
 
     const setStatus = (text, kind = '') => { statusEl.textContent = text; statusEl.className = `chip ${kind}`; };
     const showMsg = text => { msgEl.textContent = text; msgEl.hidden = !text; };
@@ -135,7 +140,8 @@
       { label: 'FHD', w: 1920, h: 1080, bitrate: 6000000 },
       { label: '4K', w: 3840, h: 2160, bitrate: 16000000 }
     ];
-    let quality = QUALITIES[Math.min(2, Math.max(0, +store.get('caller-quality', 1)))] || QUALITIES[1];
+    // แขกรับเชิญใช้ HD (คุยผ่านเน็ตบ้าน/มือถือได้ลื่น) — กล้องมือถือของทีมงานเลือกได้ถึง 4K
+    let quality = guestSlot ? QUALITIES[0] : QUALITIES[Math.min(2, Math.max(0, +store.get('caller-quality', 1)))] || QUALITIES[1];
     const getCamera = withAudio => navigator.mediaDevices.getUserMedia({
       video: { facingMode: facing, width: { ideal: quality.w }, height: { ideal: quality.h }, frameRate: { ideal: 30 } },
       audio: withAudio ? { echoCancellation: true, noiseSuppression: true } : false
@@ -201,13 +207,16 @@
       // ใช้ ID เดิมของเครื่องนี้ทุกครั้ง — สตูดิโอที่โหลดโชว์กลับมาจะจับคู่กล้องนี้เข้ากับ Input เดิมได้
       let myId = store.raw('webmix-cam-id');
       if (!myId) { myId = 'webmix-cam-' + uid().slice(0, 8); store.setRaw('webmix-cam-id', myId); }
+      // แขกใช้ ID ตามลิงก์เชิญ สตูดิโอจึงรู้ว่าเป็นแขกคนไหน แม้เปิดจากเครื่องใหม่
+      if (guestSlot) myId = 'webmix-g-' + guestSlot;
       const connect = id => {
         peer = id ? new Peer(id, peerOptionsFromSig(sig)) : new Peer(peerOptionsFromSig(sig));
         peer.on('open', () => { placeCall(); openData(); });
         peer.on('error', err => {
           if (stopped) return;
           // ID ถูกใช้อยู่ (เช่นเปิดซ้อนสองแท็บ) — ใช้ ID ชั่วคราวแทน
-          if (err.type === 'unavailable-id' && id) { peer.destroy(); connect(null); }
+          if (err.type === 'unavailable-id' && guestSlot) { stop('ลิงก์นี้เปิดอยู่ในอีกหน้าต่างหรืออีกเครื่องแล้ว — ปิดหน้านั้นก่อนแล้วรีเฟรช'); }
+          else if (err.type === 'unavailable-id' && id) { peer.destroy(); connect(null); }
           else if (err.type === 'peer-unavailable') scheduleRetry('รอสตูดิโอออนไลน์…');
           else setStatus('ผิดพลาด: ' + err.type, 'bad');
         });
@@ -220,8 +229,10 @@
       if (stopped) return;
       clearTimeout(retryTimer);
       setStatus('กำลังเชื่อมต่อสตูดิโอ…');
-      const c = peer.call(targetId, stream);
+      const c = peer.call(targetId, stream, guestSlot ? { metadata: { guest: guestSlot } } : undefined);
       call = c;
+      // แขก: ภาพและเสียงรายการที่สตูดิโอส่งกลับมา
+      if (guestSlot) c.on('stream', remote => { returnVideo.srcObject = remote; returnVideo.hidden = false; returnVideo.play().catch(() => {}); });
       c.peerConnection?.addEventListener('connectionstatechange', () => {
         const st = c.peerConnection.connectionState;
         if (st === 'connected') { setStatus('เชื่อมต่อแล้ว', 'ok'); showMsg(''); applyBitrate(); }
@@ -237,7 +248,7 @@
       d.on('data', msg => {
         if (!msg || typeof msg !== 'object') return;
         if (msg.type === 'tally') setTally(msg.tally);
-        if (msg.type === 'removed') stop('สตูดิโอนำกล้องนี้ออกจากรายการแล้ว');
+        if (msg.type === 'removed') stop(guestSlot ? 'สตูดิโอจบการเชื่อมต่อแล้ว ขอบคุณที่ร่วมรายการ' : 'สตูดิโอนำกล้องนี้ออกจากรายการแล้ว');
       });
       d.on('close', () => { if (conn === d && !stopped) setTimeout(openData, 3000); });
     }
@@ -259,6 +270,8 @@
       try { peer && peer.destroy(); } catch (e) {}
       stream && stream.getTracks().forEach(t => t.stop());
       video.srcObject = null;
+      returnVideo.srcObject = null;
+      returnVideo.hidden = true;
       keepScreenOn(false);
       setTally('off');
       setStatus('หยุดส่งภาพแล้ว', 'bad');
@@ -287,6 +300,16 @@
       paintQuality();
     }
 
+    // แขก: ปิดกล้องชั่วคราว (สตูดิโอเห็นจอดำ เสียงยังส่งอยู่)
+    function toggleCam() {
+      const track = stream?.getVideoTracks()[0];
+      if (!track) return;
+      camOn = !camOn;
+      track.enabled = camOn;
+      root.classList.toggle('cam-off', !camOn);
+      $('#caller-cam').classList.toggle('is-off', !camOn);
+    }
+
     function toggleMic() {
       const track = stream?.getAudioTracks()[0];
       if (!track) return;
@@ -303,10 +326,27 @@
       if (b.dataset.caller === 'flip') flip();
       else if (b.dataset.caller === 'mic') toggleMic();
       else if (b.dataset.caller === 'quality') cycleQuality();
+      else if (b.dataset.caller === 'cam') toggleCam();
       else if (b.dataset.caller === 'end') stop();
     });
 
-    start();
+    if (guestSlot) {
+      // หน้าเข้าร่วม: การกดปุ่มคือการอนุญาตให้เบราว์เซอร์เล่นเสียงรายการ และขอสิทธิ์กล้อง/ไมค์
+      root.classList.add('guest-mode');
+      $('.caller-title').textContent = guestName ? `แขกรับเชิญ · ${guestName}` : 'แขกรับเชิญ';
+      $('#caller-quality').hidden = true;
+      $('#caller-cam').hidden = false;
+      $('#guest-join-name').textContent = guestName;
+      $('#guest-join').hidden = false;
+      setStatus('ยังไม่ได้เข้าร่วม');
+      $('#guest-join-btn').addEventListener('click', () => {
+        $('#guest-join').hidden = true;
+        returnVideo.play().catch(() => {});
+        start();
+      }, { once: true });
+    } else {
+      start();
+    }
   }
 
   /* ====================================================================== */
@@ -478,7 +518,8 @@
     screen: { icon: 'monitor', label: 'SCREEN' },
     wireless: { icon: 'phone', label: 'MOBILE' },
     srt: { icon: 'broadcast', label: 'SRT' },
-    title: { icon: 'type', label: 'TITLE' }
+    title: { icon: 'type', label: 'TITLE' },
+    guest: { icon: 'headphones', label: 'GUEST' }
   };
   const LIVE_TYPES = ['camera', 'screen', 'wireless'];
 
@@ -553,7 +594,8 @@
     screen: 'กดปุ่ม 🔗 บนการ์ดเพื่อแชร์หน้าจออีกครั้ง',
     media: 'กดปุ่ม 🔗 บนการ์ดเพื่อเลือกไฟล์วิดีโอ',
     image: 'กดปุ่ม 🔗 บนการ์ดเพื่อเลือกไฟล์รูป',
-    wireless: 'รอมือถือเชื่อมต่อกลับมา'
+    wireless: 'รอมือถือเชื่อมต่อกลับมา',
+    guest: 'รอแขกเปิดลิงก์เชิญ — กดปุ่ม 🔗 บนการ์ดเพื่อดูลิงก์'
   };
   function drawNoSignal(ctx, w, h, inp) {
     ctx.fillStyle = '#0b0c10'; ctx.fillRect(0, 0, w, h);
@@ -1558,6 +1600,7 @@
               <button class="mini" data-card="restart" title="เล่นใหม่ตั้งแต่ต้น">${icon('restart')}</button>
               <button class="mini ${inp.el.loop ? 'is-on' : ''}" data-card="loop" title="เล่นวนซ้ำ">${icon('repeat')}</button>` : ''}
             ${canRelink ? `<button class="mini warn" data-card="relink" title="เชื่อมต่อแหล่งภาพนี้ใหม่">${icon('link')}</button>` : ''}
+            ${inp.type === 'guest' ? `<button class="mini ${inp.status === 'live' ? '' : 'warn'}" data-card="invite" title="ลิงก์เชิญแขก">${icon('link')}</button>` : ''}
             <button class="mini" data-card="rename" title="แก้ไขชื่อ / ข้อความ">${icon('edit')}</button>
             <button class="mini danger" data-card="remove" title="ลบ Input">${icon('x')}</button>
           </div>
@@ -1588,6 +1631,7 @@
       else if (act === 'rename') renameInput(inp);
       else if (act === 'relink') relinkInput(inp);
       else if (act === 'layout') openLayoutDialog(inp);
+      else if (act === 'invite') showGuestInvite(inp);
       else if (act === 'play') { inp.el.paused ? inp.el.play().catch(() => {}) : inp.el.pause(); }
       else if (act === 'restart') { inp.el.currentTime = 0; inp.el.play().catch(() => {}); }
       else if (act === 'loop') { inp.el.loop = !inp.el.loop; actionBtn.classList.toggle('is-on', inp.el.loop); }
@@ -1638,6 +1682,11 @@
     if (inp.url) URL.revokeObjectURL(inp.url);
     if (inp.el && inp.el.tagName === 'IMG') { inp.el.onload = inp.el.onerror = null; inp.el.removeAttribute('src'); }
     if (inp.peerId && forget) wireless.release(inp.peerId);
+    if (inp.type === 'guest') {
+      if (inp.returnVideo) inp.returnVideo.stop();
+      if (inp.call) { try { inp.call.close(); } catch (e) {} }
+      audio.dropMixMinus(inp.id);
+    }
     if (inp.type === 'srt') closeSrtInput(inp);
     if (forget && (inp.type === 'media' || inp.type === 'image')) mediaStore.del(inp.id);
     inp.removed = true;
@@ -2160,6 +2209,7 @@
     ctx: null, master: null, monitor: null, dest: null, analyser: null, buf: null,
     channels: [],
     pending: new Map(),   // ค่าของช่องเสียงจากโชว์ที่บันทึกไว้ รอใช้เมื่อแหล่งเสียงเชื่อมต่อ
+    mm: new Map(),        // mix-minus ของแขกแต่ละคน: inputId → { bus, dest }
     masterStrip: { name: 'MASTER', db: 0, muted: false, limiter: store.get('limiter', true), level: -90, peak: -90, peakAt: 0, ui: null },
     monitorOn: false,
 
@@ -2241,6 +2291,7 @@
         }
       }
       this.channels.push(ch);
+      for (const [id, m] of this.mm) if (ch.inputId !== id) afv.connect(m.bus);
       this.applyGain(ch);
       this.applyAfv();
       this.applyFx(ch);
@@ -2291,6 +2342,27 @@
       this.channels.splice(this.channels.indexOf(ch), 1);
       renderMixer();
     },
+    // เสียงที่ส่งกลับให้แขก: ทุกช่องในรายการ ยกเว้นเสียงของแขกคนนั้นเอง (กันเสียงสะท้อน/ดีเลย์ตัวเอง)
+    mixMinus(inputId) {
+      if (!this.ensure()) return null;
+      let m = this.mm.get(inputId);
+      if (!m) {
+        const bus = this.ctx.createGain(), dest = this.ctx.createMediaStreamDestination();
+        bus.connect(dest);
+        m = { bus, dest };
+        this.mm.set(inputId, m);
+        for (const ch of this.channels) if (ch.inputId !== inputId) ch.afvGain.connect(bus);
+        this.applyMaster();
+      }
+      return m.dest.stream;
+    },
+    dropMixMinus(inputId) {
+      const m = this.mm.get(inputId);
+      if (!m) return;
+      for (const ch of this.channels) { try { ch.afvGain.disconnect(m.bus); } catch (e) {} }
+      try { m.bus.disconnect(); } catch (e) {}
+      this.mm.delete(inputId);
+    },
     removeForInput(id) {
       this.channels.filter(c => c.inputId === id).forEach(c => this.remove(c));
     },
@@ -2302,6 +2374,7 @@
       if (!this.ctx) return;
       const m = this.masterStrip;
       this.master.gain.setTargetAtTime(m.muted ? 0 : dbToGain(m.db), this.ctx.currentTime, 0.015);
+      for (const x of this.mm.values()) x.bus.gain.setTargetAtTime(m.muted ? 0 : dbToGain(m.db), this.ctx.currentTime, 0.015);
     },
     applyAfv() {
       if (!this.ctx) return;
@@ -2575,6 +2648,7 @@
     },
     onCall(call) {
       if (this.blocked.has(call.peer)) { call.close(); return; }
+      if (call.metadata && call.metadata.guest) { this.onGuestCall(call, String(call.metadata.guest)); return; }
       call.answer();
       call.on('stream', remote => {
         let inp = inputs.find(i => i.peerId === call.peer);
@@ -2605,6 +2679,30 @@
         if (st === 'failed' || st === 'closed') lost();
       });
     },
+    // แขกรับเชิญ: รับภาพ/เสียงของแขก และส่งภาพรายการ + เสียง mix-minus กลับไป
+    onGuestCall(call, slot) {
+      const inp = inputs.find(i => i.type === 'guest' && i.guest === slot);
+      if (!inp || call.peer !== guestPeerId(slot)) { call.answer(); setTimeout(() => call.close(), 300); return; }
+      if (inp.call && inp.call !== call) { try { inp.call.close(); } catch (e) {} }
+      inp.call = call;
+      call.answer(guestReturnStream(inp));
+      call.on('stream', remote => {
+        if (inp.removed || inp.call !== call || inp.stream === remote) return;
+        const first = !inp.joinedOnce;
+        inp.joinedOnce = true;
+        attachStream(inp, remote);
+        tuneGuestReturn(call);
+        if (first) toast(`${inp.name} เข้าร่วมแล้ว`, 'success');
+        updateStatus();
+        this.sendTally();
+      });
+      const lost = () => { if (inp.call === call && !inp.removed) { setInputStatus(inp, 'nosignal'); updateStatus(); } };
+      call.on('close', lost);
+      call.peerConnection?.addEventListener('connectionstatechange', () => {
+        const st = call.peerConnection.connectionState;
+        if (st === 'failed' || st === 'closed') lost();
+      });
+    },
     onData(conn) {
       if (this.blocked.has(conn.peer)) {
         conn.on('open', () => { conn.send({ type: 'removed' }); setTimeout(() => conn.close(), 500); });
@@ -2628,7 +2726,12 @@
       const inp = inputs.find(i => i.peerId === peerId);
       if (inp && inp.call) inp.call.close();
     },
-    connectedCount() { return inputs.filter(i => i.type === 'wireless' && i.status === 'live').length; }
+    connectedCount() { return inputs.filter(i => i.type === 'wireless' && i.status === 'live').length; },
+    guestLink(inp) {
+      const q = new URLSearchParams({ call: this.peerId, guest: inp.guest, n: inp.name });
+      if (this.sig) q.set('sig', b64url(JSON.stringify(this.sig)));
+      return `${location.origin}${location.pathname}?${q}`;
+    }
   };
 
   /* ------------------------------------------------------ SRT input */
@@ -2869,6 +2972,76 @@
           (navigator.clipboard ? navigator.clipboard.writeText(url) : Promise.reject())
             .then(() => toast('คัดลอกแล้ว', 'success'))
             .catch(() => toast('คัดลอกไม่สำเร็จ — เลือกข้อความแล้วคัดลอกเอง', 'warn'));
+        });
+      }
+    });
+  }
+
+  /* ---------------------------------------------------- remote guests (vMix Call) */
+  const guestPeerId = slot => 'webmix-g-' + slot;
+  // ภาพรายการที่ส่งกลับให้แขก: จับภาพ Program แยกต่อแขก (ไม่ผูกกับการบันทึก/สตรีม) + เสียง mix-minus
+  function guestReturnStream(inp) {
+    if (!inp.returnVideo || inp.returnVideo.readyState === 'ended') inp.returnVideo = pgmCanvas.captureStream(Math.min(30, settings.fps)).getVideoTracks()[0];
+    const tracks = [inp.returnVideo];
+    const mm = audio.mixMinus(inp.id);
+    if (mm) tracks.push(...mm.getAudioTracks());
+    return new MediaStream(tracks.filter(Boolean));
+  }
+  // ภาพส่งกลับไม่ต้องคมเท่ารายการจริง: ย่อเหลือ ~720p และจำกัดบิตเรต แขกที่เน็ตช้าก็ดูได้ลื่น
+  async function tuneGuestReturn(call) {
+    const sender = call.peerConnection?.getSenders().find(x => x.track && x.track.kind === 'video');
+    if (!sender) return;
+    try {
+      const params = sender.getParameters();
+      if (!params.encodings || !params.encodings.length) params.encodings = [{}];
+      params.encodings[0].maxBitrate = 1500000;
+      params.encodings[0].maxFramerate = 30;
+      params.encodings[0].scaleResolutionDownBy = Math.max(1, H / 720);
+      await sender.setParameters(params);
+    } catch (e) {}
+  }
+
+  async function addGuest() {
+    if (wireless.status !== 'ready') { toast('ระบบเชื่อมต่อยังไม่พร้อม — รอสักครู่แล้วลองใหม่ (ดูสถานะ WIRELESS ด้านล่าง)', 'warn'); return; }
+    const n = inputs.filter(i => i.type === 'guest').length + 1;
+    const result = await dialog({
+      title: 'เชิญแขกรับเชิญทางไกล',
+      body: `
+        <label class="field"><span>ชื่อแขก (แสดงบนการ์ดและหน้าของแขก)</span><input name="name" class="input" maxlength="32" value="GUEST ${n}"></label>
+        <p class="note">แขกเปิดลิงก์จากมือถือหรือคอมพิวเตอร์ (ไม่ต้องติดตั้งแอป) ส่งกล้อง+ไมค์เข้ามาเป็น Input และเห็น/ได้ยินรายการจากสตูดิโอ
+          โดยไม่ได้ยินเสียงตัวเองย้อนกลับ (mix-minus) · แต่ละลิงก์ใช้ได้กับแขกคนเดียว</p>`,
+      actions: [{ label: 'ยกเลิก' }, { label: 'สร้างลิงก์เชิญ', primary: true, value: 'add' }]
+    });
+    if (result?.value !== 'add') return;
+    const slot = uid() + uid().slice(0, 4);
+    const inp = addInput({ type: 'guest', name: result.form.name.value.trim().slice(0, 32) || `GUEST ${n}`, guest: slot, peerId: guestPeerId(slot),
+      el: createVideo(null), status: 'nosignal', missing: true });
+    audio.mixMinus(inp.id);
+    showGuestInvite(inp);
+  }
+
+  async function showGuestInvite(inp) {
+    await wireless.refreshLink();
+    const link = wireless.guestLink(inp);
+    await dialog({
+      title: `ลิงก์เชิญ — ${inp.name}`,
+      body: `
+        <p class="modal-text">ส่งลิงก์นี้ให้แขก (LINE / อีเมล) หรือให้สแกน QR Code — แขกกด “เข้าร่วม” แล้วอนุญาตกล้อง/ไมค์</p>
+        <div class="qr-box" id="qr-target"></div>
+        <div class="link-row"><input class="input" id="guest-link" readonly value="${esc(link)}"><button type="button" class="btn btn-icon" id="copy-link" title="คัดลอกลิงก์">${icon('copy')}</button></div>
+        <p class="note">สถานะ: <b>${inp.status === 'live' ? 'เชื่อมต่ออยู่' : 'ยังไม่ได้เข้าร่วม'}</b> · แนะนำให้แขกใส่หูฟัง · ${wireless.sig && wireless.sig.u
+          ? 'เชื่อมต่อผ่าน TURN ของ Stream Gateway — แขกที่ใช้ 4G/5G หรือ Wi-Fi บริษัทเข้าร่วมได้ (ลิงก์ใช้ได้ 7 วัน)'
+          : 'ยังไม่ได้ตั้ง Stream Gateway — แขกบางเครือข่าย (4G/5G, Wi-Fi บริษัท) อาจเชื่อมต่อไม่ได้'}</p>`,
+      actions: [{ label: 'ปิด', primary: true }],
+      onOpen(modal) {
+        const target = $('#qr-target', modal);
+        if (target && typeof QRCode !== 'undefined') new QRCode(target, { text: link, width: 196, height: 196, correctLevel: QRCode.CorrectLevel.L });
+        else if (target) target.remove();
+        $('#copy-link', modal).addEventListener('click', () => {
+          const field = $('#guest-link', modal);
+          (navigator.clipboard ? navigator.clipboard.writeText(field.value) : Promise.reject())
+            .then(() => toast('คัดลอกลิงก์แล้ว', 'success'))
+            .catch(() => { field.select(); document.execCommand('copy'); toast('คัดลอกลิงก์แล้ว', 'success'); });
         });
       }
     });
@@ -3437,6 +3610,119 @@
     v.play().catch(() => {});
   }
 
+
+  /* ------------------------------------------------------------ multiview */
+  // จอรวมสำหรับผู้ควบคุม/ทีมงาน: Preview + Program ด้านบน, ทุก Input ด้านล่างพร้อม tally และมิเตอร์เสียง
+  // วาดเฉพาะตอนเปิดหน้าต่าง Multiview ที่ 15 fps แล้วส่งภาพไปหน้าต่างนั้น (ลากไปจอที่สองแล้วดับเบิลคลิกเต็มจอ)
+  const multiview = {
+    canvas: null, ctx: null, win: null, track: null, timer: null,
+    W: 1920, H: 1080,
+    open() {
+      if (this.win && !this.win.closed) { this.win.focus(); return; }
+      const win = window.open('', 'webmix-multiview', 'width=1280,height=720');
+      if (!win) { toast('เบราว์เซอร์บล็อกหน้าต่างใหม่ — อนุญาต Pop-up สำหรับเว็บนี้ก่อน', 'warn'); return; }
+      if (!this.canvas) {
+        this.canvas = document.createElement('canvas');
+        this.canvas.width = this.W; this.canvas.height = this.H;
+        this.ctx = this.canvas.getContext('2d');
+      }
+      this.draw();
+      win.document.open();
+      win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>WebMix — Multiview</title>
+        <style>html,body{margin:0;height:100%;background:#000;overflow:hidden}video{width:100%;height:100%;object-fit:contain;display:block}
+        p{position:fixed;left:0;right:0;bottom:12px;margin:0;text-align:center;font:12px system-ui;color:#666;transition:opacity 1s}</style></head>
+        <body><video autoplay muted playsinline></video><p>ดับเบิลคลิกเพื่อเต็มจอ</p>
+        <script>document.addEventListener('dblclick',()=>{document.fullscreenElement?document.exitFullscreen():document.documentElement.requestFullscreen()});setTimeout(()=>document.querySelector('p').style.opacity=0,3000)<\/script></body></html>`);
+      win.document.close();
+      this.track = this.canvas.captureStream(15).getVideoTracks()[0];
+      const v = win.document.querySelector('video');
+      v.srcObject = new MediaStream([this.track]);
+      v.play().catch(() => {});
+      this.win = win;
+      clearInterval(this.timer);
+      this.timer = setInterval(() => {
+        if (!this.win || this.win.closed) { this.close(); return; }
+        this.draw();
+      }, 1000 / 15);
+    },
+    close() {
+      clearInterval(this.timer);
+      this.timer = null;
+      if (this.track) this.track.stop();
+      this.track = null;
+      this.win = null;
+    },
+    layout(n) {
+      const top = 44, mainH = 540, gridTop = top + mainH + 8, gridH = this.H - gridTop;
+      let cols = 4;
+      for (const c of [4, 5, 6, 8, 10]) {
+        cols = c;
+        const tw = this.W / c, th = tw * 9 / 16;
+        if (Math.ceil(n / c) * th <= gridH) break;
+      }
+      const tw = this.W / cols, th = tw * 9 / 16;
+      return { top, mainH, gridTop, cols, tw, th };
+    },
+    draw() {
+      const ctx = this.ctx, Wm = this.W, Hm = this.H;
+      const L = this.layout(inputs.length);
+      ctx.fillStyle = '#05060a'; ctx.fillRect(0, 0, Wm, Hm);
+      // แถบบน: เวลา, ON AIR, สถานะสตรีม/บันทึก
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = '#e7eaf0'; ctx.font = `700 26px ${MONO}`; ctx.textAlign = 'left';
+      ctx.fillText(new Date().toLocaleTimeString('th-TH', { hour12: false }), 16, 22);
+      const live = streamer.active || streamer.reconnecting;
+      const chips = [[live ? `● STREAM ${$('#onair-timer').textContent}` : 'STREAM OFF', live ? '#ef4444' : '#5d6578'], [rec.active ? '● REC' : 'REC OFF', rec.active ? '#ef4444' : '#5d6578'],
+        [`${formatTag(H, settings.fps)}`, '#8b94a7']];
+      ctx.textAlign = 'right'; ctx.font = `700 20px ${MONO}`;
+      let x = Wm - 16;
+      for (const [text, color] of chips.reverse()) { ctx.fillStyle = color; ctx.fillText(text, x, 22); x -= ctx.measureText(text).width + 28; }
+      // Preview / Program
+      const box = (src, bx, label, color, name) => {
+        ctx.drawImage(src, bx, L.top, 952, L.mainH - 4);
+        ctx.strokeStyle = color; ctx.lineWidth = 4; ctx.strokeRect(bx + 2, L.top + 2, 948, L.mainH - 8);
+        ctx.fillStyle = 'rgba(0,0,0,.65)'; ctx.fillRect(bx + 4, L.top + L.mainH - 46, 944, 38);
+        ctx.textAlign = 'left'; ctx.font = `800 20px ${FONT}`; ctx.fillStyle = color; ctx.fillText(label, bx + 16, L.top + L.mainH - 27);
+        ctx.fillStyle = '#fff'; ctx.font = `600 20px ${FONT}`; ctx.fillText(name, bx + 140, L.top + L.mainH - 27);
+      };
+      box(pvwCanvas, 4, 'PREVIEW', '#22c55e', byId(state.previewId)?.name || '—');
+      box(pgmCanvas, 964, 'PROGRAM', '#ef4444', byId(state.programId)?.name || '—');
+      // ทุก Input
+      inputs.forEach((inp, i) => {
+        const cx = (i % L.cols) * L.tw, cy = L.gridTop + Math.floor(i / L.cols) * L.th;
+        const pad = 3, tw = L.tw - pad * 2, th = L.th - pad * 2, tx = cx + pad, ty = cy + pad;
+        ctx.save();
+        ctx.translate(tx, ty);
+        ctx.beginPath(); ctx.rect(0, 0, tw, th); ctx.clip();
+        drawSource(ctx, inp, tw, th);
+        ctx.restore();
+        const isPgm = inp.id === state.programId, ov = ovl.findIndex(c => c.on && c.inputId === inp.id), isPvw = inp.id === state.previewId;
+        const color = isPgm || ov >= 0 ? '#ef4444' : isPvw ? '#22c55e' : '#2f3644';
+        ctx.strokeStyle = color; ctx.lineWidth = isPgm || ov >= 0 || isPvw ? 5 : 2;
+        ctx.strokeRect(tx + ctx.lineWidth / 2, ty + ctx.lineWidth / 2, tw - ctx.lineWidth, th - ctx.lineWidth);
+        const lh = Math.max(22, th * 0.15);
+        ctx.fillStyle = 'rgba(0,0,0,.7)'; ctx.fillRect(tx + 5, ty + th - lh - 5, tw - 10, lh);
+        ctx.textAlign = 'left'; ctx.fillStyle = '#fff';
+        fitFont(ctx, `${i + 1}  ${inp.name}`, 600, lh * 0.62, FONT, tw - 90);
+        ctx.fillText(`${i + 1}  ${inp.name}`, tx + 12, ty + th - lh / 2 - 5);
+        const tag = isPgm ? 'PGM' : ov >= 0 ? `OV${ov + 1}` : isPvw ? 'PVW' : inp.status !== 'live' ? 'NO SIGNAL' : '';
+        if (tag) {
+          ctx.font = `800 ${lh * 0.55}px ${MONO}`; ctx.textAlign = 'right';
+          ctx.fillStyle = tag === 'NO SIGNAL' ? '#f87171' : color;
+          ctx.fillText(tag, tx + tw - 12, ty + th - lh / 2 - 5);
+        }
+        // มิเตอร์เสียงของ Input นี้ (แถบแนวตั้งขวามือ)
+        const ch = audio.channels.find(c => c.inputId === inp.id);
+        if (ch) {
+          const mh = th - lh - 20, lvl = meterPct(ch.level);
+          ctx.fillStyle = 'rgba(0,0,0,.6)'; ctx.fillRect(tx + tw - 18, ty + 8, 10, mh);
+          ctx.fillStyle = ch.level > -6 ? '#ef4444' : ch.level > -18 ? '#f5a524' : '#22c55e';
+          ctx.fillRect(tx + tw - 18, ty + 8 + mh * (1 - lvl), 10, mh * lvl);
+        }
+      });
+    }
+  };
+
   function toggleFullscreen() {
     const mon = $('#pgm-monitor');
     if (document.fullscreenElement) { document.exitFullscreen(); return; }
@@ -3673,6 +3959,7 @@
     ['K', 'เปิด / ปิด Chroma Key'],
     ['Q W E R', 'เปิด / ปิด Overlay 1 – 4'],
     ['Shift + Q W E R', 'เปิด / ปิด Overlay 5 – 8'],
+    ['M', 'เปิดหน้าต่าง Multiview'],
     ['Esc', 'ปิดหน้าต่าง / ออกจากเต็มจอ']
   ];
   const MANUAL = [
@@ -3698,6 +3985,9 @@
       'ปุ่ม ⧉ บนการ์ด: ตั้งตำแหน่ง ขนาด ครอป ความทึบ ขอบ และคีย์ฉากเขียว/ฟ้าของ Input นั้น (มี preset มุมจอ/ครึ่งจอ) — เห็นผลทันที',
       'Input “Title กราฟิกข้อความ” มีพื้นโปร่งใส 4 แบบ (ป้ายชื่อล่าง, แถบหัวข้อบน, ป้าย LIVE, ข้อความกลางจอ) · รูป PNG โปร่งใสก็ซ้อนได้ทันที',
       'ภาพที่อยู่บน Overlay นับว่าออกอากาศ: การ์ดขึ้น OV1–OV8, กล้องมือถือขึ้นกรอบแดง และเสียงที่ตั้ง AFV จะเปิดตาม']],
+    ['แขกรับเชิญทางไกล', ['เพิ่ม Input → “แขกรับเชิญทางไกล” ตั้งชื่อแล้วส่งลิงก์/QR ให้แขก — แขกกดเข้าร่วมจากมือถือหรือคอมพิวเตอร์ได้เลย',
+      'แขกเห็นและได้ยินรายการจากสตูดิโอโดยไม่ได้ยินเสียงตัวเองย้อนกลับ (mix-minus) และเห็นกรอบ ON AIR เมื่อขึ้นจอ',
+      'ปุ่ม 🔗 บนการ์ดแขกเปิดลิงก์เชิญอีกครั้ง · ลบการ์ดเพื่อจบการเชื่อมต่อ · รีเฟรชสตูดิโอแล้วแขกกลับเข้าช่องเดิมเอง']],
     ['กราฟิก (TITLE / PIP / KEY)', ['TITLE: ป้ายชื่อ Lower Third พิมพ์ข้อความแล้วเปลี่ยนบนจอได้ทันที เลือกสีป้ายได้ กด TAKE เพื่อแสดง (มีแอนิเมชันเข้า-ออก)',
       'Preset ป้ายชื่อ: กด “+ บันทึกป้ายนี้” เพื่อเก็บชื่อ/ตำแหน่ง/สีไว้หลายชุด แล้วแตะเพื่อสลับ (ถ้าป้ายขึ้นจออยู่จะเปลี่ยนทันที) · × ลบ preset',
       'PIP: ภาพซ้อนมุมจอ เลือกแหล่งภาพ ตำแหน่ง และขนาด',
@@ -3713,6 +4003,7 @@
       'กดปุ่ม STREAM เพื่อเปิดแผงปลายทาง: กด “เริ่ม” ทีละช่องเพื่อไลฟ์เฉพาะช่องนั้น หรือ “เริ่มทั้งหมด” สำหรับทุกช่องที่ติ๊กไว้ — แต่ละช่องหยุดได้อิสระ ช่องที่หลุดจะเชื่อมต่อใหม่เอง',
       'ระบบวาดภาพ: ตั้งค่า → เอาต์พุต เลือกอัตโนมัติ/GPU/CPU — GPU (การ์ดจอ) ลื่นกว่ามากที่ 4K และ Overlay หลายชั้น ถ้าการ์ดจอล่มระบบสลับไป CPU เองโดยภาพไม่ดับ',
       'ความละเอียดสูงสุด 4K (3840×2160) ตั้งได้ที่ปุ่มตั้งค่า → เอาต์พุต ระบบใส่บิตเรตแนะนำให้ · กล้องเลือก 4K ได้ และการ์ด Input แสดงความละเอียดจริง · มือถือแตะปุ่ม HD/FHD/4K เพื่อเลือกคุณภาพ',
+      'Multiview (ปุ่มตารางด้านบนหรือคีย์ M): หน้าต่างสำหรับจอที่สอง แสดง Preview/Program และทุก Input พร้อม tally และมิเตอร์เสียง',
       'ปุ่มกล้องบันทึกภาพนิ่ง PNG · ปุ่มหน้าต่างเปิด Program Output แยกสำหรับต่อจอหรือโปรเจกเตอร์ · ปุ่มเต็มจอบนจอ Program',
       'บันทึกลงดิสก์ระหว่างอัด (ไม่กิน RAM) — Chrome/Edge เลือกโฟลเดอร์บันทึกได้ที่ ตั้งค่า → เอาต์พุต',
       'ถ้าการเชื่อมต่อกับ Stream Gateway หลุดระหว่างไลฟ์ ระบบจะเชื่อมต่อใหม่และเริ่มปลายทางเดิมให้เอง',
@@ -3760,6 +4051,7 @@
       ['film', 'ไฟล์วิดีโอ', () => pickFiles('video/*', addVideoFiles)],
       ['image', 'ภาพนิ่ง / โลโก้', () => pickFiles('image/*', addImageFiles)],
       ['phone', 'กล้องมือถือไร้สาย', showWirelessDialog],
+      ['headphones', 'แขกรับเชิญทางไกล (ภาพ+เสียงไป-กลับ)', addGuest],
       ['broadcast', 'สัญญาณ SRT (OBS / vMix / encoder)', openSrtInputDialog],
       null,
       ['bars', 'Color Bars', () => addGenerator('bars')],
@@ -3931,7 +4223,7 @@
       pip: () => setOverlay('pip', !overlays.pip.on),
       key: () => setOverlay('key', !overlays.key.on),
       stream: toggleStream, record: toggleRecord, snapshot,
-      'output-window': openOutputWindow, fullscreen: toggleFullscreen,
+      'output-window': openOutputWindow, fullscreen: toggleFullscreen, multiview: () => multiview.open(),
       settings: () => openSettings(), help: openHelp, show: openShowDialog,
       wireless: showWirelessDialog, 'add-mic': openMicDialog,
       monitor: () => { audio.setMonitor(!audio.monitorOn); updateStatus(); },
@@ -3972,7 +4264,7 @@
         return;
       }
       const k = e.key.toLowerCase();
-      const map = { ' ': cut, enter: autoTransition, f: toggleFtb, t: actions.title, l: actions.title, p: actions.pip, k: actions.key };
+      const map = { ' ': cut, enter: autoTransition, f: toggleFtb, t: actions.title, l: actions.title, p: actions.pip, k: actions.key, m: () => multiview.open() };
       const oi = OVL_KEYS.indexOf(k);
       if (oi >= 0) {
         const i = oi + (e.shiftKey ? 4 : 0);
@@ -4044,7 +4336,7 @@
     }
   };
 
-  const SHOW_TYPES = ['bars', 'black', 'slate', 'clock', 'image', 'media', 'camera', 'screen', 'wireless', 'srt', 'title'];
+  const SHOW_TYPES = ['bars', 'black', 'slate', 'clock', 'image', 'media', 'camera', 'screen', 'wireless', 'srt', 'title', 'guest'];
   const show = {
     ready: false, last: '', savedAt: 0,
     get name() { return store.get('showName', '') || 'โชว์ใหม่'; },
@@ -4066,6 +4358,7 @@
           if (i.type === 'wireless') o.peerId = i.peerId;
           if (i.type === 'srt') o.srt = { ...i.srt, passphrase: secrets ? i.srt.passphrase : '' };
           if (i.type === 'title') o.title = { ...i.title };
+          if (i.type === 'guest') o.guest = i.guest;
           if (i.layout) o.layout = JSON.parse(JSON.stringify(i.layout));
           return o;
         }),
@@ -4138,7 +4431,7 @@
       updateTally();
       // แจ้งหลังโหลดไฟล์/เปิดกล้องเสร็จ (รอไม่เกิน 5 วินาที) จะได้นับ Input ที่ต้องเชื่อมต่อใหม่ได้ถูกต้อง
       Promise.race([Promise.allSettled(loading), new Promise(r => setTimeout(r, 5000))]).then(() => {
-        const missing = inputs.filter(i => i.missing && i.type !== 'wireless').length;
+        const missing = inputs.filter(i => i.missing && i.type !== 'wireless' && i.type !== 'guest').length;
         toast(`เปิดโชว์ “${this.name}” แล้ว — ${inputs.length} Input${missing ? ` (รอเชื่อมต่อ ${missing} — กดปุ่ม 🔗 บนการ์ด)` : ''}`, missing ? 'warn' : 'success', 5000);
       });
       return waitingMics;
@@ -4184,6 +4477,14 @@
           // มือถือที่เคยเชื่อมต่อจะโทรกลับมาเองด้วย ID เดิม แล้วเข้ามาที่ Input นี้
           addInput({ type: 'wireless', ...base, el: createVideo(null), status: 'nosignal', peerId: String(raw.peerId || ''), missing: true });
           break;
+        case 'guest': {
+          // แขกที่เคยเชิญไว้: ลิงก์เดิมยังใช้ได้ แขกจะเชื่อมต่อกลับเข้ามาเอง
+          const slot = String(raw.guest || '').replace(/[^a-z0-9]/gi, '').slice(0, 16);
+          if (!slot) return;
+          const inp = addInput({ type: 'guest', ...base, guest: slot, peerId: guestPeerId(slot), el: createVideo(null), status: 'nosignal', missing: true });
+          audio.mixMinus(inp.id);
+          break;
+        }
         case 'srt': {
           const c = raw.srt || {};
           if (c.mode !== 'listener' && c.mode !== 'caller') return;
@@ -4367,7 +4668,7 @@
     requestAnimationFrame(rafLoop);
 
     // สำหรับดีบัก/ทดสอบอัตโนมัติ
-    window.webmix = { renderer, gpu, setRenderer: v => { settings.renderer = v; renderer.resolve(); updateStatus(); }, show, ovl, setChannel, toggleInputOverlay, useRecFolder: dir => { recFolder = dir; }, inputs, state, settings, overlays, audio, rec, streamer, wireless, cut, autoTransition, setPreview, tr, ftb };
+    window.webmix = { multiview, renderer, gpu, setRenderer: v => { settings.renderer = v; renderer.resolve(); updateStatus(); }, show, ovl, setChannel, toggleInputOverlay, useRecFolder: dir => { recFolder = dir; }, inputs, state, settings, overlays, audio, rec, streamer, wireless, cut, autoTransition, setPreview, tr, ftb };
   }
 
   boot();
