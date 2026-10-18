@@ -66,7 +66,11 @@ esac
 export PKG_CONFIG_PATH=$PREFIX/lib/pkgconfig PKG_CONFIG_LIBDIR=$PREFIX/lib/pkgconfig
 
 echo "== mbedtls $MBEDTLS_VER ($ABI)"
-cmake -S "$SRC/mbedtls" -B "$BUILD/mbedtls" "${CMAKE_ARGS[@]}" -DENABLE_TESTING=OFF -DENABLE_PROGRAMS=OFF -DMBEDTLS_FATAL_WARNINGS=OFF -DUSE_SHARED_MBEDTLS_LIBRARY=OFF -DUSE_STATIC_MBEDTLS_LIBRARY=ON >/dev/null
+# ปิด TLS 1.3: ไคลเอนต์ TLS 1.3 ของ mbedtls 3.6 จับมือกับเซิร์ฟเวอร์ RTMPS ของ Facebook ไม่ผ่าน
+# (mbedtls_ssl_handshake returned -0x7080) — ใช้ TLS 1.2 ซึ่ง Facebook / YouTube รองรับ
+rm -rf "$BUILD/mbedtls-src" && cp -r "$SRC/mbedtls" "$BUILD/mbedtls-src"
+python3 "$BUILD/mbedtls-src/scripts/config.py" -f "$BUILD/mbedtls-src/include/mbedtls/mbedtls_config.h" unset MBEDTLS_SSL_PROTO_TLS1_3
+cmake -S "$BUILD/mbedtls-src" -B "$BUILD/mbedtls" "${CMAKE_ARGS[@]}" -DENABLE_TESTING=OFF -DENABLE_PROGRAMS=OFF -DMBEDTLS_FATAL_WARNINGS=OFF -DUSE_SHARED_MBEDTLS_LIBRARY=OFF -DUSE_STATIC_MBEDTLS_LIBRARY=ON >/dev/null
 cmake --build "$BUILD/mbedtls" -j "$JOBS" >"$BUILD/mbedtls.log" 2>&1 || { tail -30 "$BUILD/mbedtls.log"; exit 1; }
 cmake --install "$BUILD/mbedtls" >/dev/null
 
