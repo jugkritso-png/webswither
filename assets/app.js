@@ -1508,39 +1508,83 @@
     b.querySelector('.label').textContent = rec.active ? 'STOP' : 'REC';
   }
 
-  const streamer = { active: false, state: 'idle', ws: null, recorder: null, sent: 0, kbps: 0, lastBytes: 0, lastAt: 0, start: 0, dests: new Map() };
+  const streamer = { active: false, state: 'idle', ws: null, recorder: null, sent: 0, kbps: 0, lastBytes: 0, lastAt: 0, start: 0, dests: new Map(), queue: [] };
 
-  // คลิก STREAM ตอนไม่ได้ไลฟ์ = เริ่ม, ตอนไลฟ์อยู่ = เปิดหน้าต่างจัดการปลายทาง (กันกดหยุดพลาด)
-  function toggleStream() {
-    if (streamer.ws) openLiveDialog();
-    else startStream();
+  // ปุ่ม STREAM เปิดแผงควบคุมปลายทาง — เริ่ม/หยุดแต่ละช่องได้อิสระ หรือเริ่ม/หยุดทั้งหมดพร้อมกัน
+  function toggleStream() { openLiveDialog(); }
+
+  function gatewayProblem() {
+    const gw = settings.gateway.trim();
+    return !gw ? 'ยังไม่ได้ตั้งค่า Stream Gateway'
+      : !/^wss?:\/\//i.test(gw) ? 'Gateway URL ต้องขึ้นต้นด้วย ws:// หรือ wss://'
+      : location.protocol === 'https:' && /^ws:\/\//i.test(gw) ? 'หน้านี้เปิดผ่าน HTTPS จึงต้องใช้ Gateway แบบ wss://' : '';
   }
 
-  function startStream() {
-    const gw = settings.gateway.trim();
-    const list = settings.destinations.filter(d => d.enabled);
-    let problem = !gw ? 'ยังไม่ได้ตั้งค่า Stream Gateway'
-      : !/^wss?:\/\//i.test(gw) ? 'Gateway URL ต้องขึ้นต้นด้วย ws:// หรือ wss://'
-      : location.protocol === 'https:' && /^ws:\/\//i.test(gw) ? 'หน้านี้เปิดผ่าน HTTPS จึงต้องใช้ Gateway แบบ wss://'
-      : !list.length ? 'ยังไม่ได้เปิดใช้ปลายทางการสตรีม' : '';
-    if (!problem) {
-      const bad = list.find(d => destProblem(d));
-      if (bad) problem = `${destLabel(bad)}: ${destProblem(bad)}`;
-    }
-    if (problem) { toast(problem, 'warn'); openSettings('stream'); return; }
+  const destPayload = d => ({ id: d.id, name: destLabel(d), url: destUrl(d) });
+  const isRunning = id => { const st = streamer.dests.get(id); return !!st && st.state !== 'stopped'; };
 
+  // เริ่มเฉพาะปลายทางที่เลือก — ถ้ายังไม่ได้เชื่อมต่อ Gateway จะเปิดการเชื่อมต่อให้อัตโนมัติ
+  function startDestinations(list) {
+    list = list.filter(d => !isRunning(d.id));
+    if (!list.length) return;
+    const gwErr = gatewayProblem();
+    const bad = list.find(d => destProblem(d));
+    if (gwErr || bad) {
+      toast(gwErr || `${destLabel(bad)}: ${destProblem(bad)}`, 'warn');
+      // ปิดแผงปลายทางก่อน แล้วเปิดหน้าตั้งค่าให้แก้ (ไม่ซ้อนสองหน้าต่าง)
+      if (closeLiveDialog) closeLiveDialog();
+      openSettings('stream');
+      return;
+    }
+
+    for (const d of list) streamer.dests.set(d.id, { state: 'connecting', message: '', kbps: 0 });
+    if (streamer.ws) {
+      if (streamer.ws.readyState === WebSocket.OPEN) {
+        for (const d of list) streamer.ws.send(JSON.stringify({ type: 'add', destination: destPayload(d) }));
+      } else {
+        streamer.queue.push(...list);
+      }
+    } else {
+      connectGateway(list);
+    }
+    setStreamButton();
+    refreshLiveDialog();
+    updateStatus();
+  }
+
+  function stopDestination(id) {
+    const ws = streamer.ws;
+    if (!ws) return;
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'stop', id }));
+    } else {
+      // ยังเชื่อมต่อไม่เสร็จ — ตัดออกจากคิว ถ้าไม่เหลืออะไรก็ยกเลิกการเชื่อมต่อ
+      streamer.queue = streamer.queue.filter(d => d.id !== id);
+      streamer.dests.delete(id);
+      if (!streamer.queue.length) ws.close(1000, 'cancelled');
+    }
+    refreshLiveDialog();
+  }
+
+  function stopAllStreams() {
+    streamer.ws && streamer.ws.close(1000, 'stopped by user');
+  }
+
+  function connectGateway(initial) {
     let r;
-    try { r = makeRecorder(); } catch (e) { toast('เริ่มสตรีมไม่ได้: ' + e.message, 'error'); return; }
+    try { r = makeRecorder(); } catch (e) {
+      initial.forEach(d => streamer.dests.delete(d.id));
+      toast('เริ่มสตรีมไม่ได้: ' + e.message, 'error');
+      return;
+    }
+    const gw = settings.gateway.trim();
     const sep = gw.includes('?') ? '&' : '?';
     const ws = new WebSocket(`${gw}${sep}fps=${settings.fps}&vb=${settings.videoKbps}`);
-    Object.assign(streamer, {
-      ws, recorder: r, state: 'connecting', sent: 0, kbps: 0, lastBytes: 0, lastAt: performance.now(),
-      dests: new Map(list.map(d => [d.id, { state: 'connecting', message: '', kbps: 0 }]))
-    });
-    setStreamButton();
+    Object.assign(streamer, { ws, recorder: r, state: 'connecting', sent: 0, kbps: 0, lastBytes: 0, lastAt: performance.now(), queue: [...initial] });
 
     ws.onopen = () => {
-      ws.send(JSON.stringify({ type: 'start', destinations: list.map(d => ({ id: d.id, name: destLabel(d), url: destUrl(d) })) }));
+      ws.send(JSON.stringify({ type: 'start', destinations: streamer.queue.map(destPayload) }));
+      streamer.queue = [];
       r.ondataavailable = e => {
         if (e.data.size && ws.readyState === WebSocket.OPEN) { ws.send(e.data); streamer.sent += e.data.size; }
       };
@@ -1548,7 +1592,6 @@
       Object.assign(streamer, { active: true, state: 'live', start: Date.now() });
       setStreamButton();
       updateOnAir();
-      toast(`เริ่มสตรีมไป ${list.length} ปลายทาง`, 'success');
     };
     ws.onmessage = ev => {
       if (typeof ev.data !== 'string') return;
@@ -1560,13 +1603,13 @@
       const byUser = ev.code === 1000;
       const wasLive = streamer.active;
       if (r.state !== 'inactive') r.stop();
-      Object.assign(streamer, { active: false, state: 'idle', ws: null, recorder: null, kbps: 0 });
+      Object.assign(streamer, { active: false, state: 'idle', ws: null, recorder: null, kbps: 0, queue: [] });
       streamer.dests.clear();
       setStreamButton();
       refreshLiveDialog();
       updateOnAir();
       output.reset();
-      if (byUser) toast('หยุดสตรีมแล้ว');
+      if (byUser) { if (wasLive) toast('หยุดสตรีมแล้ว'); }
       else toast((wasLive ? 'การสตรีมหยุดลง: ' : 'เชื่อมต่อ Stream Gateway ไม่ได้: ') + (ev.reason || 'ตรวจสอบว่า Gateway ทำงานอยู่และ URL ถูกต้อง'), 'error', 7000);
     };
   }
@@ -1578,28 +1621,15 @@
       if (prev && prev.state !== st.state) {
         if (st.state === 'live') toast(`${label}: ออกอากาศแล้ว`, 'success', 2500);
         else if (st.state === 'error') toast(`${label}: ${st.message || 'เชื่อมต่อไม่ได้'} — กำลังลองใหม่อัตโนมัติ`, 'error', 6000);
+        else if (st.state === 'stopped') toast(`${label}: หยุดสตรีมแล้ว`, 'info', 2500);
       }
       streamer.dests.set(st.id, { state: st.state, message: st.message || '', kbps: st.kbps || 0 });
     }
+    // ไม่เหลือปลายทางที่ทำงานอยู่ → ปิดการเชื่อมต่อ Gateway เพื่อไม่ส่งข้อมูลเปล่า ๆ
+    if (streamer.ws && streamer.active && !destCounts().active) streamer.ws.close(1000, 'all destinations stopped');
     setStreamButton();
     refreshLiveDialog();
     updateStatus();
-  }
-
-  function setDestLive(id, on) {
-    const ws = streamer.ws;
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
-    const d = settings.destinations.find(x => x.id === id);
-    if (on) {
-      if (!d) return;
-      const problem = destProblem(d);
-      if (problem) { toast(`${destLabel(d)}: ${problem}`, 'warn'); return; }
-      streamer.dests.set(id, { state: 'connecting', message: '', kbps: 0 });
-      ws.send(JSON.stringify({ type: 'add', destination: { id, name: destLabel(d), url: destUrl(d) } }));
-    } else {
-      ws.send(JSON.stringify({ type: 'stop', id }));
-    }
-    refreshLiveDialog();
   }
 
   const destCounts = () => {
@@ -1615,44 +1645,59 @@
   function setStreamButton() {
     const b = $('#btn-stream');
     const { live, active } = destCounts();
-    b.classList.toggle('is-on', streamer.state === 'live');
-    b.classList.toggle('is-pending', streamer.state === 'connecting');
-    b.querySelector('.label').textContent = streamer.state === 'live' ? `ON AIR ${live}/${active}`
-      : streamer.state === 'connecting' ? 'CONNECTING' : 'STREAM';
+    const on = streamer.state === 'live' && live > 0;
+    b.classList.toggle('is-on', on);
+    b.classList.toggle('is-pending', !!streamer.ws && !on);
+    b.querySelector('.label').textContent = on ? `ON AIR ${live}/${active}` : streamer.ws ? 'CONNECTING' : 'STREAM';
   }
 
-  let liveDialog = null;
+  let liveDialog = null, closeLiveDialog = null;
   function openLiveDialog() {
     if (liveDialog) return;
     dialog({
       title: 'ปลายทางการสตรีม',
       wide: true,
       body: `
-        <p class="modal-text">ส่งสัญญาณขึ้น Gateway ครั้งเดียวแล้วกระจายไปทุกปลายทาง — เริ่มหรือหยุดแต่ละช่องได้โดยไม่กระทบช่องอื่น ช่องที่หลุดจะเชื่อมต่อใหม่เอง</p>
+        <p class="modal-text">กด <b>เริ่ม</b> ทีละช่องเพื่อไลฟ์เฉพาะช่องที่ต้องการ หรือ <b>เริ่มทั้งหมด</b> เพื่อส่งทุกช่องที่ติ๊กไว้พร้อมกัน — แต่ละช่องเริ่ม/หยุดได้โดยไม่กระทบช่องอื่น และช่องที่หลุดจะเชื่อมต่อใหม่เอง</p>
         <div class="dest-live"></div>`,
-      actions: [{ label: 'แก้ไขปลายทาง', value: 'edit' }, { label: 'หยุดสตรีมทั้งหมด', danger: true, value: 'stop' }, { label: 'ปิด', primary: true }],
-      onOpen(modal) {
+      actions: [{ label: 'แก้ไขปลายทาง', value: 'edit' }, { label: 'ปิด', primary: true }],
+      onOpen(modal, close) {
         liveDialog = modal;
-        refreshLiveDialog();
-        modal.addEventListener('click', e => {
+        closeLiveDialog = close;
+        const foot = $('.modal-foot', modal);
+        foot.insertAdjacentHTML('afterbegin', `
+          <button type="button" class="btn btn-green dest-start-all">${icon('broadcast')}เริ่มทั้งหมด</button>
+          <button type="button" class="btn btn-danger dest-stop-all">หยุดทั้งหมด</button>
+          <span class="ml-auto"></span>`);
+        modal.addEventListener('click', async e => {
           const b = e.target.closest('[data-dest-toggle]');
-          if (b) setDestLive(b.dataset.destToggle, b.dataset.on === '1');
+          if (b) {
+            const d = settings.destinations.find(x => x.id === b.dataset.destToggle);
+            if (b.dataset.on === '1') { if (d) startDestinations([d]); }
+            else stopDestination(b.dataset.destToggle);
+            return;
+          }
+          if (e.target.closest('.dest-start-all')) {
+            const list = settings.destinations.filter(d => d.enabled);
+            if (!list.length) { toast('ยังไม่ได้ติ๊กปลายทางที่จะเริ่มพร้อมกัน — กด “แก้ไขปลายทาง”', 'warn'); return; }
+            startDestinations(list);
+          } else if (e.target.closest('.dest-stop-all')) {
+            if (await confirmDialog('หยุดสตรีมทั้งหมด', 'ทุกปลายทางจะหยุดออกอากาศทันที', 'หยุดสตรีม')) stopAllStreams();
+          }
         });
+        refreshLiveDialog();
       }
-    }).then(async r => {
+    }).then(r => {
       liveDialog = null;
+      closeLiveDialog = null;
       if (r?.value === 'edit') openSettings('stream');
-      else if (r?.value === 'stop' && await confirmDialog('หยุดสตรีมทั้งหมด', 'ทุกปลายทางจะหยุดออกอากาศทันที', 'หยุดสตรีม')) {
-        streamer.ws && streamer.ws.close(1000, 'stopped by user');
-      }
     });
   }
 
   function refreshLiveDialog() {
     const box = liveDialog && $('.dest-live', liveDialog);
     if (!box) return;
-    if (!streamer.ws) { box.innerHTML = '<p class="note">ไม่ได้สตรีมอยู่ในขณะนี้</p>'; return; }
-    const text = { live: 'LIVE', connecting: 'กำลังเชื่อมต่อ…', error: 'หลุด — กำลังลองใหม่', stopped: 'หยุดแล้ว', off: 'ไม่ได้ใช้' };
+    const text = { live: 'LIVE', connecting: 'กำลังเชื่อมต่อ…', error: 'หลุด — กำลังลองใหม่', stopped: 'หยุดแล้ว', off: 'พร้อม' };
     box.innerHTML = settings.destinations.map(d => {
       const st = streamer.dests.get(d.id);
       const state = st ? st.state : 'off';
@@ -1662,9 +1707,13 @@
           <span class="dest-dot"></span>
           <div class="dest-info"><b>${esc(destLabel(d))}</b><small>${esc(state === 'error' && st.message ? st.message : destMasked(d))}</small></div>
           <span class="dest-state">${text[state]}${state === 'live' && st.kbps ? ` · ${st.kbps} kbps` : ''}</span>
-          <button type="button" class="btn btn-sm ${running ? '' : 'btn-green'}" data-dest-toggle="${esc(d.id)}" data-on="${running ? 0 : 1}">${running ? 'หยุด' : 'เริ่ม'}</button>
+          <button type="button" class="btn btn-sm ${running ? 'btn-danger' : 'btn-green'}" data-dest-toggle="${esc(d.id)}" data-on="${running ? 0 : 1}">${running ? 'หยุด' : 'เริ่ม'}</button>
         </div>`;
     }).join('') || '<p class="note">ยังไม่มีปลายทาง — กด “แก้ไขปลายทาง” เพื่อเพิ่ม</p>';
+    const enabledIdle = settings.destinations.some(d => d.enabled && !isRunning(d.id));
+    const startAll = $('.dest-start-all', liveDialog), stopAll = $('.dest-stop-all', liveDialog);
+    if (startAll) startAll.disabled = !enabledIdle;
+    if (stopAll) stopAll.disabled = !streamer.ws;
   }
 
   let onAirSince = null;
@@ -1750,7 +1799,8 @@
         foot.appendChild(b);
       });
       const onKey = e => {
-        if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); }
+        // ปิดเฉพาะหน้าต่างบนสุด (เช่นกล่องยืนยันที่ซ้อนอยู่บนแผงปลายทาง)
+        if (e.key === 'Escape' && back === $$('.modal-backdrop').pop()) { e.preventDefault(); e.stopPropagation(); close(); }
       };
       form.addEventListener('submit', e => { e.preventDefault(); if (primary) close(primary.value); });
       form.addEventListener('keydown', e => {
@@ -1802,9 +1852,9 @@
           <label class="field"><span>Stream Gateway (WebSocket)</span>
             <input name="gateway" class="input mono" placeholder="wss://gateway.example.com:8080/?token=..." value="${esc(settings.gateway)}"></label>
           <p class="note">เบราว์เซอร์ส่ง RTMP เองไม่ได้ ต้องมี Gateway (โฟลเดอร์ <code>server/</code> ในโปรเจกต์) คอยแปลงสัญญาณ — หน้า HTTPS ต้องใช้ <code>wss://</code> · ภาพถูกส่งขึ้น Gateway ครั้งเดียวแล้วกระจายไปทุกปลายทาง จึงใช้อินเทอร์เน็ตขาขึ้นเท่ากับสตรีมช่องเดียว</p>
-          ${streamer.ws ? '<p class="note warn">กำลังสตรีมอยู่ — การแก้ไขปลายทางจะมีผลเมื่อหยุดแล้วเริ่มปลายทางนั้นใหม่ (กดปุ่ม STREAM เพื่อจัดการ)</p>' : ''}
+          ${streamer.ws ? '<p class="note warn">กำลังสตรีมอยู่ — การแก้ไขปลายทางจะมีผลเมื่อหยุดแล้วเริ่มปลายทางนั้นใหม่ในแผง STREAM</p>' : ''}
           <div class="field">
-            <span>ปลายทาง — ติ๊กช่องที่ต้องการสตรีมพร้อมกัน (สูงสุด ${MAX_DESTINATIONS} ช่อง)</span>
+            <span>ปลายทาง (สูงสุด ${MAX_DESTINATIONS} ช่อง) — ช่องที่ติ๊กไว้จะเริ่มพร้อมกันเมื่อกด “เริ่มทั้งหมด” ส่วนช่องอื่นเริ่มทีละช่องได้ในแผง STREAM</span>
             <div class="dest-list"></div>
             <button type="button" class="btn btn-sm dest-add">${icon('plus')}เพิ่มปลายทาง</button>
           </div>
@@ -1920,7 +1970,7 @@
       'MON ฟังเสียง Master ผ่านลำโพง/หูฟังของเครื่องนี้ (ปิดไว้เป็นค่าเริ่มต้นเพื่อกันเสียงหอน)']],
     ['บันทึก สตรีม และเอาต์พุต', ['REC บันทึก Program เป็นไฟล์ (WebM หรือ MP4 ตามเบราว์เซอร์) แล้วดาวน์โหลดอัตโนมัติเมื่อกดหยุด',
       'STREAM ส่งภาพไปหลายปลายทางพร้อมกัน (YouTube / Facebook / Twitch / RTMP อื่น ๆ สูงสุด 6 ช่อง) ผ่าน Stream Gateway — เพิ่มปลายทางที่ปุ่มตั้งค่า (ไอคอนแถบเลื่อน) แท็บการสตรีม',
-      'ระหว่างไลฟ์ กดปุ่ม STREAM (หรือแถบสถานะ STREAM) เพื่อดูสถานะแต่ละปลายทาง เริ่ม/หยุดทีละช่อง หรือหยุดสตรีมทั้งหมด — ช่องที่หลุดจะเชื่อมต่อใหม่เอง',
+      'กดปุ่ม STREAM เพื่อเปิดแผงปลายทาง: กด “เริ่ม” ทีละช่องเพื่อไลฟ์เฉพาะช่องนั้น หรือ “เริ่มทั้งหมด” สำหรับทุกช่องที่ติ๊กไว้ — แต่ละช่องหยุดได้อิสระ ช่องที่หลุดจะเชื่อมต่อใหม่เอง',
       'ปุ่มกล้องบันทึกภาพนิ่ง PNG · ปุ่มหน้าต่างเปิด Program Output แยกสำหรับต่อจอหรือโปรเจกเตอร์ · ปุ่มเต็มจอบนจอ Program',
       'ระบบยังทำงานต่อแม้สลับแท็บ และกันหน้าจอดับระหว่างออกอากาศ']]
   ];
@@ -2102,7 +2152,7 @@
     }));
 
     $('#inputs-grid').addEventListener('click', onGridClick);
-    $('#st-stream').addEventListener('click', () => (streamer.ws ? openLiveDialog() : openSettings('stream')));
+    $('#st-stream').addEventListener('click', openLiveDialog);
 
     const actions = {
       cut, auto: autoTransition, ftb: toggleFtb,
