@@ -10,7 +10,7 @@ const http = require('http');
 const { spawn, spawnSync } = require('child_process');
 const { ROOT, WORK } = require('./lib');
 
-const ALL = ['switcher', 'multistream', 'mobile', 'srt-output', 'srt-input', 'uhd-4k', 'reconnect', 'record-disk', 'audio-fx'];
+const ALL = ['switcher', 'multistream', 'mobile', 'srt-output', 'srt-input', 'uhd-4k', 'reconnect', 'record-disk', 'audio-fx', 'show'];
 const selected = process.argv.slice(2).length ? process.argv.slice(2) : ALL;
 const SUITE_TIMEOUT = 6 * 60 * 1000;
 
@@ -52,7 +52,7 @@ function runSuite(name) {
   return new Promise(resolve => {
     const started = Date.now();
     // detached = กลุ่มโปรเซสของตัวเอง เพื่อปิด ffmpeg ที่ชุดทดสอบเปิดค้างไว้ได้หมด
-    const child = spawn(process.execPath, [path.join(__dirname, 'suites', name + '.js')], { env: { ...process.env, WORK }, detached: true });
+    const child = spawn(process.execPath, [path.join(__dirname, 'suites', name + '.js')], { env: { ...process.env, WORK, LANG: 'C.UTF-8' }, detached: true });
     let output = '';
     child.stdout.on('data', d => { output += d; });
     child.stderr.on('data', d => { output += d; });

@@ -505,6 +505,7 @@ kbd {
 .mini:hover { background: #2a303c; }
 .mini.is-on { background: #234db0; border-color: #5b8cf2; }
 .mini.danger:hover { background: #b91c1c; border-color: #f87171; }
+.mini.warn { color: var(--amber); border-color: rgba(245, 165, 36, .6); }
 .mini .i { width: 13px; height: 13px; }
 .card-foot { display: flex; align-items: center; gap: 6px; padding: 6px 8px; background: var(--panel-2); border-top: 1px solid var(--line); }
 .card-foot .i { width: 13px; height: 13px; color: var(--dim); }
@@ -554,6 +555,22 @@ kbd {
 .swatches { display: flex; gap: 8px; flex-wrap: wrap; }
 .swatch { width: 24px; height: 24px; padding: 0; border-radius: 50%; border: 2px solid transparent; box-shadow: inset 0 0 0 1px rgba(0,0,0,.3); cursor: pointer; }
 .swatch.is-active { border-color: #fff; }
+.muted { color: var(--muted); font-weight: 400; }
+/* preset ป้ายชื่อ */
+.presets { display: flex; flex-wrap: wrap; gap: 6px; }
+.preset { display: inline-flex; align-items: center; max-width: 100%; height: 28px; border-radius: 6px; border: 1px solid var(--line-2); background: var(--panel-2); overflow: hidden; }
+.preset.is-active { border-color: var(--text); }
+.preset-use { display: inline-flex; align-items: center; gap: 6px; height: 100%; padding: 0 8px; border: 0; background: none; color: var(--text); font: inherit; font-size: 12px; cursor: pointer; min-width: 0; }
+.preset-use span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 150px; }
+.preset-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.preset-del { height: 100%; width: 24px; border: 0; border-left: 1px solid var(--line-2); background: none; color: var(--muted); cursor: pointer; font-size: 14px; line-height: 1; }
+.preset-del:hover { color: #f87171; }
+.preset-add { height: 28px; padding: 0 10px; border-radius: 6px; border: 1px dashed var(--line-2); background: none; color: var(--muted); font: inherit; font-size: 12px; cursor: pointer; }
+.preset-add:hover { color: var(--text); border-color: var(--text); }
+/* หน้าต่างโชว์ */
+.show-actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 4px; }
+.show-actions .btn { height: auto; min-height: 56px; flex-direction: column; gap: 4px; padding: 8px; white-space: normal; text-align: center; line-height: 1.25; }
+@media (max-width: 560px) { .show-actions { grid-template-columns: 1fr; } .show-actions .btn { min-height: 44px; flex-direction: row; } }
 .range { -webkit-appearance: none; appearance: none; width: 100%; height: 22px; background: transparent; cursor: pointer; }
 .range::-webkit-slider-runnable-track { height: 4px; border-radius: 2px; background: #07090c; box-shadow: inset 0 0 0 1px var(--line-2); }
 .range::-moz-range-track { height: 4px; border-radius: 2px; background: #07090c; }

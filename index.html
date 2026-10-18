@@ -41,6 +41,8 @@
     <symbol id="i-edit" viewBox="0 0 24 24"><path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></symbol>
     <symbol id="i-play" viewBox="0 0 24 24"><path d="m7 4 13 8-13 8V4z" fill="currentColor"/></symbol>
     <symbol id="i-pause" viewBox="0 0 24 24"><path d="M7 4h3v16H7zM14 4h3v16h-3z" fill="currentColor"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></symbol>
+    <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></symbol>
     <symbol id="i-restart" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></symbol>
     <symbol id="i-repeat" viewBox="0 0 24 24"><path d="m17 2 4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="m7 22-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/></symbol>
     <symbol id="i-headphones" viewBox="0 0 24 24"><path d="M3 14h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7a9 9 0 0 1 18 0v7a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3"/></symbol>
@@ -79,6 +81,7 @@
         <span class="divider"></span>
         <button class="btn btn-icon" data-action="snapshot" title="บันทึกภาพนิ่งจาก Program (PNG)"><svg class="i"><use href="#i-camera"/></svg></button>
         <button class="btn btn-icon" data-action="output-window" title="เปิดหน้าต่าง Program Output (ต่อจอ/โปรเจกเตอร์)"><svg class="i"><use href="#i-external"/></svg></button>
+        <button class="btn btn-icon" data-action="show" title="โชว์: บันทึก / เปิด / เริ่มใหม่"><svg class="i"><use href="#i-folder"/></svg></button>
         <button class="btn btn-icon" data-action="settings" title="ตั้งค่าเอาต์พุตและการสตรีม"><svg class="i"><use href="#i-sliders"/></svg></button>
         <button class="btn btn-icon" data-action="help" title="คู่มือและคีย์ลัด"><svg class="i"><use href="#i-help"/></svg></button>
       </div>
@@ -171,6 +174,9 @@
           <label class="field"><span>หัวข้อหลัก</span><input id="title-headline" class="input" maxlength="80"></label>
           <label class="field"><span>ข้อความรอง</span><input id="title-subtitle" class="input" maxlength="120"></label>
           <div class="field"><span>สีป้าย</span><div id="title-colors" class="swatches"></div></div>
+          <div class="field"><span>Preset ป้ายชื่อ <small class="muted">(แตะเพื่อใช้)</small></span>
+            <div id="title-presets" class="presets"></div>
+          </div>
           <button id="btn-title" class="btn btn-take" data-action="title">TAKE TITLE<kbd>T</kbd></button>
         </div>
 

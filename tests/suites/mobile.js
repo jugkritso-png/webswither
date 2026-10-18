@@ -46,9 +46,12 @@ const results = []; const ok = (n, c, x = '') => results.push(`${c ? 'PASS' : 'F
   await cam.tap('[data-caller=flip]'); await cam.waitForTimeout(2500); s0 = await st();
   ok('flip camera keeps a single input', s0.n === 5 && s0.mob.length === 1 && /:live:/.test(s0.mob[0]), JSON.stringify(s0));
   await cam.tap('[data-caller=mic]'); ok('mic toggle', await cam.evaluate(() => document.querySelector('#caller-mic').classList.contains('is-off')));
+  await host.evaluate(() => { window.webmix.inputs.find(i => i.type === 'wireless').name = 'CAM HOST'; });
+  await host.waitForTimeout(2000); // autosave
   await host.reload(); await host.waitForTimeout(9000);
   s0 = await st();
   ok('studio reload keeps link + phone reconnects', (await host.evaluate(() => window.webmix.wireless.link)) === link && s0.mob.length === 1 && /:live:/.test(s0.mob[0]), JSON.stringify(s0));
+  ok('phone returns to its saved input (same name, no duplicate)', s0.n === 5 && /^CAM HOST:/.test(s0.mob[0]), JSON.stringify(s0));
   // remove the phone from studio
   const mi = await host.evaluate(() => window.webmix.inputs.findIndex(i => i.type === 'wireless'));
   const card = host.locator('.card').nth(mi); await card.hover(); await card.locator('[data-card=remove]').click(); await host.click('.modal-foot .btn-danger');

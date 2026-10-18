@@ -198,14 +198,22 @@
       }
       let sig = null;
       try { const raw = new URLSearchParams(location.search).get('sig'); if (raw) sig = JSON.parse(unb64url(raw)); } catch (e) {}
-      peer = new Peer(peerOptionsFromSig(sig));
-      peer.on('open', () => { placeCall(); openData(); });
-      peer.on('error', err => {
-        if (stopped) return;
-        if (err.type === 'peer-unavailable') scheduleRetry('รอสตูดิโอออนไลน์…');
-        else setStatus('ผิดพลาด: ' + err.type, 'bad');
-      });
-      peer.on('disconnected', () => { if (!stopped && !peer.destroyed) peer.reconnect(); });
+      // ใช้ ID เดิมของเครื่องนี้ทุกครั้ง — สตูดิโอที่โหลดโชว์กลับมาจะจับคู่กล้องนี้เข้ากับ Input เดิมได้
+      let myId = store.raw('webmix-cam-id');
+      if (!myId) { myId = 'webmix-cam-' + uid().slice(0, 8); store.setRaw('webmix-cam-id', myId); }
+      const connect = id => {
+        peer = id ? new Peer(id, peerOptionsFromSig(sig)) : new Peer(peerOptionsFromSig(sig));
+        peer.on('open', () => { placeCall(); openData(); });
+        peer.on('error', err => {
+          if (stopped) return;
+          // ID ถูกใช้อยู่ (เช่นเปิดซ้อนสองแท็บ) — ใช้ ID ชั่วคราวแทน
+          if (err.type === 'unavailable-id' && id) { peer.destroy(); connect(null); }
+          else if (err.type === 'peer-unavailable') scheduleRetry('รอสตูดิโอออนไลน์…');
+          else setStatus('ผิดพลาด: ' + err.type, 'bad');
+        });
+        peer.on('disconnected', () => { if (!stopped && !peer.destroyed) peer.reconnect(); });
+      };
+      connect(myId);
     }
 
     function placeCall() {
@@ -333,7 +341,7 @@
     title: { headline: 'BREAKING NEWS', subtitle: 'รายงานสดจากสตูดิโอ WebMix Pro', color: '#ef4444' },
     pip: { position: 'br', size: 0.32 },
     key: { color: 'green', tolerance: 60 },
-    srtInputs: []
+    srtInputs: [], titlePresets: []
   };
   const saved = store.get('settings', {}) || {};
   const settings = {
@@ -346,6 +354,9 @@
   if (!FRAME_RATES.includes(+settings.fps)) settings.fps = defaults.fps;
   if (!['mix', 'dip', 'wipe'].includes(settings.transition)) settings.transition = 'mix';
   if (![500, 1000, 2000].includes(+settings.duration)) settings.duration = 1000;
+  settings.titlePresets = (Array.isArray(settings.titlePresets) ? settings.titlePresets : [])
+    .filter(t => t && typeof t === 'object').slice(0, 24)
+    .map(t => ({ headline: String(t.headline || '').slice(0, 80), subtitle: String(t.subtitle || '').slice(0, 120), color: TITLE_COLORS.includes(t.color) ? t.color : TITLE_COLORS[0] }));
 
   // ปลายทางการสตรีม (ส่งพร้อมกันได้หลายช่อง) — ย้ายค่าแบบปลายทางเดียวของเวอร์ชันก่อนมาด้วย
   const MAX_DESTINATIONS = 6;
@@ -534,6 +545,13 @@
     ctx.fillText(now.toLocaleDateString('th-TH', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }), w / 2, h * 0.69);
   }
 
+  const RELINK_HINT = {
+    camera: 'กดปุ่ม 🔗 บนการ์ดเพื่อเชื่อมต่อกล้องอีกครั้ง',
+    screen: 'กดปุ่ม 🔗 บนการ์ดเพื่อแชร์หน้าจออีกครั้ง',
+    media: 'กดปุ่ม 🔗 บนการ์ดเพื่อเลือกไฟล์วิดีโอ',
+    image: 'กดปุ่ม 🔗 บนการ์ดเพื่อเลือกไฟล์รูป',
+    wireless: 'รอมือถือเชื่อมต่อกลับมา'
+  };
   function drawNoSignal(ctx, w, h, inp) {
     ctx.fillStyle = '#0b0c10'; ctx.fillRect(0, 0, w, h);
     const s = h / 720;
@@ -547,6 +565,12 @@
     ctx.fillStyle = '#8b94a7';
     fitFont(ctx, inp.name, 500, 22 * s, FONT, w * 0.8);
     ctx.fillText(inp.name, w / 2, h * 0.56);
+    const relink = RELINK_HINT[inp.type];
+    if (relink && inp.missing) {
+      ctx.fillStyle = '#f5a524';
+      fitFont(ctx, relink, 500, 18 * s, FONT, w * 0.85);
+      ctx.fillText(relink, w / 2, h * 0.65);
+    }
     if (inp.type === 'srt') {
       const hint = inp.srt.mode === 'listener' ? `UDP ${inp.srt.port} · ${inp.srt.latency} ms` : inp.srt.url.replace(/\?.*$/, '');
       ctx.fillStyle = '#5d6578';
@@ -564,6 +588,7 @@
       case 'slate': drawSlate(ctx, w, h, inp); break;
       case 'clock': drawClock(ctx, w, h, inp); break;
       case 'image':
+        if (inp.status !== 'live') { drawNoSignal(ctx, w, h, inp); break; }
         fillBlack(ctx, w, h);
         drawFit(ctx, inp.el, inp.el.naturalWidth, inp.el.naturalHeight, w, h);
         break;
@@ -996,7 +1021,8 @@
     }
     inputs.forEach((inp, i) => {
       const meta = TYPE_META[inp.type];
-      const isMedia = inp.type === 'media';
+      const isMedia = inp.type === 'media' && !inp.missing;
+      const canRelink = ['camera', 'screen', 'media', 'image'].includes(inp.type) && (inp.missing || inp.status !== 'live');
       const card = document.createElement('div');
       card.className = 'card' + (inp.status !== 'live' ? ' no-signal' : '');
       card.dataset.id = inp.id;
@@ -1010,6 +1036,7 @@
               <button class="mini" data-card="play" title="เล่น / หยุดชั่วคราว">${icon(inp.el.paused ? 'play' : 'pause')}</button>
               <button class="mini" data-card="restart" title="เล่นใหม่ตั้งแต่ต้น">${icon('restart')}</button>
               <button class="mini ${inp.el.loop ? 'is-on' : ''}" data-card="loop" title="เล่นวนซ้ำ">${icon('repeat')}</button>` : ''}
+            ${canRelink ? `<button class="mini warn" data-card="relink" title="เชื่อมต่อแหล่งภาพนี้ใหม่">${icon('link')}</button>` : ''}
             <button class="mini" data-card="rename" title="แก้ไขชื่อ / ข้อความ">${icon('edit')}</button>
             <button class="mini danger" data-card="remove" title="ลบ Input">${icon('x')}</button>
           </div>
@@ -1035,6 +1062,7 @@
       const act = actionBtn.dataset.card;
       if (act === 'remove') removeInput(inp.id);
       else if (act === 'rename') renameInput(inp);
+      else if (act === 'relink') relinkInput(inp);
       else if (act === 'play') { inp.el.paused ? inp.el.play().catch(() => {}) : inp.el.pause(); }
       else if (act === 'restart') { inp.el.currentTime = 0; inp.el.play().catch(() => {}); }
       else if (act === 'loop') { inp.el.loop = !inp.el.loop; actionBtn.classList.toggle('is-on', inp.el.loop); }
@@ -1064,7 +1092,16 @@
       onAir ? 'Input นี้กำลังออกอากาศอยู่ใน Program — ภาพจะถูกเปลี่ยนเป็นแหล่งอื่นทันที' : 'ต้องการลบ Input นี้ออกจากรายการหรือไม่',
       'ลบ Input');
     if (!ok || !byId(id)) return;
+    disposeInput(inp, true);
+    if (inp.type === 'srt') saveSrtInputs();
+    resetAfterRemoval(id);
+    renderInputs();
+    refreshSourceSelects();
+    toast(`ลบ “${inp.name}” แล้ว`);
+  }
 
+  // ปล่อยทรัพยากรของ Input (กล้อง, ไฟล์, การเชื่อมต่อ) แล้วนำออกจากรายการ
+  function disposeInput(inp, forget) {
     inp.stream && inp.stream.getTracks().forEach(t => t.stop());
     if (inp.el && inp.el.tagName === 'VIDEO') {
       inp.el.pause();
@@ -1074,12 +1111,16 @@
       inp.el.remove();
     }
     if (inp.url) URL.revokeObjectURL(inp.url);
-    if (inp.peerId) wireless.release(inp.peerId);
+    if (inp.el && inp.el.tagName === 'IMG') { inp.el.onload = inp.el.onerror = null; inp.el.removeAttribute('src'); }
+    if (inp.peerId && forget) wireless.release(inp.peerId);
     if (inp.type === 'srt') closeSrtInput(inp);
-    audio.removeForInput(id);
-    inputs.splice(inputs.indexOf(inp), 1);
-    if (inp.type === 'srt') saveSrtInputs();
+    if (forget && (inp.type === 'media' || inp.type === 'image')) mediaStore.del(inp.id);
+    inp.removed = true;
+    audio.removeForInput(inp.id);
+    if (inputs.includes(inp)) inputs.splice(inputs.indexOf(inp), 1);
+  }
 
+  function resetAfterRemoval(id) {
     tr.auto = false; tr.progress = 0; tbar.set(tr.base);
     $('[data-action="auto"]').classList.remove('is-running');
     if (state.programId === id) {
@@ -1094,9 +1135,6 @@
         if (overlays[name].on) setOverlay(name, false);
       }
     }
-    renderInputs();
-    refreshSourceSelects();
-    toast(`ลบ “${inp.name}” แล้ว`);
   }
 
   async function renameInput(inp) {
@@ -1143,7 +1181,53 @@
     return list;
   }
 
-  async function openCameraDialog() {
+  // หาอุปกรณ์จากชื่อ เมื่อรหัสอุปกรณ์เดิมใช้ไม่ได้แล้ว (รหัสเปลี่ยนได้ เช่นหลังล้างข้อมูลเว็บไซต์หรือย้ายพอร์ต USB)
+  async function deviceByLabel(kind, label) {
+    if (!label) return '';
+    try { return ((await navigator.mediaDevices.enumerateDevices()).find(d => d.kind === kind && d.label === label) || {}).deviceId || ''; } catch (e) { return ''; }
+  }
+
+  // เปิดกล้องตามค่าที่จำไว้ (ใช้ตอนเปิดโชว์กลับมาและตอนเชื่อมต่อใหม่)
+  async function startCamera(cam) {
+    const open = () => navigator.mediaDevices.getUserMedia({
+      video: { deviceId: { exact: cam.deviceId }, width: { ideal: cam.w }, height: { ideal: cam.h }, frameRate: { ideal: 30 } },
+      audio: cam.micId ? { deviceId: { exact: cam.micId }, echoCancellation: false, noiseSuppression: false, autoGainControl: false } : false
+    });
+    try { return await open(); } catch (e) {
+      if (e.name !== 'OverconstrainedError' && e.name !== 'NotFoundError') throw e;
+      const video = await deviceByLabel('videoinput', cam.label);
+      if (!video) throw e;
+      cam.deviceId = video;
+      if (cam.micId) cam.micId = await deviceByLabel('audioinput', cam.micLabel);
+      return open();
+    }
+  }
+
+  async function openMicById(micId, label, clean) {
+    const open = id => navigator.mediaDevices.getUserMedia({ audio: { deviceId: { exact: id }, echoCancellation: clean, noiseSuppression: clean, autoGainControl: clean } });
+    try { return { stream: await open(micId), micId }; } catch (e) {
+      if (e.name !== 'OverconstrainedError' && e.name !== 'NotFoundError') throw e;
+      const id = await deviceByLabel('audioinput', label);
+      if (!id) throw e;
+      return { stream: await open(id), micId: id };
+    }
+  }
+
+  // ต่อสัญญาณภาพเข้ากับ Input ที่มีอยู่แล้ว (เช่น Input ที่โหลดจากโชว์และรอเชื่อมต่อ)
+  function attachStream(inp, stream) {
+    if (inp.stream && inp.stream !== stream) inp.stream.getTracks().forEach(t => t.stop());
+    inp.stream = stream;
+    inp.el.srcObject = stream;
+    inp.el.play().catch(() => {});
+    inp.missing = false;
+    watchTracks(inp);
+    audio.replaceStream(inp, stream);
+    inp.status = 'nosignal';
+    setInputStatus(inp, 'live');
+    renderInputs();
+  }
+
+  async function openCameraDialog(target) {
     if (!needMedia()) return;
     let devices;
     try { devices = await listDevices('videoinput'); } catch (e) { toast(e.message, 'error'); return; }
@@ -1151,7 +1235,7 @@
     const mics = devices.filter(d => d.kind === 'audioinput');
     if (!cams.length) { toast('ไม่พบกล้องในเครื่องนี้', 'error'); return; }
     const result = await dialog({
-      title: 'เพิ่มกล้อง',
+      title: target ? `เชื่อมต่อกล้อง “${target.name}”` : 'เพิ่มกล้อง',
       body: `
         <label class="field"><span>กล้อง / แคปเจอร์การ์ด</span><select name="cam" class="select">
           ${cams.map((d, i) => `<option value="${esc(d.deviceId)}">${esc(d.label || 'Camera ' + (i + 1))}</option>`).join('')}
@@ -1167,18 +1251,17 @@
           <option value="">ไม่ใช้เสียง</option>
           ${mics.map((d, i) => `<option value="${esc(d.deviceId)}">${esc(d.label || 'Microphone ' + (i + 1))}</option>`).join('')}
         </select></label>`,
-      actions: [{ label: 'ยกเลิก' }, { label: 'เพิ่มกล้อง', primary: true, value: 'add' }]
+      actions: [{ label: 'ยกเลิก' }, { label: target ? 'เชื่อมต่อ' : 'เพิ่มกล้อง', primary: true, value: 'add' }]
     });
     if (result?.value !== 'add') return;
     const f = result.form;
     const [rw, rh] = f.res.value.split('x').map(Number);
     const camLabel = f.cam.options[f.cam.selectedIndex].text;
+    const cam = { deviceId: f.cam.value, micId: f.mic.value, w: rw, h: rh, label: camLabel, micLabel: f.mic.value ? f.mic.options[f.mic.selectedIndex].text : '' };
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { deviceId: { exact: f.cam.value }, width: { ideal: rw }, height: { ideal: rh }, frameRate: { ideal: 30 } },
-        audio: f.mic.value ? { deviceId: { exact: f.mic.value }, echoCancellation: false, noiseSuppression: false, autoGainControl: false } : false
-      });
-      addStreamInput(stream, { type: 'camera', name: camLabel.replace(/\s*\([0-9a-f]{4}:[0-9a-f]{4}\)\s*$/i, '').slice(0, 32) });
+      const stream = await startCamera(cam);
+      if (target) { if (target.removed) { stream.getTracks().forEach(t => t.stop()); return; } target.cam = cam; attachStream(target, stream); }
+      else addStreamInput(stream, { type: 'camera', name: camLabel.replace(/\s*\([0-9a-f]{4}:[0-9a-f]{4}\)\s*$/i, '').slice(0, 32), cam });
       const got = stream.getVideoTracks()[0].getSettings();
       if (got.width && got.height < rh) toast(`เพิ่มกล้องแล้ว — ได้ภาพ ${got.width}×${got.height} เพราะกล้องรองรับสูงสุดเท่านี้`, 'warn', 6000);
       else toast(`เพิ่มกล้อง “${camLabel}” แล้ว (${got.width || rw}×${got.height || rh})`, 'success');
@@ -1187,13 +1270,14 @@
     }
   }
 
-  async function addScreen() {
+  async function addScreen(target) {
     if (!navigator.mediaDevices?.getDisplayMedia) {
       toast('อุปกรณ์/เบราว์เซอร์นี้ไม่รองรับการแชร์หน้าจอ (ใช้ได้บนคอมพิวเตอร์)', 'error');
       return;
     }
     try {
       const stream = await navigator.mediaDevices.getDisplayMedia({ video: { width: { ideal: 3840 }, height: { ideal: 2160 }, frameRate: { ideal: 30 } }, audio: true });
+      if (target) { if (!target.removed) attachStream(target, stream); return; }
       const n = inputs.filter(i => i.type === 'screen').length + 1;
       addStreamInput(stream, { type: 'screen', name: `SCREEN ${n}` });
     } catch (e) {
@@ -1210,29 +1294,83 @@
     el.click();
   }
 
+  const baseName = name => name.replace(/\.[^.]+$/, '').slice(0, 32);
+
+  function createMediaInput(props) {
+    const v = document.createElement('video');
+    v.loop = props.loop !== false; v.playsInline = true; v.preload = 'auto';
+    pool.appendChild(v);
+    const inp = addInput({ type: 'media', ...props, el: v });
+    v.addEventListener('play', () => updateMediaButtons(inp));
+    v.addEventListener('pause', () => updateMediaButtons(inp));
+    v.addEventListener('error', () => {
+      if (!v.getAttribute('src')) return;
+      setInputStatus(inp, 'nosignal');
+      toast(`เปิดไฟล์ “${inp.fileName || inp.name}” ไม่ได้ (ฟอร์แมตไม่รองรับ)`, 'error');
+    });
+    audio.addElement(inp, v);
+    return inp;
+  }
+
+  function createImageInput(props) {
+    return addInput({ type: 'image', ...props, el: new Image() });
+  }
+
+  // ใส่ไฟล์ให้ Input วิดีโอ/รูป — store = เก็บสำเนาไว้ในเครื่อง (เปิดหน้าใหม่แล้ว Input ยังอยู่ครบ)
+  function setInputFile(inp, file, store, isNew) {
+    if (inp.url) URL.revokeObjectURL(inp.url);
+    inp.url = URL.createObjectURL(file);
+    if (file.name && file.name !== inp.id) inp.fileName = file.name;
+    inp.missing = false;
+    if (inp.type === 'image') {
+      inp.el.onload = () => { setInputStatus(inp, 'live'); renderInputs(); };
+      inp.el.onerror = () => {
+        toast(`เปิดรูป “${inp.fileName || inp.name}” ไม่ได้`, 'error');
+        if (isNew) { disposeInput(inp, true); resetAfterRemoval(inp.id); renderInputs(); refreshSourceSelects(); }
+        else setInputStatus(inp, 'nosignal');
+      };
+      inp.el.src = inp.url;
+    } else {
+      inp.el.src = inp.url;
+      inp.status = 'live';
+      inp.el.play().catch(() => {});
+    }
+    if (store) mediaStore.put(inp.id, file).then(ok => {
+      if (!ok && !inp.removed) toast(`พื้นที่ในเบราว์เซอร์ไม่พอเก็บ “${inp.fileName || inp.name}” — เปิดหน้าใหม่แล้วต้องเลือกไฟล์นี้อีกครั้ง`, 'warn', 7000);
+    });
+  }
+
   function addVideoFiles(files) {
     audio.ensure();
-    for (const file of files) {
-      const v = document.createElement('video');
-      const url = URL.createObjectURL(file);
-      v.src = url; v.loop = true; v.playsInline = true; v.preload = 'auto';
-      pool.appendChild(v);
-      const inp = addInput({ type: 'media', name: file.name.replace(/\.[^.]+$/, '').slice(0, 32), el: v, url });
-      v.addEventListener('play', () => updateMediaButtons(inp));
-      v.addEventListener('pause', () => updateMediaButtons(inp));
-      v.addEventListener('error', () => { setInputStatus(inp, 'nosignal'); toast(`เปิดไฟล์ “${file.name}” ไม่ได้ (ฟอร์แมตไม่รองรับ)`, 'error'); });
-      audio.addElement(inp, v);
-      v.play().catch(() => {});
-    }
+    for (const file of files) setInputFile(createMediaInput({ name: baseName(file.name) }), file, true, true);
   }
 
   function addImageFiles(files) {
-    for (const file of files) {
-      const img = new Image();
-      const url = URL.createObjectURL(file);
-      img.onload = () => addInput({ type: 'image', name: file.name.replace(/\.[^.]+$/, '').slice(0, 32), el: img, url });
-      img.onerror = () => { URL.revokeObjectURL(url); toast(`เปิดรูป “${file.name}” ไม่ได้`, 'error'); };
-      img.src = url;
+    for (const file of files) setInputFile(createImageInput({ name: baseName(file.name), status: 'nosignal' }), file, true, true);
+  }
+
+  // เชื่อมต่อ Input ที่ขาดสัญญาณ/ยังไม่มีไฟล์ (หลังเปิดโชว์กลับมา หรือกล้องหลุด)
+  async function relinkInput(inp) {
+    if (inp.type === 'camera') {
+      if (inp.cam && needMedia()) {
+        try { const stream = await startCamera(inp.cam); if (!inp.removed) attachStream(inp, stream); toast(`เชื่อมต่อ “${inp.name}” แล้ว`, 'success'); return; } catch (e) {}
+      }
+      return openCameraDialog(inp);
+    }
+    if (inp.type === 'screen') return addScreen(inp);
+    if (inp.type === 'media' || inp.type === 'image') {
+      const el = document.createElement('input');
+      el.type = 'file'; el.accept = inp.type === 'media' ? 'video/*,audio/*' : 'image/*';
+      pool.appendChild(el);
+      el.onchange = () => {
+        const file = el.files[0];
+        el.remove();
+        if (!file || inp.removed) return;
+        audio.ensure();
+        setInputFile(inp, file, true, false);
+        renderInputs();
+      };
+      el.click();
     }
   }
 
@@ -1259,7 +1397,7 @@
         audio: { deviceId: { exact: f.mic.value }, echoCancellation: clean, noiseSuppression: clean, autoGainControl: clean }
       });
       const label = f.mic.options[f.mic.selectedIndex].text.replace(/\s*\([0-9a-f]{4}:[0-9a-f]{4}\)\s*$/i, '');
-      audio.addMic(stream, label.slice(0, 24));
+      audio.addMic(stream, label.slice(0, 24), { micId: f.mic.value, micLabel: f.mic.options[f.mic.selectedIndex].text, clean });
       toast(`เพิ่ม “${label}” แล้ว`, 'success');
     } catch (e) {
       toast('เปิดไมค์ไม่สำเร็จ: ' + e.message, 'error');
@@ -1295,6 +1433,7 @@
   const audio = {
     ctx: null, master: null, monitor: null, dest: null, analyser: null, buf: null,
     channels: [],
+    pending: new Map(),   // ค่าของช่องเสียงจากโชว์ที่บันทึกไว้ รอใช้เมื่อแหล่งเสียงเชื่อมต่อ
     masterStrip: { name: 'MASTER', db: 0, muted: false, limiter: store.get('limiter', true), level: -90, peak: -90, peakAt: 0, ui: null },
     monitorOn: false,
 
@@ -1362,8 +1501,22 @@
         fx: { delayMs: 0, low: 0, mid: 0, high: 0, comp: false, threshold: -18, ratio: 4 },
         ...opts
       };
+      const saved = ch.restore || (ch.inputId && this.pending.get(ch.inputId));
+      if (saved) {
+        this.pending.delete(ch.inputId);
+        delete ch.restore;
+        ch.db = typeof saved.db === 'number' ? clamp(saved.db, -60, 10) : -Infinity;
+        ch.muted = !!saved.muted;
+        ch.afv = !!saved.afv;
+        if (saved.fx && typeof saved.fx === 'object') {
+          const f = saved.fx;
+          ch.fx = { delayMs: clamp(+f.delayMs || 0, 0, 1000), low: clamp(+f.low || 0, -15, 15), mid: clamp(+f.mid || 0, -15, 15), high: clamp(+f.high || 0, -15, 15),
+            comp: !!f.comp, threshold: clamp(+f.threshold || -18, -60, 0), ratio: clamp(+f.ratio || 4, 1, 20) };
+        }
+      }
       this.channels.push(ch);
       this.applyGain(ch);
+      this.applyAfv();
       this.applyFx(ch);
       renderMixer();
       return ch;
@@ -1402,9 +1555,9 @@
         this.addChannel(this.ctx.createMediaElementSource(el), { name: inp.name, inputId: inp.id, kind: 'input' });
       } catch (e) { console.warn('audio element', e); }
     },
-    addMic(stream, name) {
+    addMic(stream, name, extra = {}) {
       if (!this.ensure()) return;
-      this.addChannel(this.ctx.createMediaStreamSource(stream), { name, kind: 'mic', stream });
+      this.addChannel(this.ctx.createMediaStreamSource(stream), { name, kind: 'mic', stream, ...extra });
     },
     remove(ch) {
       try { ch.node.disconnect(); ch.afvGain.disconnect(); } catch (e) {}
@@ -1702,6 +1855,7 @@
         if (inp && inp.stream === remote) return;
         if (inp) {
           inp.stream = remote;
+          inp.missing = false;
           inp.el.srcObject = remote;
           inp.el.play().catch(() => {});
           setInputStatus(inp, 'live');
@@ -1854,12 +2008,12 @@
     if (mode === 'listener') showSrtSenderInfo(inp);
   }
 
-  function createSrtInput(cfg, name) {
+  function createSrtInput(cfg, name, extra = {}) {
     const v = document.createElement('video');
     v.playsInline = true; v.autoplay = true; v.muted = false;
     v.disableRemotePlayback = true;
     pool.appendChild(v);
-    const inp = addInput({ type: 'srt', name, el: v, status: 'nosignal', srt: cfg, srtState: 'connecting' });
+    const inp = addInput({ type: 'srt', name, el: v, status: 'nosignal', srt: cfg, srtState: 'connecting', ...extra });
     v.addEventListener('playing', () => setInputStatus(inp, 'live'));
     audio.addElement(inp, v);
     connectSrtInput(inp);
@@ -2787,6 +2941,10 @@
   const MANUAL = [
     ['ภาพรวม', ['จอ PREVIEW (ขอบเขียว) คือภาพถัดไปที่เตรียมไว้ จอ PROGRAM (ขอบแดง) คือภาพที่ออกอากาศ บันทึก และสตรีมจริง',
       'แตะ/คลิก Input เพื่อส่งเข้า Preview แล้วกด CUT หรือ AUTO เพื่อสลับเข้า Program — แตะสองครั้งเพื่อตัดเข้า Program ทันที']],
+    ['โชว์ (บันทึก/เปิด)', ['ทุกอย่างบันทึกอัตโนมัติในเบราว์เซอร์: Input (ลำดับ ชื่อ ไฟล์วิดีโอ/รูป กล้อง SRT), Program/Preview, มิกเซอร์เสียงพร้อม FX, กราฟิก — รีเฟรชหรือปิดหน้าแล้วเปิดใหม่ โชว์กลับมาครบ',
+      'กล้องและไมค์เปิดกลับมาเอง · มือถือที่เคยต่อจะเชื่อมกลับเข้าช่องเดิม · แชร์หน้าจอหรือไฟล์ที่หาไม่พบจะมีปุ่ม 🔗 บนการ์ดให้เชื่อมต่อใหม่',
+      'ปุ่มโฟลเดอร์ด้านบน: ตั้งชื่อโชว์, บันทึกเป็นไฟล์ .webmix.json (ย้ายเครื่องหรือเก็บหลายรายการ), เปิดไฟล์โชว์ และเริ่มโชว์ใหม่',
+      'ไฟล์โชว์ไม่รวมตัวไฟล์วิดีโอ/รูป — เปิดบนเครื่องอื่นแล้วกด 🔗 เพื่อเลือกไฟล์ · Stream Key อยู่ในไฟล์เฉพาะเมื่อเลือก “จำ Stream Key” ไว้']],
     ['ทรานซิชัน', ['CUT ตัดภาพทันที · AUTO เปลี่ยนภาพตามเอฟเฟกต์และเวลาที่เลือก (MIX ผสมภาพ, DIP จางผ่านสีดำ, WIPE กวาดภาพ)',
       'T-Bar เลื่อนเพื่อทำทรานซิชันด้วยมือ เลื่อนสุดแล้วภาพจะสลับ และครั้งต่อไปให้เลื่อนกลับอีกทาง เหมือนสวิตเชอร์จริง',
       'FTB จางภาพ Program ทั้งหมดเป็นสีดำ (รวมกราฟิก) กดอีกครั้งเพื่อกลับมา']],
@@ -2798,6 +2956,7 @@
       'บนมือถือสลับกล้องหน้า/หลัง ปิดไมค์ หรือหยุดส่งภาพได้ และจะเห็นกรอบแดง ON AIR เมื่อภาพของเครื่องนั้นออกอากาศ',
       'ถ้าสัญญาณหลุด มือถือจะเชื่อมต่อกลับเข้าช่องเดิมเอง']],
     ['กราฟิก (TITLE / PIP / KEY)', ['TITLE: ป้ายชื่อ Lower Third พิมพ์ข้อความแล้วเปลี่ยนบนจอได้ทันที เลือกสีป้ายได้ กด TAKE เพื่อแสดง (มีแอนิเมชันเข้า-ออก)',
+      'Preset ป้ายชื่อ: กด “+ บันทึกป้ายนี้” เพื่อเก็บชื่อ/ตำแหน่ง/สีไว้หลายชุด แล้วแตะเพื่อสลับ (ถ้าป้ายขึ้นจออยู่จะเปลี่ยนทันที) · × ลบ preset',
       'PIP: ภาพซ้อนมุมจอ เลือกแหล่งภาพ ตำแหน่ง และขนาด',
       'KEY: ลบฉากเขียว/ฟ้าของแหล่งภาพที่เลือกแล้ววางทับ Program ปรับความไวด้วย Tolerance']],
     ['เสียง', ['ทุกช่องมีมิเตอร์ระดับเสียงจริง (dBFS) เฟดเดอร์ (ดับเบิลคลิก = 0 dB) และปุ่ม M ปิดเสียง',
@@ -2805,7 +2964,7 @@
       'MON ฟังเสียง Master ผ่านลำโพง/หูฟังของเครื่องนี้ (ปิดไว้เป็นค่าเริ่มต้นเพื่อกันเสียงหอน)',
       'LIM ลิมิตเตอร์ที่ Master กันเสียงแตกในไฟล์บันทึกและสตรีม (เปิดไว้เป็นค่าเริ่มต้น ไฟแดง = กำลังลดระดับเสียง)',
       'FX ในแต่ละช่อง: หน่วงเสียงให้ตรงกับภาพ (0–500 ms), EQ ต่ำ/กลาง/สูง และคอมเพรสเซอร์']],
-    ['บันทึก สตรีม และเอาต์พุต', ['REC บันทึก Program เป็นไฟล์ (WebM หรือ MP4 ตามเบราว์เซอร์) แล้วดาวน์โหลดอัตโนมัติเมื่อกดหยุด',
+    ['บันทึก สตรีม และเอาต์พุต', ['REC บันทึก Program เป็นไฟล์ (WebM หรือ MP4 ตามเบราว์เซอร์) แล้วดาวน์โหลดอัตโนมัติเมื่อกดหยุด — ไฟล์ WebM มีความยาวและเลื่อนหาตำแหน่งได้ในโปรแกรมเล่นและโปรแกรมตัดต่อ',
       'SRT: เลือกแพลตฟอร์ม “SRT” แล้วใส่ srt://host:port, Stream ID, รหัสผ่านเข้ารหัส (ถ้ามี) และ Latency — ใช้ส่งเข้า vMix, OBS, Wowza, Haivision หรือ SRT Server ได้ทนเน็ตกระตุกกว่า RTMP',
       'STREAM ส่งภาพไปหลายปลายทางพร้อมกัน (YouTube / Facebook / Twitch / SRT / RTMP อื่น ๆ สูงสุด 6 ช่อง) ผ่าน Stream Gateway — เพิ่มปลายทางที่ปุ่มตั้งค่า (ไอคอนแถบเลื่อน) แท็บการสตรีม',
       'กดปุ่ม STREAM เพื่อเปิดแผงปลายทาง: กด “เริ่ม” ทีละช่องเพื่อไลฟ์เฉพาะช่องนั้น หรือ “เริ่มทั้งหมด” สำหรับทุกช่องที่ติ๊กไว้ — แต่ละช่องหยุดได้อิสระ ช่องที่หลุดจะเชื่อมต่อใหม่เอง',
@@ -2985,8 +3144,8 @@
     const head = $('#title-headline'), sub = $('#title-subtitle');
     head.value = settings.title.headline;
     sub.value = settings.title.subtitle;
-    head.addEventListener('input', () => { settings.title.headline = head.value; saveSettings(); });
-    sub.addEventListener('input', () => { settings.title.subtitle = sub.value; saveSettings(); });
+    head.addEventListener('input', () => { settings.title.headline = head.value; saveSettings(); renderTitlePresets(); });
+    sub.addEventListener('input', () => { settings.title.subtitle = sub.value; saveSettings(); renderTitlePresets(); });
     const sw = $('#title-colors');
     sw.innerHTML = TITLE_COLORS.map(c => `<button class="swatch" style="background:${c}" data-color="${c}" title="${c}"></button>`).join('');
     const paintSwatch = () => $$('.swatch', sw).forEach(b => b.classList.toggle('is-active', b.dataset.color === settings.title.color));
@@ -2997,7 +3156,9 @@
       settings.title.color = b.dataset.color;
       paintSwatch();
       saveSettings();
+      renderTitlePresets();
     });
+    initTitlePresets(() => { head.value = settings.title.headline; sub.value = settings.title.subtitle; paintSwatch(); });
 
     const tol = $('#key-tolerance');
     tol.value = settings.key.tolerance;
@@ -3025,7 +3186,7 @@
       key: () => setOverlay('key', !overlays.key.on),
       stream: toggleStream, record: toggleRecord, snapshot,
       'output-window': openOutputWindow, fullscreen: toggleFullscreen,
-      settings: () => openSettings(), help: openHelp,
+      settings: () => openSettings(), help: openHelp, show: openShowDialog,
       wireless: showWirelessDialog, 'add-mic': openMicDialog,
       monitor: () => { audio.setMonitor(!audio.monitorOn); updateStatus(); },
       'audio-on': () => { audio.ensure(); setTimeout(updateStatus, 100); }
@@ -3078,39 +3239,356 @@
     });
   }
 
+  /* ------------------------------------------------------------ show */
+  /* โชว์ = ทุกอย่างที่ตั้งไว้สำหรับรายการหนึ่ง: Input (ลำดับ ชื่อ แหล่งภาพ), Program/Preview, กราฟิก, มิกเซอร์เสียง
+     - บันทึกอัตโนมัติลงเบราว์เซอร์ทุกครั้งที่มีการเปลี่ยนแปลง → รีเฟรช/ปิดหน้าแล้วเปิดใหม่ โชว์กลับมาครบ
+     - ไฟล์วิดีโอ/รูปเก็บสำเนาไว้ในพื้นที่ของเบราว์เซอร์ (OPFS) จึงไม่ต้องเลือกไฟล์ใหม่
+     - บันทึกเป็นไฟล์ .webmix.json เพื่อย้ายเครื่องหรือเก็บหลายรายการ (ไฟล์สื่อไม่ได้รวมอยู่ในไฟล์ ต้องเลือกใหม่บนเครื่องอื่น) */
+  const mediaStore = {
+    dir: null,
+    async open() {
+      if (!canUseOpfs) return null;
+      if (!this.dir) {
+        const root = await navigator.storage.getDirectory();
+        this.dir = await root.getDirectoryHandle('webmix-media', { create: true });
+      }
+      return this.dir;
+    },
+    async put(key, file) {
+      let dir;
+      try {
+        dir = await this.open();
+        if (!dir) return false;
+        if (navigator.storage.persist) navigator.storage.persist().catch(() => {});
+        const w = await (await dir.getFileHandle(key, { create: true })).createWritable();
+        await w.write(file);
+        await w.close();
+        return true;
+      } catch (e) {
+        if (dir) await dir.removeEntry(key).catch(() => {});
+        return false;
+      }
+    },
+    async get(key) {
+      try {
+        const dir = await this.open();
+        return dir ? await (await dir.getFileHandle(key)).getFile() : null;
+      } catch (e) { return null; }
+    },
+    async del(key) {
+      try { const dir = await this.open(); if (dir) await dir.removeEntry(key); } catch (e) {}
+    },
+    // ลบไฟล์ที่ไม่มี Input ใช้แล้ว
+    async prune(keep) {
+      try {
+        const dir = await this.open();
+        if (!dir) return;
+        const stale = [];
+        for await (const [name] of dir.entries()) if (!keep.has(name)) stale.push(name);
+        for (const name of stale) await dir.removeEntry(name).catch(() => {});
+      } catch (e) {}
+    }
+  };
+
+  const SHOW_TYPES = ['bars', 'black', 'slate', 'clock', 'image', 'media', 'camera', 'screen', 'wireless', 'srt'];
+  const show = {
+    ready: false, last: '', savedAt: 0,
+    get name() { return store.get('showName', '') || 'โชว์ใหม่'; },
+    set name(v) { store.set('showName', String(v || '').trim().slice(0, 60)); },
+
+    // secrets = รวมรหัส SRT/Stream Key (เฉพาะเมื่อผู้ใช้เลือกให้จำรหัสไว้)
+    serialize(secrets = settings.rememberKey) {
+      const chan = c => ({ db: c.db === -Infinity ? null : +c.db.toFixed(2), muted: c.muted, afv: c.afv, fx: { ...c.fx } });
+      return {
+        app: 'webmix', version: 1, name: this.name,
+        output: { resolution: settings.resolution, fps: settings.fps, videoKbps: settings.videoKbps, transition: settings.transition, duration: settings.duration },
+        graphics: { title: { ...settings.title }, titlePresets: settings.titlePresets.map(t => ({ ...t })), pip: { ...settings.pip }, key: { ...settings.key } },
+        inputs: inputs.map(i => {
+          const o = { id: i.id, type: i.type, name: i.name };
+          if (i.text) o.text = i.text;
+          if (i.type === 'camera' && i.cam) o.cam = { ...i.cam };
+          if (i.type === 'media') { o.file = i.fileName || ''; o.loop = !!i.el.loop; }
+          if (i.type === 'image') o.file = i.fileName || '';
+          if (i.type === 'wireless') o.peerId = i.peerId;
+          if (i.type === 'srt') o.srt = { ...i.srt, passphrase: secrets ? i.srt.passphrase : '' };
+          return o;
+        }),
+        program: state.programId, preview: state.previewId,
+        overlays: { pip: overlays.pip.sourceId, key: overlays.key.sourceId },
+        audio: {
+          master: { db: audio.masterStrip.db === -Infinity ? null : audio.masterStrip.db, muted: audio.masterStrip.muted },
+          inputs: Object.fromEntries(audio.channels.filter(c => c.inputId).map(c => [c.inputId, chan(c)])),
+          mics: audio.channels.filter(c => c.kind === 'mic' && c.micId).map(c => ({ name: c.name, micId: c.micId, label: c.micLabel || '', clean: !!c.clean, ...chan(c) }))
+        }
+      };
+    },
+
+    autosave(force) {
+      if (!this.ready) return;
+      const data = this.serialize();
+      const json = JSON.stringify(data);
+      if (json === this.last && !force) return;
+      this.last = json;
+      store.set('show', data);
+      this.savedAt = Date.now();
+    },
+
+    // สร้างโชว์กลับมาจากข้อมูลที่บันทึกไว้ (ตอนเปิดหน้า)
+    restore(data) {
+      const ids = new Set();
+      let waitingMics = 0;
+      for (const raw of data.inputs) {
+        if (!raw || !SHOW_TYPES.includes(raw.type)) continue;
+        const id = typeof raw.id === 'string' && raw.id && !ids.has(raw.id) ? raw.id : uid();
+        ids.add(id);
+        const base = { id, name: String(raw.name || raw.type.toUpperCase()).slice(0, 40) };
+        if (data.audio?.inputs?.[raw.id]) audio.pending.set(id, data.audio.inputs[raw.id]);
+        try { this.restoreInput(raw, base); } catch (e) { console.warn('restore input', e); }
+      }
+      if (byId(data.program)) state.programId = data.program;
+      if (byId(data.preview) && data.preview !== state.programId) state.previewId = data.preview;
+      else if (state.previewId === state.programId) state.previewId = (inputs.find(i => i.id !== state.programId) || {}).id || null;
+      if (byId(data.overlays?.pip)) overlays.pip.sourceId = data.overlays.pip;
+      if (byId(data.overlays?.key)) overlays.key.sourceId = data.overlays.key;
+      const m = data.audio?.master;
+      if (m) { audio.masterStrip.db = typeof m.db === 'number' ? clamp(m.db, -60, 10) : -Infinity; audio.masterStrip.muted = !!m.muted; audio.applyMaster(); }
+      // ไมค์: เปิดอุปกรณ์เดิมอีกครั้ง (เบราว์เซอร์อาจถามสิทธิ์)
+      const mics = Array.isArray(data.audio?.mics) ? data.audio.mics.slice(0, 16) : [];
+      if (mics.length && needMedia()) {
+        for (const mc of mics) {
+          waitingMics++;
+          openMicById(String(mc.micId), String(mc.label || ''), !!mc.clean)
+            .then(({ stream, micId }) => audio.addMic(stream, String(mc.name || 'MIC').slice(0, 24), { micId, micLabel: String(mc.label || ''), clean: !!mc.clean, restore: mc }))
+            .catch(() => toast(`เปิดไมค์ “${mc.name}” ไม่ได้ — เพิ่มใหม่จากปุ่ม + ในมิกเซอร์`, 'warn', 6000));
+        }
+      }
+      renderInputs();
+      refreshSourceSelects();
+      renderMixer();
+      updateTally();
+      const missing = inputs.filter(i => i.missing).length;
+      toast(`เปิดโชว์ “${this.name}” แล้ว — ${inputs.length} Input${missing ? ` (รอเชื่อมต่อ ${missing})` : ''}`, missing ? 'warn' : 'success', 5000);
+      return waitingMics;
+    },
+
+    restoreInput(raw, base) {
+      const text = typeof raw.text === 'string' ? raw.text.slice(0, 80) : '';
+      switch (raw.type) {
+        case 'bars': case 'black': case 'slate': case 'clock':
+          addInput({ type: raw.type, ...base, text });
+          break;
+        case 'media': case 'image': {
+          const inp = raw.type === 'media'
+            ? createMediaInput({ ...base, fileName: String(raw.file || ''), loop: raw.loop !== false, status: 'nosignal', missing: true })
+            : createImageInput({ ...base, fileName: String(raw.file || ''), status: 'nosignal', missing: true });
+          mediaStore.get(base.id).then(file => {
+            if (inp.removed) return;
+            if (file) setInputFile(inp, file, false, false);
+            renderInputs();
+          });
+          break;
+        }
+        case 'camera': {
+          const inp = addInput({ type: 'camera', ...base, el: createVideo(null), status: 'nosignal', missing: true });
+          if (raw.cam && typeof raw.cam.deviceId === 'string') {
+            inp.cam = { deviceId: raw.cam.deviceId, micId: String(raw.cam.micId || ''), w: +raw.cam.w || 1920, h: +raw.cam.h || 1080,
+              label: String(raw.cam.label || ''), micLabel: String(raw.cam.micLabel || '') };
+            if (window.isSecureContext && navigator.mediaDevices?.getUserMedia) {
+              startCamera(inp.cam).then(stream => { if (inp.removed) stream.getTracks().forEach(t => t.stop()); else attachStream(inp, stream); }).catch(() => {});
+            }
+          }
+          break;
+        }
+        case 'screen':
+          addInput({ type: 'screen', ...base, el: createVideo(null), status: 'nosignal', missing: true });
+          break;
+        case 'wireless':
+          // มือถือที่เคยเชื่อมต่อจะโทรกลับมาเองด้วย ID เดิม แล้วเข้ามาที่ Input นี้
+          addInput({ type: 'wireless', ...base, el: createVideo(null), status: 'nosignal', peerId: String(raw.peerId || ''), missing: true });
+          break;
+        case 'srt': {
+          const c = raw.srt || {};
+          if (c.mode !== 'listener' && c.mode !== 'caller') return;
+          createSrtInput({ mode: c.mode, port: +c.port || 9000, url: String(c.url || ''), streamid: String(c.streamid || ''),
+            passphrase: String(c.passphrase || ''), latency: SRT_LATENCIES.includes(+c.latency) ? +c.latency : 500 }, base.name, { id: base.id });
+          break;
+        }
+      }
+    },
+
+    exportFile() {
+      const data = { ...this.serialize(), savedAt: new Date().toISOString(),
+        stream: { gateway: settings.gateway, destinations: settings.destinations.map(d => ({ ...d, key: settings.rememberKey ? d.key : '', passphrase: settings.rememberKey ? d.passphrase : '' })) } };
+      const safe = this.name.replace(/[\\/:*?"<>|]+/g, '').trim() || 'WebMix';
+      downloadBlob(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }), `${safe}.webmix.json`);
+      toast(`บันทึกไฟล์โชว์ “${safe}.webmix.json” แล้ว`, 'success');
+    },
+
+    busyWarning() {
+      return streamer.active || rec.active ? 'กำลังสตรีมหรือบันทึกอยู่ — การเปิดโชว์อื่นจะโหลดหน้าใหม่และหยุดการสตรีม/บันทึกทันที' : '';
+    },
+
+    async importFile(file) {
+      let data;
+      try { data = JSON.parse(await file.text()); } catch (e) { toast('ไฟล์นี้ไม่ใช่ไฟล์โชว์ของ WebMix', 'error'); return; }
+      if (!data || data.app !== 'webmix' || !Array.isArray(data.inputs)) { toast('ไฟล์นี้ไม่ใช่ไฟล์โชว์ของ WebMix', 'error'); return; }
+      const ok = await confirmDialog(`เปิดโชว์ “${String(data.name || file.name).slice(0, 60)}”`,
+        `${this.busyWarning() || 'โชว์ปัจจุบันจะถูกแทนที่ (ถ้ายังไม่ได้บันทึกเป็นไฟล์ ให้กดยกเลิกแล้วบันทึกก่อน)'} · ${data.inputs.length} Input`, 'เปิดโชว์');
+      if (!ok) return;
+      this.apply(data);
+    },
+
+    // ใช้ค่าจากไฟล์โชว์แล้วโหลดหน้าใหม่ (สร้างทุกอย่างใหม่หมดจากข้อมูลที่บันทึกไว้)
+    apply(data) {
+      const o = data.output || {};
+      if (RESOLUTIONS[o.resolution]) settings.resolution = o.resolution;
+      if (FRAME_RATES.includes(+o.fps)) settings.fps = +o.fps;
+      if (+o.videoKbps > 0) settings.videoKbps = clamp(Math.round(+o.videoKbps), 500, MAX_KBPS);
+      if (['mix', 'dip', 'wipe'].includes(o.transition)) settings.transition = o.transition;
+      if ([500, 1000, 2000].includes(+o.duration)) settings.duration = +o.duration;
+      const g = data.graphics || {};
+      if (g.title && typeof g.title === 'object') settings.title = { ...settings.title, ...g.title };
+      if (Array.isArray(g.titlePresets)) settings.titlePresets = g.titlePresets.slice(0, 24);
+      if (g.pip && typeof g.pip === 'object') settings.pip = { ...settings.pip, ...g.pip };
+      if (g.key && typeof g.key === 'object') settings.key = { ...settings.key, ...g.key };
+      const st = data.stream;
+      if (st && typeof st.gateway === 'string') settings.gateway = st.gateway;
+      if (st && Array.isArray(st.destinations) && st.destinations.length) settings.destinations = st.destinations.slice(0, MAX_DESTINATIONS);
+      settings.srtInputs = [];
+      saveSettings();
+      if (data.name) this.name = data.name;
+      this.ready = false;
+      store.set('show', data);
+      location.reload();
+    },
+
+    async startNew() {
+      const ok = await confirmDialog('เริ่มโชว์ใหม่',
+        `${this.busyWarning() || 'Input, มิกเซอร์และกราฟิกทั้งหมดจะถูกล้างเป็นค่าเริ่มต้น'} (ค่าเอาต์พุตและปลายทางการสตรีมยังอยู่เหมือนเดิม)`, 'เริ่มใหม่');
+      if (!ok) return;
+      this.ready = false;
+      store.set('show', null);
+      store.set('showName', '');
+      settings.srtInputs = [];
+      saveSettings();
+      location.reload();
+    }
+  };
+
+  function openShowDialog() {
+    show.autosave();
+    const ago = show.savedAt ? new Date(show.savedAt).toLocaleTimeString('th-TH', { hour12: false }) : '—';
+    dialog({
+      title: 'โชว์',
+      body: `
+        <label class="field"><span>ชื่อโชว์</span><input name="showname" class="input" maxlength="60" value="${esc(show.name)}"></label>
+        <p class="note">บันทึกอัตโนมัติในเบราว์เซอร์นี้แล้ว (ล่าสุด ${ago}) — รีเฟรชหรือปิดหน้าแล้วเปิดใหม่ Input, มิกเซอร์ และกราฟิกจะกลับมาครบ
+          กล้อง/ไฟล์ที่ต้องเชื่อมใหม่จะมีปุ่ม <b>🔗</b> บนการ์ด</p>
+        <div class="show-actions">
+          <button type="button" class="btn" data-show="export">${icon('download')}บันทึกเป็นไฟล์</button>
+          <button type="button" class="btn" data-show="import">${icon('folder')}เปิดไฟล์โชว์</button>
+          <button type="button" class="btn btn-danger" data-show="new">${icon('plus')}เริ่มโชว์ใหม่</button>
+        </div>
+        <p class="note">ไฟล์โชว์ (.webmix.json) เก็บการตั้งค่าทั้งหมด แต่ไม่รวมตัวไฟล์วิดีโอ/รูป — เปิดบนเครื่องอื่นแล้วให้กด 🔗 เพื่อเลือกไฟล์
+          ${settings.rememberKey ? 'และ<b>มี Stream Key/รหัส SRT อยู่ในไฟล์</b> — เก็บไฟล์ไว้ให้ปลอดภัย' : 'และไม่มี Stream Key/รหัส SRT อยู่ในไฟล์'}</p>`,
+      actions: [{ label: 'ปิด', primary: true, value: 'close' }],
+      onOpen(modal) {
+        const nameEl = $('[name="showname"]', modal);
+        nameEl.addEventListener('input', () => { show.name = nameEl.value; });
+        modal.addEventListener('click', e => {
+          const b = e.target.closest('[data-show]');
+          if (!b) return;
+          show.name = nameEl.value;
+          const act = b.dataset.show;
+          if (act === 'export') show.exportFile();
+          else if (act === 'import') {
+            const el = document.createElement('input');
+            el.type = 'file'; el.accept = '.json,application/json';
+            pool.appendChild(el);
+            el.onchange = () => { const f = el.files[0]; el.remove(); if (f) show.importFile(f); };
+            el.click();
+          } else if (act === 'new') show.startNew();
+        });
+      }
+    });
+  }
+
+  // preset ป้ายชื่อ: เก็บหัวข้อ/ข้อความรอง/สีไว้หลายชุด แตะเพื่อใช้ (ถ้าป้ายขึ้นจออยู่ จะเปลี่ยนทันที)
+  function renderTitlePresets() {
+    const box = $('#title-presets');
+    const t = settings.title;
+    box.innerHTML = settings.titlePresets.map((p, i) => `
+      <span class="preset ${p.headline === t.headline && p.subtitle === t.subtitle && p.color === t.color ? 'is-active' : ''}">
+        <button type="button" class="preset-use" data-preset="${i}" title="${esc(p.headline)}${p.subtitle ? ' — ' + esc(p.subtitle) : ''}"><i class="preset-dot" style="background:${p.color}"></i><span>${esc(p.headline || p.subtitle || '—')}</span></button>
+        <button type="button" class="preset-del" data-preset-del="${i}" title="ลบ preset" aria-label="ลบ preset">×</button>
+      </span>`).join('') +
+      (settings.titlePresets.length < 24 ? '<button type="button" class="preset-add" data-preset-add>+ บันทึกป้ายนี้</button>' : '');
+  }
+  function initTitlePresets(syncTitle) {
+    renderTitlePresets();
+    $('#title-presets').addEventListener('click', e => {
+      const use = e.target.closest('[data-preset]'), del = e.target.closest('[data-preset-del]');
+      if (e.target.closest('[data-preset-add]')) {
+        const t = settings.title;
+        if (!t.headline.trim() && !t.subtitle.trim()) { toast('ใส่หัวข้อหรือข้อความรองก่อนบันทึก preset', 'warn'); return; }
+        if (!settings.titlePresets.some(p => p.headline === t.headline && p.subtitle === t.subtitle && p.color === t.color)) {
+          settings.titlePresets.push({ headline: t.headline, subtitle: t.subtitle, color: t.color });
+          saveSettings();
+        }
+      } else if (del) {
+        settings.titlePresets.splice(+del.dataset.presetDel, 1);
+        saveSettings();
+      } else if (use) {
+        const p = settings.titlePresets[+use.dataset.preset];
+        if (!p) return;
+        Object.assign(settings.title, p);
+        saveSettings();
+        syncTitle();
+      } else return;
+      renderTitlePresets();
+    });
+  }
+
   /* ------------------------------------------------------------ boot */
   function boot() {
     initControls();
     ticker.init();
     applyResolution();
 
-    const slate = addGenerator('slate');
-    const bars = addGenerator('bars');
-    addGenerator('clock');
-    addGenerator('black');
-    state.programId = slate.id;
-    state.previewId = bars.id;
-    renderMixer();
-    refreshSourceSelects();
-    updateTally();
+    // เปิดโชว์ที่บันทึกไว้ครั้งก่อน — ถ้าไม่มี เริ่มด้วยแหล่งภาพพื้นฐาน
+    const savedShow = store.get('show', null);
+    if (savedShow && Array.isArray(savedShow.inputs)) {
+      show.restore(savedShow);
+    } else {
+      const slate = addGenerator('slate');
+      const bars = addGenerator('bars');
+      addGenerator('clock');
+      addGenerator('black');
+      state.programId = slate.id;
+      state.previewId = bars.id;
+      // เวอร์ชันก่อนจำเฉพาะ Input SRT ไว้ในการตั้งค่า
+      for (const c of Array.isArray(settings.srtInputs) ? settings.srtInputs : []) {
+        if (c) show.restoreInput({ type: 'srt', srt: c }, { id: uid(), name: String(c.name || 'SRT').slice(0, 40) });
+      }
+      renderMixer();
+      refreshSourceSelects();
+      updateTally();
+    }
+    show.ready = true;
+    show.autosave(true);
+    setInterval(() => show.autosave(), 1500);
+    addEventListener('pagehide', () => show.autosave());
+    mediaStore.prune(new Set(inputs.filter(i => i.type === 'media' || i.type === 'image').map(i => i.id)));
 
     wireless.init();
     loadRecFolder();
     cleanupOpfs();
-    // สร้าง Input SRT ที่ตั้งไว้ครั้งก่อนกลับมา (เชื่อมต่อ Gateway ใหม่ให้อัตโนมัติ)
-    if (Array.isArray(settings.srtInputs)) {
-      for (const c of settings.srtInputs) {
-        if (!c || (c.mode !== 'listener' && c.mode !== 'caller')) continue;
-        createSrtInput({ mode: c.mode, port: +c.port || 9000, url: String(c.url || ''), streamid: String(c.streamid || ''),
-          passphrase: String(c.passphrase || ''), latency: SRT_LATENCIES.includes(+c.latency) ? +c.latency : 500 }, String(c.name || 'SRT'));
-      }
-    }
     tickClock();
     setInterval(tickClock, 1000);
     requestAnimationFrame(rafLoop);
 
     // สำหรับดีบัก/ทดสอบอัตโนมัติ
-    window.webmix = { useRecFolder: dir => { recFolder = dir; }, inputs, state, settings, overlays, audio, rec, streamer, wireless, cut, autoTransition, setPreview, tr, ftb };
+    window.webmix = { show, useRecFolder: dir => { recFolder = dir; }, inputs, state, settings, overlays, audio, rec, streamer, wireless, cut, autoTransition, setPreview, tr, ftb };
   }
 
   boot();
