@@ -30,7 +30,8 @@ Windows (.msi / -setup.exe) · macOS (.dmg) · Linux (.deb / .rpm / .AppImage) �
 (รุ่นทดลองจากทุก commit อยู่ใน **Actions → Desktop app → Artifacts** ต้องล็อกอิน GitHub และหมดอายุใน 30 วัน)
 
 **ออกเวอร์ชันใหม่:** แก้ `version` ใน `desktop/src-tauri/tauri.conf.json` (และ `desktop/Cargo.toml`) แล้ว push tag ที่ตรงกัน
-เช่น `git tag v1.0.1 && git push origin v1.0.1` — workflow จะ build ทุกระบบ ทดสอบ แล้วสร้าง Release ให้อัตโนมัติ
+เช่น `git tag v1.0.1 && git push origin v1.0.1` — หรือกด **Actions → Desktop app → Run workflow** แล้วติ๊ก *release*
+workflow จะ build ทุกระบบ ทดสอบ แล้วสร้าง Release (และ tag) ให้อัตโนมัติ
 
 **ต้องติดตั้ง ffmpeg** (ตัวเข้ารหัสวิดีโอสำหรับการสตรีม — การบันทึกไม่ต้องใช้):
 

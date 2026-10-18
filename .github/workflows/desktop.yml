@@ -6,6 +6,11 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+    inputs:
+      release:
+        description: 'สร้าง GitHub Release (tag v<เวอร์ชันใน tauri.conf.json>) จาก commit นี้'
+        type: boolean
+        default: false
 
 concurrency:
   group: desktop-${{ github.ref }}
@@ -115,10 +120,10 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-  # ติด tag เวอร์ชัน (เช่น v1.0.0) → สร้าง GitHub Release พร้อมตัวติดตั้งทุกระบบ ให้ดาวน์โหลดได้โดยไม่ต้องล็อกอินและไม่หมดอายุ
+  # ติด tag เวอร์ชัน (เช่น v1.0.0) หรือกด Run workflow แล้วติ๊ก release → สร้าง GitHub Release พร้อมตัวติดตั้งทุกระบบ ให้ดาวน์โหลดได้โดยไม่ต้องล็อกอินและไม่หมดอายุ
   release:
     name: GitHub Release
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.release
     needs: [gateway, app]
     runs-on: ubuntu-24.04
     permissions:
@@ -126,10 +131,13 @@ jobs:
       actions: read
     steps:
       - uses: actions/checkout@v7
-      - name: Tag matches the app version
+      - name: Release tag
         run: |
           APP_VERSION=$(node -p 'require("./desktop/src-tauri/tauri.conf.json").version')
-          test "v$APP_VERSION" = "$GITHUB_REF_NAME" || { echo "tag $GITHUB_REF_NAME ไม่ตรงกับเวอร์ชันแอป $APP_VERSION (desktop/src-tauri/tauri.conf.json)"; exit 1; }
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            test "v$APP_VERSION" = "$GITHUB_REF_NAME" || { echo "tag $GITHUB_REF_NAME ไม่ตรงกับเวอร์ชันแอป $APP_VERSION (desktop/src-tauri/tauri.conf.json)"; exit 1; }
+          fi
+          echo "TAG=v$APP_VERSION" >> "$GITHUB_ENV"
       - name: Collect installers
         env:
           GH_TOKEN: ${{ github.token }}
@@ -158,4 +166,5 @@ jobs:
           รายละเอียดและข้อจำกัด: ดู README หัวข้อ “แอปเดสก์ท็อป”
           NOTES
           sed -i 's/^          //' notes.md
-          gh release create "$GITHUB_REF_NAME" release/* --repo "$GITHUB_REPOSITORY" --title "WebMix Pro $GITHUB_REF_NAME" --notes-file notes.md --verify-tag
+          # กดรันเอง: สร้าง tag ให้ที่ commit นี้ (ถ้ามี Release เวอร์ชันนี้แล้วจะหยุด — ให้เพิ่มเลขเวอร์ชันก่อน)
+          gh release create "$TAG" release/* --repo "$GITHUB_REPOSITORY" --title "WebMix Pro $TAG" --notes-file notes.md --target "$GITHUB_SHA"
