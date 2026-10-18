@@ -244,7 +244,7 @@
     youtube: { label: 'YouTube Live', server: 'rtmp://a.rtmp.youtube.com/live2' },
     facebook: { label: 'Facebook Live', server: 'rtmps://live-api-s.facebook.com:443/rtmp' },
     twitch: { label: 'Twitch', server: 'rtmp://live.twitch.tv/app' },
-    custom: { label: 'กำหนดเอง (RTMP Server อื่น)', server: '' }
+    custom: { label: 'RTMP อื่น ๆ (กำหนดเอง)', server: '' }
   };
   const RESOLUTIONS = { '720p': [1280, 720], '1080p': [1920, 1080] };
   const FRAME_RATES = [25, 30, 50, 60];
@@ -254,7 +254,7 @@
     resolution: '720p', fps: 30, videoKbps: 4500,
     transition: 'mix', duration: 1000,
     gateway: store.raw('webmix-gateway-url') || '',
-    platform: 'youtube', server: PLATFORMS.youtube.server, streamKey: '', rememberKey: false,
+    destinations: [], rememberKey: false,
     title: { headline: 'BREAKING NEWS', subtitle: 'รายงานสดจากสตูดิโอ WebMix Pro', color: '#ef4444' },
     pip: { position: 'br', size: 0.32 },
     key: { color: 'green', tolerance: 60 }
@@ -270,12 +270,51 @@
   if (!FRAME_RATES.includes(+settings.fps)) settings.fps = defaults.fps;
   if (!['mix', 'dip', 'wipe'].includes(settings.transition)) settings.transition = 'mix';
   if (![500, 1000, 2000].includes(+settings.duration)) settings.duration = 1000;
-  if (!PLATFORMS[settings.platform]) settings.platform = 'custom';
+
+  // ปลายทางการสตรีม (ส่งพร้อมกันได้หลายช่อง) — ย้ายค่าแบบปลายทางเดียวของเวอร์ชันก่อนมาด้วย
+  const MAX_DESTINATIONS = 6;
+  const newDest = (platform = 'youtube', server, key = '') => ({
+    id: uid(), platform, server: server ?? PLATFORMS[platform].server, key, enabled: true
+  });
+  if (!Array.isArray(settings.destinations)) settings.destinations = [];
+  if (!settings.destinations.length && (saved.server || saved.streamKey)) {
+    settings.destinations.push(newDest(PLATFORMS[saved.platform] ? saved.platform : 'custom', saved.server || '', saved.streamKey || ''));
+  }
+  if (!settings.destinations.length) settings.destinations.push(newDest('youtube'));
+  settings.destinations = settings.destinations
+    .filter(d => d && typeof d === 'object')
+    .slice(0, MAX_DESTINATIONS)
+    .map(d => ({
+      id: String(d.id || uid()),
+      platform: PLATFORMS[d.platform] ? d.platform : 'custom',
+      server: String(d.server || ''),
+      key: String(d.key || ''),
+      enabled: d.enabled !== false
+    }));
+  delete settings.platform; delete settings.server; delete settings.streamKey;
 
   function saveSettings() {
     const copy = JSON.parse(JSON.stringify(settings));
-    if (!settings.rememberKey) copy.streamKey = '';
+    if (!settings.rememberKey) copy.destinations.forEach(d => { d.key = ''; });
     store.set('settings', copy);
+  }
+
+  const RTMP_RE = /^rtmps?:\/\/\S+$/i;
+  const destUrl = d => {
+    const server = d.server.trim().replace(/\/+$/, '');
+    return d.key.trim() ? `${server}/${d.key.trim()}` : server;
+  };
+  const destMasked = d => d.server.trim().replace(/\/+$/, '') + (d.key.trim() ? '/••••' + d.key.trim().slice(-4) : '');
+  function destLabel(d) {
+    if (!d) return '';
+    const base = d.platform !== 'custom' ? PLATFORMS[d.platform].label : ((/^rtmps?:\/\/([^/:]+)/i.exec(d.server) || [])[1] || 'RTMP');
+    const same = settings.destinations.filter(x => (x.platform !== 'custom' ? PLATFORMS[x.platform].label : ((/^rtmps?:\/\/([^/:]+)/i.exec(x.server) || [])[1] || 'RTMP')) === base);
+    return same.length > 1 ? `${base} #${same.indexOf(d) + 1}` : base;
+  }
+  function destProblem(d) {
+    if (!RTMP_RE.test(destUrl(d))) return 'RTMP Server ต้องขึ้นต้นด้วย rtmp:// หรือ rtmps://';
+    if (!d.key.trim() && d.platform !== 'custom') return 'ยังไม่ได้ใส่ Stream Key';
+    return '';
   }
 
   /* ------------------------------------------------------------ canvases */
@@ -1469,33 +1508,39 @@
     b.querySelector('.label').textContent = rec.active ? 'STOP' : 'REC';
   }
 
-  const streamer = { active: false, state: 'idle', ws: null, recorder: null, sent: 0, kbps: 0, lastBytes: 0, lastAt: 0, start: 0 };
+  const streamer = { active: false, state: 'idle', ws: null, recorder: null, sent: 0, kbps: 0, lastBytes: 0, lastAt: 0, start: 0, dests: new Map() };
 
-  function streamTarget() {
-    const server = settings.server.trim().replace(/\/+$/, '');
-    const key = settings.streamKey.trim();
-    return key ? `${server}/${key}` : server;
+  // คลิก STREAM ตอนไม่ได้ไลฟ์ = เริ่ม, ตอนไลฟ์อยู่ = เปิดหน้าต่างจัดการปลายทาง (กันกดหยุดพลาด)
+  function toggleStream() {
+    if (streamer.ws) openLiveDialog();
+    else startStream();
   }
 
-  function toggleStream() {
-    if (streamer.ws) { streamer.ws.close(1000, 'stopped by user'); return; }
-    const target = streamTarget();
+  function startStream() {
     const gw = settings.gateway.trim();
-    const problem = !gw ? 'ยังไม่ได้ตั้งค่า Stream Gateway'
+    const list = settings.destinations.filter(d => d.enabled);
+    let problem = !gw ? 'ยังไม่ได้ตั้งค่า Stream Gateway'
       : !/^wss?:\/\//i.test(gw) ? 'Gateway URL ต้องขึ้นต้นด้วย ws:// หรือ wss://'
       : location.protocol === 'https:' && /^ws:\/\//i.test(gw) ? 'หน้านี้เปิดผ่าน HTTPS จึงต้องใช้ Gateway แบบ wss://'
-      : !/^rtmps?:\/\/\S+$/i.test(target) ? 'RTMP Server ต้องขึ้นต้นด้วย rtmp:// หรือ rtmps://'
-      : !settings.streamKey.trim() && settings.platform !== 'custom' ? 'ยังไม่ได้ใส่ Stream Key' : '';
+      : !list.length ? 'ยังไม่ได้เปิดใช้ปลายทางการสตรีม' : '';
+    if (!problem) {
+      const bad = list.find(d => destProblem(d));
+      if (bad) problem = `${destLabel(bad)}: ${destProblem(bad)}`;
+    }
     if (problem) { toast(problem, 'warn'); openSettings('stream'); return; }
 
     let r;
     try { r = makeRecorder(); } catch (e) { toast('เริ่มสตรีมไม่ได้: ' + e.message, 'error'); return; }
     const sep = gw.includes('?') ? '&' : '?';
-    const ws = new WebSocket(`${gw}${sep}rtmp=${encodeURIComponent(target)}&fps=${settings.fps}&vb=${settings.videoKbps}`);
-    Object.assign(streamer, { ws, recorder: r, state: 'connecting', sent: 0, kbps: 0, lastBytes: 0, lastAt: performance.now() });
+    const ws = new WebSocket(`${gw}${sep}fps=${settings.fps}&vb=${settings.videoKbps}`);
+    Object.assign(streamer, {
+      ws, recorder: r, state: 'connecting', sent: 0, kbps: 0, lastBytes: 0, lastAt: performance.now(),
+      dests: new Map(list.map(d => [d.id, { state: 'connecting', message: '', kbps: 0 }]))
+    });
     setStreamButton();
 
     ws.onopen = () => {
+      ws.send(JSON.stringify({ type: 'start', destinations: list.map(d => ({ id: d.id, name: destLabel(d), url: destUrl(d) })) }));
       r.ondataavailable = e => {
         if (e.data.size && ws.readyState === WebSocket.OPEN) { ws.send(e.data); streamer.sent += e.data.size; }
       };
@@ -1503,14 +1548,22 @@
       Object.assign(streamer, { active: true, state: 'live', start: Date.now() });
       setStreamButton();
       updateOnAir();
-      toast('เริ่มสตรีมสดแล้ว', 'success');
+      toast(`เริ่มสตรีมไป ${list.length} ปลายทาง`, 'success');
+    };
+    ws.onmessage = ev => {
+      if (typeof ev.data !== 'string') return;
+      let msg;
+      try { msg = JSON.parse(ev.data); } catch (e) { return; }
+      if (msg.type === 'status' && Array.isArray(msg.destinations)) onDestStatus(msg.destinations);
     };
     ws.onclose = ev => {
       const byUser = ev.code === 1000;
       const wasLive = streamer.active;
       if (r.state !== 'inactive') r.stop();
       Object.assign(streamer, { active: false, state: 'idle', ws: null, recorder: null, kbps: 0 });
+      streamer.dests.clear();
       setStreamButton();
+      refreshLiveDialog();
       updateOnAir();
       output.reset();
       if (byUser) toast('หยุดสตรีมแล้ว');
@@ -1518,11 +1571,100 @@
     };
   }
 
+  function onDestStatus(list) {
+    for (const st of list) {
+      const prev = streamer.dests.get(st.id);
+      const label = destLabel(settings.destinations.find(d => d.id === st.id)) || st.name;
+      if (prev && prev.state !== st.state) {
+        if (st.state === 'live') toast(`${label}: ออกอากาศแล้ว`, 'success', 2500);
+        else if (st.state === 'error') toast(`${label}: ${st.message || 'เชื่อมต่อไม่ได้'} — กำลังลองใหม่อัตโนมัติ`, 'error', 6000);
+      }
+      streamer.dests.set(st.id, { state: st.state, message: st.message || '', kbps: st.kbps || 0 });
+    }
+    setStreamButton();
+    refreshLiveDialog();
+    updateStatus();
+  }
+
+  function setDestLive(id, on) {
+    const ws = streamer.ws;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    const d = settings.destinations.find(x => x.id === id);
+    if (on) {
+      if (!d) return;
+      const problem = destProblem(d);
+      if (problem) { toast(`${destLabel(d)}: ${problem}`, 'warn'); return; }
+      streamer.dests.set(id, { state: 'connecting', message: '', kbps: 0 });
+      ws.send(JSON.stringify({ type: 'add', destination: { id, name: destLabel(d), url: destUrl(d) } }));
+    } else {
+      ws.send(JSON.stringify({ type: 'stop', id }));
+    }
+    refreshLiveDialog();
+  }
+
+  const destCounts = () => {
+    let live = 0, active = 0, errors = 0;
+    for (const d of streamer.dests.values()) {
+      if (d.state !== 'stopped') active++;
+      if (d.state === 'live') live++;
+      if (d.state === 'error') errors++;
+    }
+    return { live, active, errors };
+  };
+
   function setStreamButton() {
     const b = $('#btn-stream');
+    const { live, active } = destCounts();
     b.classList.toggle('is-on', streamer.state === 'live');
     b.classList.toggle('is-pending', streamer.state === 'connecting');
-    b.querySelector('.label').textContent = streamer.state === 'live' ? 'ON AIR' : streamer.state === 'connecting' ? 'CONNECTING' : 'STREAM';
+    b.querySelector('.label').textContent = streamer.state === 'live' ? `ON AIR ${live}/${active}`
+      : streamer.state === 'connecting' ? 'CONNECTING' : 'STREAM';
+  }
+
+  let liveDialog = null;
+  function openLiveDialog() {
+    if (liveDialog) return;
+    dialog({
+      title: 'ปลายทางการสตรีม',
+      wide: true,
+      body: `
+        <p class="modal-text">ส่งสัญญาณขึ้น Gateway ครั้งเดียวแล้วกระจายไปทุกปลายทาง — เริ่มหรือหยุดแต่ละช่องได้โดยไม่กระทบช่องอื่น ช่องที่หลุดจะเชื่อมต่อใหม่เอง</p>
+        <div class="dest-live"></div>`,
+      actions: [{ label: 'แก้ไขปลายทาง', value: 'edit' }, { label: 'หยุดสตรีมทั้งหมด', danger: true, value: 'stop' }, { label: 'ปิด', primary: true }],
+      onOpen(modal) {
+        liveDialog = modal;
+        refreshLiveDialog();
+        modal.addEventListener('click', e => {
+          const b = e.target.closest('[data-dest-toggle]');
+          if (b) setDestLive(b.dataset.destToggle, b.dataset.on === '1');
+        });
+      }
+    }).then(async r => {
+      liveDialog = null;
+      if (r?.value === 'edit') openSettings('stream');
+      else if (r?.value === 'stop' && await confirmDialog('หยุดสตรีมทั้งหมด', 'ทุกปลายทางจะหยุดออกอากาศทันที', 'หยุดสตรีม')) {
+        streamer.ws && streamer.ws.close(1000, 'stopped by user');
+      }
+    });
+  }
+
+  function refreshLiveDialog() {
+    const box = liveDialog && $('.dest-live', liveDialog);
+    if (!box) return;
+    if (!streamer.ws) { box.innerHTML = '<p class="note">ไม่ได้สตรีมอยู่ในขณะนี้</p>'; return; }
+    const text = { live: 'LIVE', connecting: 'กำลังเชื่อมต่อ…', error: 'หลุด — กำลังลองใหม่', stopped: 'หยุดแล้ว', off: 'ไม่ได้ใช้' };
+    box.innerHTML = settings.destinations.map(d => {
+      const st = streamer.dests.get(d.id);
+      const state = st ? st.state : 'off';
+      const running = !!st && state !== 'stopped';
+      return `
+        <div class="dest-live-row is-${state}">
+          <span class="dest-dot"></span>
+          <div class="dest-info"><b>${esc(destLabel(d))}</b><small>${esc(state === 'error' && st.message ? st.message : destMasked(d))}</small></div>
+          <span class="dest-state">${text[state]}${state === 'live' && st.kbps ? ` · ${st.kbps} kbps` : ''}</span>
+          <button type="button" class="btn btn-sm ${running ? '' : 'btn-green'}" data-dest-toggle="${esc(d.id)}" data-on="${running ? 0 : 1}">${running ? 'หยุด' : 'เริ่ม'}</button>
+        </div>`;
+    }).join('') || '<p class="note">ยังไม่มีปลายทาง — กด “แก้ไขปลายทาง” เพื่อเพิ่ม</p>';
   }
 
   let onAirSince = null;
@@ -1635,6 +1777,7 @@
 
   function openSettings(tab = 'output') {
     const live = rec.active || streamer.active;
+    let readDests = null;
     dialog({
       title: 'ตั้งค่า',
       wide: true,
@@ -1658,17 +1801,17 @@
         <div class="modal-pane" data-mpane="stream">
           <label class="field"><span>Stream Gateway (WebSocket)</span>
             <input name="gateway" class="input mono" placeholder="wss://gateway.example.com:8080/?token=..." value="${esc(settings.gateway)}"></label>
-          <p class="note">เบราว์เซอร์ส่ง RTMP เองไม่ได้ ต้องมี Gateway (โฟลเดอร์ <code>server/</code> ในโปรเจกต์) คอยแปลงสัญญาณ — หน้า HTTPS ต้องใช้ <code>wss://</code></p>
-          <div class="field-row">
-            <label class="field"><span>แพลตฟอร์ม</span><select name="platform" class="select">
-              ${Object.entries(PLATFORMS).map(([k, p]) => `<option value="${k}" ${settings.platform === k ? 'selected' : ''}>${p.label}</option>`).join('')}
-            </select></label>
-            <label class="field"><span>RTMP Server</span><input name="server" class="input mono" value="${esc(settings.server)}" placeholder="rtmp://..."></label>
+          <p class="note">เบราว์เซอร์ส่ง RTMP เองไม่ได้ ต้องมี Gateway (โฟลเดอร์ <code>server/</code> ในโปรเจกต์) คอยแปลงสัญญาณ — หน้า HTTPS ต้องใช้ <code>wss://</code> · ภาพถูกส่งขึ้น Gateway ครั้งเดียวแล้วกระจายไปทุกปลายทาง จึงใช้อินเทอร์เน็ตขาขึ้นเท่ากับสตรีมช่องเดียว</p>
+          ${streamer.ws ? '<p class="note warn">กำลังสตรีมอยู่ — การแก้ไขปลายทางจะมีผลเมื่อหยุดแล้วเริ่มปลายทางนั้นใหม่ (กดปุ่ม STREAM เพื่อจัดการ)</p>' : ''}
+          <div class="field">
+            <span>ปลายทาง — ติ๊กช่องที่ต้องการสตรีมพร้อมกัน (สูงสุด ${MAX_DESTINATIONS} ช่อง)</span>
+            <div class="dest-list"></div>
+            <button type="button" class="btn btn-sm dest-add">${icon('plus')}เพิ่มปลายทาง</button>
           </div>
-          <label class="field"><span>Stream Key</span>
-            <div class="link-row"><input name="streamKey" class="input mono" type="password" autocomplete="off" value="${esc(settings.streamKey)}" placeholder="xxxx-xxxx-xxxx-xxxx">
-            <button type="button" class="btn" id="toggle-key">แสดง</button></div></label>
-          <label class="check"><input type="checkbox" name="rememberKey" ${settings.rememberKey ? 'checked' : ''}> จำ Stream Key ไว้ในเบราว์เซอร์เครื่องนี้</label>
+          <div class="dest-options">
+            <label class="check"><input type="checkbox" class="dest-showkeys"> แสดง Stream Key</label>
+            <label class="check"><input type="checkbox" name="rememberKey" ${settings.rememberKey ? 'checked' : ''}> จำ Stream Key ไว้ในเบราว์เซอร์เครื่องนี้</label>
+          </div>
         </div>`,
       actions: [{ label: 'ยกเลิก' }, { label: 'บันทึก', primary: true, value: 'save' }],
       onOpen(modal) {
@@ -1678,17 +1821,53 @@
         };
         $$('[data-mtab]', modal).forEach(b => b.addEventListener('click', () => showTab(b.dataset.mtab)));
         showTab(tab);
-        const form = $('form', modal);
-        form.platform.addEventListener('change', () => {
-          const p = PLATFORMS[form.platform.value];
-          if (p.server) form.server.value = p.server;
-          else form.server.focus();
+        const list = $('.dest-list', modal);
+        const addBtn = $('.dest-add', modal);
+        const showKeys = $('.dest-showkeys', modal);
+        const rowHtml = d => `
+          <div class="dest-row ${d.enabled ? '' : 'is-disabled'}" data-id="${esc(d.id)}">
+            <label class="dest-enable" title="สตรีมไปปลายทางนี้"><input type="checkbox" data-f="enabled" ${d.enabled ? 'checked' : ''}></label>
+            <select class="select" data-f="platform" aria-label="แพลตฟอร์ม">
+              ${Object.entries(PLATFORMS).map(([k, p]) => `<option value="${k}" ${d.platform === k ? 'selected' : ''}>${p.label}</option>`).join('')}
+            </select>
+            <input class="input mono" data-f="server" value="${esc(d.server)}" placeholder="rtmp://..." aria-label="RTMP Server">
+            <input class="input mono" data-f="key" type="${showKeys.checked ? 'text' : 'password'}" autocomplete="off" value="${esc(d.key)}" placeholder="Stream Key" aria-label="Stream Key">
+            <button type="button" class="btn btn-ghost btn-icon dest-remove" title="ลบปลายทาง">${icon('x')}</button>
+          </div>`;
+        const syncAdd = () => { addBtn.disabled = list.children.length >= MAX_DESTINATIONS; };
+        list.innerHTML = settings.destinations.map(rowHtml).join('');
+        syncAdd();
+        addBtn.addEventListener('click', () => {
+          // แนะนำแพลตฟอร์มที่ยังไม่ได้ใช้ก่อน (YouTube → Facebook → Twitch → อื่น ๆ)
+          const used = $$('[data-f=platform]', list).map(sel => sel.value);
+          const next = ['youtube', 'facebook', 'twitch'].find(k => !used.includes(k)) || 'custom';
+          list.insertAdjacentHTML('beforeend', rowHtml(newDest(next)));
+          list.lastElementChild.querySelector('[data-f=platform]').focus();
+          syncAdd();
         });
-        $('#toggle-key', modal).addEventListener('click', e => {
-          const show = form.streamKey.type === 'password';
-          form.streamKey.type = show ? 'text' : 'password';
-          e.currentTarget.textContent = show ? 'ซ่อน' : 'แสดง';
+        list.addEventListener('click', e => {
+          const rm = e.target.closest('.dest-remove');
+          if (rm) { rm.closest('.dest-row').remove(); syncAdd(); }
         });
+        list.addEventListener('change', e => {
+          const row = e.target.closest('.dest-row');
+          if (e.target.dataset.f === 'platform') {
+            const p = PLATFORMS[e.target.value];
+            const server = row.querySelector('[data-f=server]');
+            if (p.server) server.value = p.server; else { server.value = ''; server.focus(); }
+          }
+          if (e.target.dataset.f === 'enabled') row.classList.toggle('is-disabled', !e.target.checked);
+        });
+        showKeys.addEventListener('change', () => {
+          $$('[data-f=key]', list).forEach(i => { i.type = showKeys.checked ? 'text' : 'password'; });
+        });
+        readDests = () => $$('.dest-row', list).map(row => ({
+          id: row.dataset.id,
+          enabled: row.querySelector('[data-f=enabled]').checked,
+          platform: row.querySelector('[data-f=platform]').value,
+          server: row.querySelector('[data-f=server]').value.trim(),
+          key: row.querySelector('[data-f=key]').value.trim()
+        }));
       }
     }).then(result => {
       if (result?.value !== 'save') return;
@@ -1700,9 +1879,7 @@
         settings.videoKbps = clamp(Math.round(+f.videoKbps.value || 4500), 800, 12000);
       }
       settings.gateway = f.gateway.value.trim();
-      settings.platform = f.platform.value;
-      settings.server = f.server.value.trim();
-      settings.streamKey = f.streamKey.value.trim();
+      if (readDests) settings.destinations = readDests();
       settings.rememberKey = f.rememberKey.checked;
       saveSettings();
       if (before !== `${settings.resolution}|${settings.fps}`) applyResolution();
@@ -1742,7 +1919,8 @@
       'AFV (Audio Follow Video) เปิดเสียงของช่องนั้นเฉพาะตอนที่ภาพของมันอยู่ใน Program',
       'MON ฟังเสียง Master ผ่านลำโพง/หูฟังของเครื่องนี้ (ปิดไว้เป็นค่าเริ่มต้นเพื่อกันเสียงหอน)']],
     ['บันทึก สตรีม และเอาต์พุต', ['REC บันทึก Program เป็นไฟล์ (WebM หรือ MP4 ตามเบราว์เซอร์) แล้วดาวน์โหลดอัตโนมัติเมื่อกดหยุด',
-      'STREAM ส่งภาพไป YouTube / Facebook / Twitch / RTMP ผ่าน Stream Gateway — ตั้งค่าที่ปุ่มตั้งค่า (ไอคอนแถบเลื่อน)',
+      'STREAM ส่งภาพไปหลายปลายทางพร้อมกัน (YouTube / Facebook / Twitch / RTMP อื่น ๆ สูงสุด 6 ช่อง) ผ่าน Stream Gateway — เพิ่มปลายทางที่ปุ่มตั้งค่า (ไอคอนแถบเลื่อน) แท็บการสตรีม',
+      'ระหว่างไลฟ์ กดปุ่ม STREAM (หรือแถบสถานะ STREAM) เพื่อดูสถานะแต่ละปลายทาง เริ่ม/หยุดทีละช่อง หรือหยุดสตรีมทั้งหมด — ช่องที่หลุดจะเชื่อมต่อใหม่เอง',
       'ปุ่มกล้องบันทึกภาพนิ่ง PNG · ปุ่มหน้าต่างเปิด Program Output แยกสำหรับต่อจอหรือโปรเจกเตอร์ · ปุ่มเต็มจอบนจอ Program',
       'ระบบยังทำงานต่อแม้สลับแท็บ และกันหน้าจอดับระหว่างออกอากาศ']]
   ];
@@ -1833,9 +2011,11 @@
     setStat('#st-output', `${W}×${H}p${settings.fps} · ${settings.videoKbps} kbps`, 'ok');
     if (streamer.state === 'live') {
       const slow = streamer.ws && streamer.ws.bufferedAmount > 2e6;
-      setStat('#st-stream', `LIVE ${fmtDuration(Date.now() - streamer.start)} · ${streamer.kbps} kbps${slow ? ' · เน็ตช้า' : ''}`, slow ? 'warn' : 'live');
+      const { live, active, errors } = destCounts();
+      setStat('#st-stream', `LIVE ${fmtDuration(Date.now() - streamer.start)} · ${streamer.kbps} kbps · ${live}/${active} ปลายทาง${slow ? ' · เน็ตช้า' : ''}`, slow || errors ? 'warn' : 'live');
     } else {
-      setStat('#st-stream', streamer.state === 'connecting' ? 'CONNECTING…' : settings.gateway ? 'READY' : 'NOT SET', streamer.state === 'connecting' ? 'warn' : '');
+      const n = settings.destinations.filter(d => d.enabled).length;
+      setStat('#st-stream', streamer.state === 'connecting' ? 'CONNECTING…' : settings.gateway ? `READY · ${n} ปลายทาง` : 'NOT SET', streamer.state === 'connecting' ? 'warn' : '');
     }
     setStat('#st-rec', rec.active ? `${fmtDuration(Date.now() - rec.start)} · ${fmtBytes(rec.bytes)}` : 'OFF', rec.active ? 'live' : '');
     const ws = wireless.status;
@@ -1922,6 +2102,7 @@
     }));
 
     $('#inputs-grid').addEventListener('click', onGridClick);
+    $('#st-stream').addEventListener('click', () => (streamer.ws ? openLiveDialog() : openSettings('stream')));
 
     const actions = {
       cut, auto: autoTransition, ftb: toggleFtb,
