@@ -53,7 +53,7 @@ case "$ABI" in
     TC=$NDK/toolchains/llvm/prebuilt/linux-x86_64
     [ "$ABI" = arm64-v8a ] && { TRIPLE=aarch64-linux-android; ARCH=aarch64; CPU=armv8-a; } || { TRIPLE=x86_64-linux-android; ARCH=x86_64; CPU=x86-64; }
     export CC=$TC/bin/$TRIPLE$API-clang CXX=$TC/bin/$TRIPLE$API-clang++ AR=$TC/bin/llvm-ar RANLIB=$TC/bin/llvm-ranlib STRIP=$TC/bin/llvm-strip NM=$TC/bin/llvm-nm
-    CMAKE_ARGS+=(-DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" -DANDROID_ABI="$ABI" -DANDROID_PLATFORM="android-$API" -DANDROID_STL=c++_static)
+    CMAKE_ARGS+=(-DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" -DANDROID_ABI="$ABI" -DANDROID_PLATFORM="android-$API" -DANDROID_STL=c++_static -DCMAKE_FIND_ROOT_PATH="$PREFIX")
     X264_ARGS+=(--host="$TRIPLE" --sysroot="$TC/sysroot")
     # x86_64 ใช้กับ emulator เท่านั้น — ปิด asm (ไม่ต้องพึ่ง nasm และเลี่ยง text relocation)
     [ "$ABI" = x86_64 ] && X264_ARGS+=(--disable-asm) && FF_ARGS+=(--disable-x86asm)
@@ -72,7 +72,7 @@ cmake --install "$BUILD/mbedtls" >/dev/null
 
 echo "== srt $SRT_TAG ($ABI)"
 cmake -S "$SRC/srt" -B "$BUILD/srt" "${CMAKE_ARGS[@]}" -DENABLE_APPS=OFF -DENABLE_SHARED=OFF -DENABLE_STATIC=ON -DENABLE_CXX11=ON \
-  -DUSE_ENCLIB=mbedtls -DMBEDTLS_INCLUDE_DIRS="$PREFIX/include" \
+  -DUSE_ENCLIB=mbedtls -DMBEDTLS_INCLUDE_DIRS="$PREFIX/include" -DMBEDTLS_INCLUDE_DIR="$PREFIX/include" \
   -DMBEDTLS_LIBRARIES="$PREFIX/lib/libmbedtls.a;$PREFIX/lib/libmbedx509.a;$PREFIX/lib/libmbedcrypto.a" >/dev/null
 cmake --build "$BUILD/srt" -j "$JOBS" >"$BUILD/srt.log" 2>&1 || { tail -30 "$BUILD/srt.log"; exit 1; }
 cmake --install "$BUILD/srt" >/dev/null
