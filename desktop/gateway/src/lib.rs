@@ -158,7 +158,13 @@ pub fn hardware_encoders() -> &'static [&'static str] {
 /// ลองเข้ารหัสภาพ 720p 1 วินาทีด้วยตัวเข้ารหัสแต่ละตัว (ใช้อาร์กิวเมนต์ชุดเดียวกับตอนสตรีมจริง)
 /// คืนตัวแรกที่ใช้ได้ — ถ้าไม่มีตัวไหนใช้ได้คืน libx264 (ซอฟต์แวร์ ใช้ได้ทุกเครื่อง)
 pub async fn pick_encoder(ffmpeg: &str, candidates: &[&str]) -> String {
+    pick_encoder_report(ffmpeg, candidates).await.0
+}
+
+/// เหมือน pick_encoder แต่คืนเหตุผลที่ตัวเข้ารหัสฮาร์ดแวร์ใช้ไม่ได้ด้วย (แสดงในหน้าตั้งค่า)
+pub async fn pick_encoder_report(ffmpeg: &str, candidates: &[&str]) -> (String, Option<String>) {
     const KNOWN: [&str; 5] = ["h264_nvenc", "h264_qsv", "h264_videotoolbox", "h264_amf", "h264_mediacodec"];
+    let mut failures = Vec::new();
     for enc in candidates.iter().filter(|e| KNOWN.contains(e)) {
         let cfg = Config { video_encoder: enc.to_string(), ..Default::default() };
         let mut args: Vec<String> = ["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=black:s=1280x720:r=30", "-frames:v", "30"]
@@ -166,15 +172,28 @@ pub async fn pick_encoder(ffmpeg: &str, candidates: &[&str]) -> String {
             .map(|s| s.to_string())
             .collect();
         args.extend(video_args(&cfg, 720));
-        args.extend(["-pix_fmt", "yuv420p", "-b:v", "2000k", "-g", "60", "-f", "null", "-"].iter().map(|s| s.to_string()));
+        args.extend(["-pix_fmt", pix_fmt(enc), "-b:v", "2000k", "-g", "60", "-f", "null", "-"].iter().map(|s| s.to_string()));
         let run = quiet(Command::new(ffmpeg).args(&args)).stdin(Stdio::null()).output();
-        if let Ok(Ok(out)) = tokio::time::timeout(Duration::from_secs(20), run).await {
-            if out.status.success() {
-                return enc.to_string();
+        match tokio::time::timeout(Duration::from_secs(20), run).await {
+            Ok(Ok(out)) if out.status.success() => return (enc.to_string(), None),
+            Ok(Ok(out)) => {
+                let err = String::from_utf8_lossy(&out.stderr);
+                let lines: Vec<&str> = err.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
+                let tail = lines[lines.len().saturating_sub(2)..].join(" · ");
+                failures.push(format!("{enc}: {}", if tail.is_empty() { format!("exit {}", out.status) } else { tail }));
             }
+            Ok(Err(e)) => failures.push(format!("{enc}: {e}")),
+            Err(_) => failures.push(format!("{enc}: ไม่ตอบสนองภายใน 20 วินาที")),
         }
     }
-    "libx264".into()
+    let note = (!failures.is_empty()).then(|| failures.join(" | ").chars().take(400).collect());
+    ("libx264".into(), note)
+}
+
+/// รูปแบบพิกเซลที่ส่งให้ตัวเข้ารหัส — MediaCodec ของ Android รองรับ NV12 (YUV420SemiPlanar) แทบทุกเครื่อง
+/// แต่ตัวเข้ารหัสของ Qualcomm หลายรุ่นไม่รับ YUV420Planar (yuv420p)
+fn pix_fmt(encoder: &str) -> &'static str {
+    if encoder == "h264_mediacodec" { "nv12" } else { "yuv420p" }
 }
 
 /// Windows: ไม่ให้ ffmpeg เปิดหน้าต่าง console ขึ้นมา
@@ -522,7 +541,7 @@ impl Session {
         let mut args: Vec<String> = ["-hide_banner", "-loglevel", "warning", "-stats", "-stats_period", "2", "-i", "pipe:0"].iter().map(|s| s.to_string()).collect();
         args.extend(video_args(&self.cfg, self.height));
         for a in [
-            "-pix_fmt", "yuv420p", "-r", &fps, "-g", &(self.fps * 2).to_string(), "-keyint_min", &(self.fps * 2).to_string(), "-sc_threshold", "0",
+            "-pix_fmt", pix_fmt(&self.cfg.video_encoder), "-r", &fps, "-g", &(self.fps * 2).to_string(), "-keyint_min", &(self.fps * 2).to_string(), "-sc_threshold", "0",
             "-b:v", &format!("{kbps}k"), "-maxrate", &format!("{kbps}k"), "-bufsize", &format!("{}k", kbps * 2),
             "-c:a", "aac", "-ar", "44100", "-b:a", "128k", "-f", "mpegts", "-mpegts_flags", "+resend_headers", "pipe:1",
         ] {

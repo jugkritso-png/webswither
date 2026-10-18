@@ -150,7 +150,7 @@
     add('webrtc', typeof RTCPeerConnection === 'function', '', false);
     add('getUserMedia', !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia), '', false);
     add('webaudio', typeof (window.AudioContext || window.webkitAudioContext) === 'function', '', false);
-    add('encoder', !!info.encoder, info.encoder || 'ไม่ทราบ', false);
+    add('encoder', !!info.encoder, (info.encoder || 'ไม่ทราบ') + (info.encoderNote ? ` · ฮาร์ดแวร์ใช้ไม่ได้: ${info.encoderNote}` : ''), false);
     if (info.selftestStream && info.gateway) await streamTest(info, add, wait);
 
     return { ok: checks.every(c => c.ok || !c.required), ua: navigator.userAgent, checks };

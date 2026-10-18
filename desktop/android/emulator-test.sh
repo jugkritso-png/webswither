@@ -71,6 +71,12 @@ if [ -n "$FFMPEG" ]; then
   timeout 30 ffmpeg -hide_banner -loglevel verbose -re -f lavfi -i color=c=blue:s=640x360:r=30 -t 6 -c:v libx264 -preset ultrafast -g 60 -f flv "$FB" > "$OUT/rtmps-host.txt" 2>&1 || true
   adb push "$FFMPEG" /data/local/tmp/webmix-ffmpeg >/dev/null
   adb shell chmod 755 /data/local/tmp/webmix-ffmpeg
+  # ตัวเข้ารหัสฮาร์ดแวร์ (MediaCodec) ของ emulator — แสดงผลไว้ดูสาเหตุ ไม่ทำให้การทดสอบล้ม
+  for pf in nv12 yuv420p; do
+    echo "--- h264_mediacodec ($pf)"
+    adb shell /data/local/tmp/webmix-ffmpeg -hide_banner -loglevel info -f lavfi -i color=c=black:s=1280x720:r=30 -frames:v 30 \
+      -c:v h264_mediacodec -ndk_codec 1 -pix_fmt $pf -b:v 2000k -g 60 -f null - 2>&1 | grep -viE "^ *(Stream|Metadata|encoder|Input|Output|Duration)" | tail -8 || true
+  done
   adb shell /data/local/tmp/webmix-ffmpeg -hide_banner -loglevel verbose -re -f lavfi -i color=c=blue:s=640x360:r=30 -t 6 \
     -c:v libx264 -preset ultrafast -g 60 -f flv "$FB" > "$OUT/rtmps.txt" 2>&1 || true
   echo "--- ffmpeg ของเครื่อง CI"; grep -iE "tls|rtmp|resolve|error|connect" "$OUT/rtmps-host.txt" | grep -v "^ *Stream" | tail -8

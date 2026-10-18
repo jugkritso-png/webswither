@@ -3459,7 +3459,7 @@
       <label class="check"><input type="checkbox" name="localGateway" ${settings.localGateway !== false ? 'checked' : ''} ${gw ? '' : 'disabled'}>
         ใช้ Stream Gateway ในแอปนี้ (สตรีมจากเครื่องนี้โดยตรง ไม่ต้องมีเซิร์ฟเวอร์)</label>
       <p class="note">${gw ? `Gateway ในแอปพร้อม · ${esc(gw.url.replace(/\?.*$/, ''))}${gw.srt ? ' · ส่ง SRT ได้' : ''}` : `เปิด Gateway ในแอปไม่ได้: ${esc(info.gatewayError || desktop.error || 'ไม่ทราบสาเหตุ')}`}</p>
-      <p class="note ${ff ? '' : 'warn'}">${ff ? `ffmpeg: ${esc(ff.version)} · ตัวเข้ารหัส: ${esc(ENCODER_LABEL[info.encoder] || info.encoder || 'libx264')}` : `ไม่พบ ffmpeg — ติดตั้งด้วย ${install} แล้วเปิดแอปใหม่`}</p>
+      <p class="note ${ff ? '' : 'warn'}">${ff ? `ffmpeg: ${esc(ff.version)} · ตัวเข้ารหัส: ${esc(ENCODER_LABEL[info.encoder] || info.encoder || 'libx264')}${info.encoderNote ? `<br><small>ใช้ตัวเข้ารหัสฮาร์ดแวร์ไม่ได้: ${esc(info.encoderNote)}</small>` : ''}` : `ไม่พบ ffmpeg — ติดตั้งด้วย ${install} แล้วเปิดแอปใหม่`}</p>
       ${desktop.mobile ? '<p class="note warn">ระหว่างไลฟ์ให้เปิดแอปค้างไว้บนหน้าจอและเสียบสายชาร์จ — ถ้าสลับไปแอปอื่นหรือปิดจอ Android จะหยุดกล้องและการสตรีม</p>' : ''}
       <p class="note">อินเทอร์เน็ตขาขึ้นของเครื่องนี้ต้องพอสำหรับทุกปลายทางรวมกัน (ffmpeg ส่งแยกทีละปลายทาง) · การรับสัญญาณ SRT (Input) และ TURN สำหรับมือถือยังต้องใช้ Gateway บนเซิร์ฟเวอร์</p>`;
   }

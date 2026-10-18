@@ -43,6 +43,9 @@ struct FfmpegInfo {
     version: String,
 }
 
+/// ผลการลองตัวเข้ารหัสฮาร์ดแวร์ตอนเปิด Gateway
+static ENCODER_NOTE: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct DesktopInfo {
@@ -51,6 +54,8 @@ struct DesktopInfo {
     arch: &'static str,
     gateway: Option<GatewayInfo>,
     encoder: String,
+    /// ทำไมตัวเข้ารหัสฮาร์ดแวร์ใช้ไม่ได้ (ถ้าลองแล้วไม่ผ่าน)
+    encoder_note: Option<String>,
     gateway_error: Option<String>,
     ffmpeg: Option<FfmpegInfo>,
     ffmpeg_error: Option<String>,
@@ -180,7 +185,11 @@ async fn desktop_info(app: AppHandle, state: State<'_, AppState>) -> Result<Desk
             // ตัวเข้ารหัส: กำหนดเองด้วย WEBMIX_VIDEO_ENCODER หรือลองการ์ดจอ/ฮาร์ดแวร์ของเครื่อง (ไม่ได้ใช้ libx264)
             let video_encoder = match std::env::var("WEBMIX_VIDEO_ENCODER") {
                 Ok(v) if v != "auto" => v,
-                _ if ffmpeg.is_some() => webmix_gateway::pick_encoder(&ffmpeg_path, webmix_gateway::hardware_encoders()).await,
+                _ if ffmpeg.is_some() => {
+                    let (enc, note) = webmix_gateway::pick_encoder_report(&ffmpeg_path, webmix_gateway::hardware_encoders()).await;
+                    let _ = ENCODER_NOTE.set(note);
+                    enc
+                }
                 _ => "libx264".into(),
             };
             let cfg = webmix_gateway::Config { token: random_token(), ffmpeg: ffmpeg_path, video_encoder, ..Default::default() };
@@ -193,6 +202,7 @@ async fn desktop_info(app: AppHandle, state: State<'_, AppState>) -> Result<Desk
         arch: std::env::consts::ARCH,
         gateway: gw.as_ref().ok().map(|h| GatewayInfo { url: h.url(), srt: h.srt_supported }),
         encoder: gw.as_ref().map(|h| h.encoder.clone()).unwrap_or_default(),
+        encoder_note: ENCODER_NOTE.get().cloned().flatten(),
         gateway_error: gw.as_ref().err().cloned(),
         ffmpeg: ffmpeg.map(|(path, version)| FfmpegInfo { path, version }),
         ffmpeg_error,
