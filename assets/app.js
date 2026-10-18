@@ -2160,33 +2160,48 @@
     const sink = await openRecordingSink(name);
     rec.starting = false;
     Object.assign(rec, { recorder: r, sink, chain: Promise.resolve(), bytes: 0, start: Date.now(), active: true, warnedRam: false, failed: false });
+    // WebM: เพิ่มความยาวและดัชนีเลื่อนหาตำแหน่ง (Cues) ระหว่างเขียน — MP4 ส่งผ่านตามเดิม
+    const fix = !type.includes('mp4') && window.WebmSeek ? new WebmSeek.WebmSeekFix() : null;
+    let written = 0;
+    const put = data => {
+      written += data.byteLength;
+      if (sink.kind === 'memory') { sink.chunks.push(data); return Promise.resolve(); }
+      return sink.writable.write(data);
+    };
     r.ondataavailable = e => {
       if (!e.data.size) return;
       rec.bytes += e.data.size;
-      if (sink.kind === 'memory') {
-        sink.chunks.push(e.data);
-        if (!rec.warnedRam && rec.bytes > 1.5e9) {
-          rec.warnedRam = true;
-          toast('ไฟล์บันทึกเกิน 1.5 GB และเก็บอยู่ใน RAM — ควรหยุดบันทึกเป็นช่วง ๆ (เบราว์เซอร์นี้เขียนลงดิสก์ระหว่างอัดไม่ได้)', 'warn', 10000);
-        }
-      } else {
-        // เขียนต่อท้ายไฟล์ตามลำดับ
-        rec.chain = rec.chain.then(() => sink.writable.write(e.data)).catch(err => {
-          if (!rec.failed) { rec.failed = true; toast('เขียนไฟล์บันทึกไม่สำเร็จ: ' + err.message, 'error', 8000); }
-        });
+      if (sink.kind === 'memory' && !rec.warnedRam && rec.bytes > 1.5e9) {
+        rec.warnedRam = true;
+        toast('ไฟล์บันทึกเกิน 1.5 GB และเก็บอยู่ใน RAM — ควรหยุดบันทึกเป็นช่วง ๆ (เบราว์เซอร์นี้เขียนลงดิสก์ระหว่างอัดไม่ได้)', 'warn', 10000);
       }
+      // เขียนต่อท้ายไฟล์ตามลำดับ
+      const data = e.data;
+      rec.chain = rec.chain.then(async () => {
+        if (!fix) return put(data);
+        for (const part of fix.push(new Uint8Array(await data.arrayBuffer()))) await put(part);
+      }).catch(err => {
+        if (!rec.failed) { rec.failed = true; toast('เขียนไฟล์บันทึกไม่สำเร็จ: ' + err.message, 'error', 8000); }
+      });
     };
     r.onstop = async () => {
       rec.active = false;
       setRecButton();
       updateOnAir();
       try {
+        await rec.chain;
+        const done = fix && !rec.failed ? fix.finish(written) : null;
+        if (done) {
+          if (done.tail.length) await put(done.tail);
+          // หน่วยความจำ: แก้ส่วนหัวไปแล้วในตัว — ดิสก์: เขียนทับตามตำแหน่ง
+          if (sink.kind !== 'memory') for (const pt of done.patches) await sink.writable.write({ type: 'write', position: pt.position, data: pt.data });
+        }
+        rec.lastFix = done ? { durationMs: done.durationMs, cues: done.cues } : null;
         if (sink.kind === 'memory') {
           downloadBlob(new Blob(sink.chunks, { type }), name);
           sink.chunks = [];
           toast(`บันทึกไฟล์ ${fmtBytes(rec.bytes)} แล้ว`, 'success');
         } else {
-          await rec.chain;
           await sink.writable.close();
           if (sink.kind === 'folder') {
             toast(`บันทึก ${name} (${fmtBytes(rec.bytes)}) ลงโฟลเดอร์ “${sink.label}” แล้ว`, 'success', 6000);

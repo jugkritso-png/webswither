@@ -24,6 +24,7 @@ jobs:
       - name: JavaScript syntax
         run: |
           node --check assets/app.js
+          node --check assets/webm-seek.js
           node --check server/stream-gateway.js
           node --check tests/run.js
           for f in tests/suites/*.js; do node --check "$f"; done
