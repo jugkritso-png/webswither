@@ -25,7 +25,7 @@ const send = (port, size, extra = [], dur = 40) => spawn('ffmpeg', ['-loglevel',
     pl.on(window.mpegts.Events.MEDIA_INFO, mi => { res({ video: mi.videoCodec, audio: mi.audioCodec, w: mi.width, h: mi.height }); setTimeout(() => { try { pl.destroy(); } catch (e) {} }, 50); });
     pl.on(window.mpegts.Events.ERROR, (t, d) => {});
     pl.load();
-    setTimeout(() => res(null), 8000);
+    setTimeout(() => res(null), 15000);
   }), name);
 
   await p.click('[data-action=add-menu]'); await p.click('.menu button:has-text("SRT")');
@@ -53,7 +53,11 @@ const send = (port, size, extra = [], dur = 40) => spawn('ffmpeg', ['-loglevel',
   await p.click('[data-action=add-menu]'); await p.click('.menu button:has-text("SRT")');
   await p.fill('.modal input[name=name]', 'HEVC CAM'); await p.fill('.modal input[name=port]', '9008');
   await p.click('.modal-foot .btn-primary'); await p.waitForSelector('.modal-title:has-text("ตั้งค่าผู้ส่ง")'); await p.keyboard.press('Escape');
-  await p.waitForTimeout(9000);
+  // เครื่อง CI ต้องเข้ารหัส x265 (ผู้ส่ง) และแปลงเป็น H.264 พร้อมกัน — รอจนสถานะ live แทนการรอเวลาตายตัว
+  let hs;
+  for (let i = 0; i < 40; i++) { await p.waitForTimeout(500); hs = await srt('HEVC CAM'); if (hs.state === 'live') break; }
+  ok('HEVC source detected and transcoded', hs.state === 'live' && hs.info && hs.info.codec === 'hevc', JSON.stringify(hs.info));
+  await p.waitForTimeout(2000);
   const mi3 = await probe('HEVC CAM');
   ok('HEVC source arrives as H.264 for the browser', mi3 && /avc1/.test(mi3.video) && mi3.w === 1280, JSON.stringify(mi3));
   hevc.kill('SIGKILL');

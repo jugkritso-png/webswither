@@ -66,6 +66,7 @@ jobs:
         with:
           name: test-output
           path: tests/.work/
+          include-hidden-files: true
           retention-days: 7
 
   gateway-image:
