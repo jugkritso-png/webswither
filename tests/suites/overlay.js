@@ -16,7 +16,8 @@ const results = []; const ok = (n, c, x = '') => results.push(`${c ? 'PASS' : 'F
   const idOf = type => p.evaluate(t => window.webmix.inputs.find(i => i.type === t).id, type);
   const card = id => p.locator(`#inputs-grid .card[data-id="${id}"]`);
 
-  ok('OVERLAY tab and 4 overlay keys', (await p.$$('.key-ovl')).length === 4 && (await p.$$('.ovl-row')).length === 4 && await p.isVisible('.pane[data-pane="overlay"]'));
+  ok('OVERLAY tab and 8 overlay keys', (await p.$$('.key-ovl')).length === 8 && (await p.$$('.ovl-row')).length === 8 && await p.isVisible('.pane[data-pane="overlay"]'));
+  ok('8 overlay buttons on each input card', (await p.$$('#inputs-grid .card:first-child [data-card-ovl]')).length === 8);
   // program = slate; put BLACK on program to make pixel checks simple
   await p.evaluate(() => { const w = window.webmix; w.state.programId = w.inputs.find(i => i.type === 'black').id; w.setPreview(w.inputs.find(i => i.type === 'bars').id); });
 
@@ -74,6 +75,15 @@ const results = []; const ok = (n, c, x = '') => results.push(`${c ? 'PASS' : 'F
   ok('overlays stack in order (logo OV2 under nothing, still visible)', !near(await pgm(0.85, 0.2), [0, 0, 0], 10));
   await card(green).locator('[data-card-ovl="2"]').click(); await p.waitForTimeout(700);
 
+  // --- Overlay 8 (top layer) from the card + Shift+R
+  await card(green).locator('[data-card-ovl="7"]').click(); await p.waitForTimeout(700);
+  ok('card button 8 puts input on Overlay 8', await p.evaluate(id => window.webmix.ovl[7].on && window.webmix.ovl[7].inputId === id, green) && await card(green).locator('.card-tally').textContent() === 'OV8');
+  ok('Overlay 8 drawn (keyed subject visible)', near(await pgm(0.5, 0.5), [255, 0, 0], 50));
+  await p.keyboard.press('Shift+R'); await p.waitForTimeout(700);
+  ok('Shift+R takes Overlay 8 off', !(await p.evaluate(() => window.webmix.ovl[7].on)) && near(await pgm(0.5, 0.5), [0, 0, 0], 12), JSON.stringify(await pgm(0.5, 0.5)));
+  await p.keyboard.press('Shift+Q'); await p.waitForTimeout(200);
+  ok('Shift+Q on an empty Overlay 5 warns', /เลือก Input ให้ Overlay 5/.test(await p.textContent('#toasts')));
+
   // --- PVW staging: shows on Preview only
   await p.click('[data-ovl-pvw="0"]'); await p.waitForTimeout(200);
   ok('PVW shows overlay on Preview', near(await pvw(0.065, 0.76), [239, 68, 68]), JSON.stringify(await pvw(0.065, 0.76)));
@@ -105,7 +115,8 @@ const results = []; const ok = (n, c, x = '') => results.push(`${c ? 'PASS' : 'F
   await p.waitForTimeout(2000);
   await p.reload(); await p.waitForTimeout(2000);
   const st = await p.evaluate(() => ({ ovl: window.webmix.ovl.map(c => ({ id: c.inputId, on: c.on, fx: c.effect, d: c.duration })), logo: window.webmix.inputs.find(i => i.type === 'image').layout, title: window.webmix.inputs.find(i => i.type === 'title').title }));
-  ok('overlay assignments + effects restored', st.ovl[0].id === title && st.ovl[1].id === logo && st.ovl[1].fx === 'slide-left' && st.ovl[1].d === 1000, JSON.stringify(st.ovl));
+  ok('8 channels after reload', st.ovl.length === 8);
+  ok('overlay assignments + effects restored', st.ovl[7].id === green && st.ovl[0].id === title && st.ovl[1].id === logo && st.ovl[1].fx === 'slide-left' && st.ovl[1].d === 1000, JSON.stringify(st.ovl));
   ok('nothing goes on air by a reload', st.ovl.every(c => !c.on));
   ok('layout restored', st.logo && st.logo.scale === 0.3 && st.logo.crop.l === 0.1);
   ok('title input restored', st.title && st.title.headline === 'สมชาย ใจดี' && st.title.style === 'live');

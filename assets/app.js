@@ -811,13 +811,16 @@
 
 
   /* ------------------------------------------------------- overlay channels (แบบ vMix)
-     Overlay 1–4 วางแหล่งภาพใดก็ได้ซ้อนบน Program โดยไม่กระทบการตัดภาพหลัก (4 อยู่บนสุด)
+     Overlay 1–8 วางแหล่งภาพใดก็ได้ซ้อนบน Program โดยไม่กระทบการตัดภาพหลัก (8 อยู่บนสุด)
      แต่ละ Input มี "ตำแหน่ง" ของตัวเอง: ตำแหน่ง ขนาด ครอป ความทึบ คีย์ฉากเขียว/ฟ้า และขอบ
      แต่ละช่องเลือกเอฟเฟกต์เข้า-ออกได้ (Cut, Fade, Zoom, Slide, Wipe) และพักไว้ดูบน Preview ก่อนได้ */
   const OVL_EFFECTS = { cut: 'Cut', fade: 'Fade', zoom: 'Zoom', 'slide-left': 'Slide ←', 'slide-right': 'Slide →', 'slide-up': 'Slide ↑', 'slide-down': 'Slide ↓', wipe: 'Wipe' };
   const OVL_DURATIONS = [250, 500, 1000, 2000];
+  // คีย์ลัด: Q W E R = Overlay 1–4, Shift + Q W E R = Overlay 5–8
+  const OVL_COUNT = 8;
   const OVL_KEYS = ['q', 'w', 'e', 'r'];
-  const ovl = [0, 1, 2, 3].map(i => ({ n: i + 1, inputId: null, on: false, staged: false, anim: 0, effect: 'fade', duration: 500 }));
+  const ovlKeyLabel = i => (i >= 4 ? '⇧' : '') + OVL_KEYS[i % 4].toUpperCase();
+  const ovl = Array.from({ length: OVL_COUNT }, (_, i) => i).map(i => ({ n: i + 1, inputId: null, on: false, staged: false, anim: 0, effect: 'fade', duration: 500 }));
   const onOverlay = id => !!id && ovl.some(c => c.on && c.inputId === id);
   const isOnAir = id => !!id && (id === state.programId || onOverlay(id));
 
@@ -1620,7 +1623,7 @@
     if (on) { c.staged = false; playIfMedia(byId(c.inputId)); }
     updateOverlayUI();
   }
-  // ปุ่ม 1–4 ใต้การ์ด: ซ้อน Input นี้เข้า Overlay นั้น (กดซ้ำเพื่อเอาออก) — ถ้าช่องนั้นมี Input อื่นอยู่ จะแทนที่ทันที
+  // ปุ่ม 1–8 ใต้การ์ด: ซ้อน Input นี้เข้า Overlay นั้น (กดซ้ำเพื่อเอาออก) — ถ้าช่องนั้นมี Input อื่นอยู่ จะแทนที่ทันที
   function toggleInputOverlay(id, i) {
     const c = ovl[i];
     if (c.on && c.inputId === id) c.on = false;
@@ -1641,10 +1644,10 @@
   }
 
   function renderOverlayControls() {
-    $('#ovl-keys').innerHTML = ovl.map((c, i) => `<button class="key key-ovl" data-ovl="${i}" title="Overlay ${c.n} — เปิด/ปิดบน Program (${OVL_KEYS[i].toUpperCase()})"><b>${c.n}</b><span></span><kbd>${OVL_KEYS[i].toUpperCase()}</kbd></button>`).join('');
+    $('#ovl-keys').innerHTML = ovl.map((c, i) => `<button class="key key-ovl" data-ovl="${i}" title="Overlay ${c.n} — เปิด/ปิดบน Program (${ovlKeyLabel(i)})"><b>${c.n}</b><span></span><kbd>${ovlKeyLabel(i)}</kbd></button>`).join('');
     $('#ovl-rows').innerHTML = ovl.map((c, i) => `
       <div class="ovl-row" data-row="${i}">
-        <button type="button" class="ovl-take" data-ovl="${i}" title="Overlay ${c.n} — เปิด/ปิดบน Program (${OVL_KEYS[i].toUpperCase()})">${c.n}</button>
+        <button type="button" class="ovl-take" data-ovl="${i}" title="Overlay ${c.n} — เปิด/ปิดบน Program (${ovlKeyLabel(i)})">${c.n}</button>
         <select class="select ovl-src" data-ovl-src="${i}" aria-label="Input ของ Overlay ${c.n}"></select>
         <select class="select ovl-fx" data-ovl-fx="${i}" aria-label="เอฟเฟกต์ของ Overlay ${c.n}">${Object.entries(OVL_EFFECTS).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}</select>
         <select class="select ovl-dur" data-ovl-dur="${i}" aria-label="ระยะเวลาของ Overlay ${c.n}">${OVL_DURATIONS.map(d => `<option value="${d}">${d / 1000}s</option>`).join('')}</select>
@@ -1794,7 +1797,7 @@
         <label class="field"><span>ข้อความหลัก</span><input name="headline" class="input" maxlength="80" value="${esc(t.headline)}"></label>
         <label class="field"><span>ข้อความรอง</span><input name="subtitle" class="input" maxlength="120" value="${esc(t.subtitle)}"></label>
         <label class="field"><span>สี</span><select name="color" class="select">${TITLE_COLORS.map(c => `<option value="${c}" ${c === t.color ? 'selected' : ''}>${c}</option>`).join('')}</select></label>
-        <p class="note">พื้นหลังโปร่งใส — กดปุ่ม 1–4 ใต้การ์ดเพื่อซ้อนบน Program (แก้ข้อความแล้วบนจอเปลี่ยนทันที)</p>`,
+        <p class="note">พื้นหลังโปร่งใส — กดปุ่ม 1–8 ใต้การ์ดเพื่อซ้อนบน Program (แก้ข้อความแล้วบนจอเปลี่ยนทันที)</p>`,
       actions: [{ label: 'ยกเลิก' }, { label: 'บันทึก', primary: true, value: 'save' }]
     });
     if (result?.value !== 'save') return;
@@ -3340,6 +3343,7 @@
     ['P', 'แสดง / ซ่อนภาพซ้อน (PIP)'],
     ['K', 'เปิด / ปิด Chroma Key'],
     ['Q W E R', 'เปิด / ปิด Overlay 1 – 4'],
+    ['Shift + Q W E R', 'เปิด / ปิด Overlay 5 – 8'],
     ['Esc', 'ปิดหน้าต่าง / ออกจากเต็มจอ']
   ];
   const MANUAL = [
@@ -3359,12 +3363,12 @@
     ['กล้องมือถือไร้สาย', ['กดปุ่ม “กล้องมือถือ” แล้วสแกน QR ด้วยมือถือ (ต้องเปิดเว็บผ่าน HTTPS)',
       'บนมือถือสลับกล้องหน้า/หลัง ปิดไมค์ หรือหยุดส่งภาพได้ และจะเห็นกรอบแดง ON AIR เมื่อภาพของเครื่องนั้นออกอากาศ',
       'ถ้าสัญญาณหลุด มือถือจะเชื่อมต่อกลับเข้าช่องเดิมเอง']],
-    ['Overlay (แบบ vMix)', ['Overlay 1–4 ซ้อนแหล่งภาพใดก็ได้บน Program โดยไม่กระทบการตัดภาพหลัก (เลข 4 อยู่บนสุด) — ใช้กับโลโก้, ป้ายชื่อ, ภาพซ้อนมุมจอ, ผู้บรรยายฉากเขียว, วิดีโอแทรก',
-      'กดปุ่ม 1–4 ใต้การ์ด Input เพื่อซ้อนเข้า Overlay นั้นทันที (กดซ้ำเพื่อเอาออก) · ปุ่ม OVERLAY 1–4 ในแผง TRANSITION หรือคีย์ Q W E R เปิด/ปิดแต่ละช่อง',
+    ['Overlay (แบบ vMix)', ['Overlay 1–8 ซ้อนแหล่งภาพใดก็ได้บน Program โดยไม่กระทบการตัดภาพหลัก (เลข 8 อยู่บนสุด) — ใช้กับโลโก้, ป้ายชื่อ, ภาพซ้อนมุมจอ, ผู้บรรยายฉากเขียว, วิดีโอแทรก',
+      'กดปุ่ม 1–8 ใต้การ์ด Input เพื่อซ้อนเข้า Overlay นั้นทันที (กดซ้ำเพื่อเอาออก) · ปุ่ม OVERLAY 1–8 ในแผง TRANSITION หรือคีย์ Q W E R (1–4) และ Shift + Q W E R (5–8)',
       'แท็บ OVERLAY: เลือก Input ของแต่ละช่อง, เอฟเฟกต์เข้า-ออก (Cut, Fade, Zoom, Slide 4 ทิศ, Wipe) และระยะเวลา · PVW ดูบน Preview ก่อนขึ้นจอ',
       'ปุ่ม ⧉ บนการ์ด: ตั้งตำแหน่ง ขนาด ครอป ความทึบ ขอบ และคีย์ฉากเขียว/ฟ้าของ Input นั้น (มี preset มุมจอ/ครึ่งจอ) — เห็นผลทันที',
       'Input “Title กราฟิกข้อความ” มีพื้นโปร่งใส 4 แบบ (ป้ายชื่อล่าง, แถบหัวข้อบน, ป้าย LIVE, ข้อความกลางจอ) · รูป PNG โปร่งใสก็ซ้อนได้ทันที',
-      'ภาพที่อยู่บน Overlay นับว่าออกอากาศ: การ์ดขึ้น OV1–OV4, กล้องมือถือขึ้นกรอบแดง และเสียงที่ตั้ง AFV จะเปิดตาม']],
+      'ภาพที่อยู่บน Overlay นับว่าออกอากาศ: การ์ดขึ้น OV1–OV8, กล้องมือถือขึ้นกรอบแดง และเสียงที่ตั้ง AFV จะเปิดตาม']],
     ['กราฟิก (TITLE / PIP / KEY)', ['TITLE: ป้ายชื่อ Lower Third พิมพ์ข้อความแล้วเปลี่ยนบนจอได้ทันที เลือกสีป้ายได้ กด TAKE เพื่อแสดง (มีแอนิเมชันเข้า-ออก)',
       'Preset ป้ายชื่อ: กด “+ บันทึกป้ายนี้” เพื่อเก็บชื่อ/ตำแหน่ง/สีไว้หลายชุด แล้วแตะเพื่อสลับ (ถ้าป้ายขึ้นจออยู่จะเปลี่ยนทันที) · × ลบ preset',
       'PIP: ภาพซ้อนมุมจอ เลือกแหล่งภาพ ตำแหน่ง และขนาด',
@@ -3639,7 +3643,14 @@
       }
       const k = e.key.toLowerCase();
       const map = { ' ': cut, enter: autoTransition, f: toggleFtb, t: actions.title, l: actions.title, p: actions.pip, k: actions.key };
-      OVL_KEYS.forEach((key, i) => { map[key] = () => setChannel(i, !ovl[i].on); });
+      const oi = OVL_KEYS.indexOf(k);
+      if (oi >= 0) {
+        const i = oi + (e.shiftKey ? 4 : 0);
+        e.preventDefault();
+        audio.ensure();
+        setChannel(i, !ovl[i].on);
+        return;
+      }
       if (map[k]) {
         e.preventDefault();
         audio.ensure();
@@ -3730,7 +3741,7 @@
         }),
         program: state.programId, preview: state.previewId,
         overlays: { pip: overlays.pip.sourceId, key: overlays.key.sourceId },
-        // ช่อง Overlay 1–4: Input ที่ผูกไว้และเอฟเฟกต์ (ไม่จำสถานะขึ้นจอ — เปิดหน้าใหม่แล้วไม่มีอะไรขึ้นจอเอง)
+        // ช่อง Overlay 1–8: Input ที่ผูกไว้และเอฟเฟกต์ (ไม่จำสถานะขึ้นจอ — เปิดหน้าใหม่แล้วไม่มีอะไรขึ้นจอเอง)
         overlayChannels: ovl.map(c => ({ inputId: c.inputId, effect: c.effect, duration: c.duration })),
         audio: {
           master: { db: audio.masterStrip.db === -Infinity ? null : audio.masterStrip.db, muted: audio.masterStrip.muted },
@@ -3766,7 +3777,7 @@
         if (made && raw.layout) made.layout = sanitizeLayout(raw.layout);
       }
       if (Array.isArray(data.overlayChannels)) {
-        data.overlayChannels.slice(0, 4).forEach((c, i) => {
+        data.overlayChannels.slice(0, OVL_COUNT).forEach((c, i) => {
           if (!c) return;
           ovl[i].inputId = byId(c.inputId) ? c.inputId : null;
           if (OVL_EFFECTS[c.effect]) ovl[i].effect = c.effect;
