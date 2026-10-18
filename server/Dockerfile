@@ -7,9 +7,12 @@ RUN apt-get update \
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
-COPY stream-gateway.js ./
+COPY stream-gateway.js users.js monitor.js ./
 
-ENV PORT=8080 NODE_ENV=production
+ENV PORT=8080 NODE_ENV=production USERS_FILE=/data/users.json
+# รายชื่อผู้ใช้ (users.json) — เก็บใน volume เพื่อไม่ให้หายเมื่ออัปเดต
+RUN mkdir -p /data && chown node:node /data
+VOLUME /data
 EXPOSE 8080
 USER node
 

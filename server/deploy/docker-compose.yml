@@ -15,6 +15,16 @@ services:
       TURN_SECRET: ${TURN_SECRET:?ต้องตั้ง TURN_SECRET ในไฟล์ .env}
       TURN_HOST: ${DOMAIN}
       TURN_PORT: "3478"
+      TRUST_PROXY: "1"
+      MAX_STREAMS: ${MAX_STREAMS:-0}
+      ALERT_WEBHOOK: ${ALERT_WEBHOOK:-}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+      ALERT_NAME: ${DOMAIN}
+      METRICS_TOKEN: ${METRICS_TOKEN:-}
+    volumes:
+      # รายชื่อผู้ใช้ (users.json) อยู่ใน volume — ไม่หายเมื่ออัปเดต
+      - gateway_data:/data
     expose:
       - "8080"
       - "8081"
@@ -71,5 +81,6 @@ services:
       - --denied-peer-ip=192.168.0.0-192.168.255.255
 
 volumes:
+  gateway_data:
   caddy_data:
   caddy_config:

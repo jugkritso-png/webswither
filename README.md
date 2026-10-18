@@ -122,6 +122,46 @@ STREAM_TOKEN=รหัสลับของคุณ PORT=8080 npm start
   (เช่น Caddy / Nginx) — ถ้าทดสอบในเครื่องตัวเองผ่าน `http://localhost` ใช้ `ws://localhost:8080` ได้
 - ควรตั้ง `STREAM_TOKEN` ทุกครั้งที่เปิด Gateway ให้เข้าถึงจากอินเทอร์เน็ต ไม่เช่นนั้นใครก็ใช้เครื่องคุณส่งสตรีมได้
 
+## ใช้ Gateway ร่วมกันหลายคน และการเฝ้าระวัง
+
+**Token แยกรายคน** — ให้แต่ละคน/แต่ละทีมมี token ของตัวเอง ยกเลิกหรือออกใหม่ได้ทันทีโดยไม่กระทบคนอื่น
+
+```bash
+cd /opt/webmix-gateway/server/deploy
+docker compose exec gateway node stream-gateway.js user add somchai                 # แสดง token ครั้งเดียว
+docker compose exec gateway node stream-gateway.js user add newsroom --streams 2 --destinations 4 --srt 3
+docker compose exec gateway node stream-gateway.js user list
+docker compose exec gateway node stream-gateway.js user token somchai               # ออก token ใหม่ (อันเก่าใช้ไม่ได้ทันที)
+docker compose exec gateway node stream-gateway.js user disable somchai             # ระงับ (enable เพื่อเปิดคืน, remove เพื่อลบ)
+```
+
+- ผู้ใช้ใส่ `wss://โดเมน/?token=<token ของตัวเอง>` ในหน้าตั้งค่าของ WebMix
+- โควตาเริ่มต้นต่อคน: สตรีมพร้อมกัน 1, ปลายทาง 6, SRT ขาเข้า 2 — เกินแล้ว WebMix แสดงเหตุผลเป็นภาษาไทย
+- เซิร์ฟเวอร์ทั้งเครื่องสตรีมพร้อมกันได้ `MAX_STREAMS` สตรีม (install.sh ตั้งให้ = จำนวนคอร์ ÷ 2) กันเครื่องรับไม่ไหวจนทุกคนกระตุก
+- ไฟล์ผู้ใช้เก็บเฉพาะค่า hash ของ token และอยู่ใน volume จึงไม่หายเมื่ออัปเดต
+- `STREAM_TOKEN` เดิมคือผู้ดูแลระบบ (ไม่จำกัดโควตาต่อคน)
+- ใส่ token ผิดเกิน 10 ครั้งใน 5 นาที IP นั้นจะถูกบล็อก 15 นาที
+- การเชื่อมต่อที่ค้าง (เน็ตหลุดแบบไม่ปิด) ถูกตัดภายใน ~30 วินาที และถ้าคนเดิมเชื่อมต่อกลับมา ระบบแทนที่ของเก่าให้ทันที ไม่ติดโควตา
+
+**หน้าสถานะผู้ดูแล** — `https://โดเมน/admin?token=<STREAM_TOKEN>` แสดง CPU, หน่วยความจำ, สตรีมของทุกคน
+(สถานะแต่ละปลายทาง, ความเร็วการเข้ารหัส), SRT ขาเข้า และแจ้งเตือนล่าสุด อัปเดตทุก 3 วินาที (ไม่แสดง Stream Key)
+
+**แจ้งเตือนเข้ามือถือ** — รัน install.sh ซ้ำพร้อมช่องทางที่ต้องการ:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/jugkritso-png/webswither/HEAD/server/deploy/install.sh | \
+  sudo ALERT_WEBHOOK=https://discord.com/api/webhooks/... bash
+# หรือ Telegram
+curl -fsSL https://raw.githubusercontent.com/jugkritso-png/webswither/HEAD/server/deploy/install.sh | \
+  sudo TELEGRAM_BOT_TOKEN=123:ABC TELEGRAM_CHAT_ID=-100123 bash
+```
+
+แจ้งเมื่อ: ปลายทางหลุดนานเกิน 20 วินาที (และแจ้งอีกครั้งเมื่อกลับมา), สตรีมที่กำลังไลฟ์หลุดจาก WebMix และไม่กลับมาใน 30 วินาที,
+เข้ารหัสไม่ทันเวลาจริง (ภาพจะกระตุก), สัญญาณ SRT ขาเข้าหาย, CPU/หน่วยความจำของเซิร์ฟเวอร์เต็ม, เซิร์ฟเวอร์เต็มจนมีคนเริ่มสตรีมไม่ได้
+และมีคนพยายามเดา token — ใช้ได้กับ Discord, Slack, Google Chat (webhook) และ Telegram
+
+**Prometheus / Grafana** — `GET /metrics` (ส่ง `Authorization: Bearer <STREAM_TOKEN>` หรือตั้ง `METRICS_TOKEN` แยก)
+
 ## ส่งสัญญาณด้วย SRT
 
 SRT (Secure Reliable Transport) ทนอินเทอร์เน็ตกระตุก/แพ็กเก็ตหายได้ดีกว่า RTMP และเข้ารหัส AES ได้
@@ -187,7 +227,7 @@ SRT (Secure Reliable Transport) ทนอินเทอร์เน็ตกร
 
 ## การทดสอบอัตโนมัติ
 
-ชุดทดสอบอยู่ในโฟลเดอร์ `tests/` (สตูดิโอ, multistream, กล้องมือถือ, SRT ขาเข้า/ขาออก, 4K, การเชื่อมต่อใหม่, การบันทึก, เสียง, บันทึกโชว์)
+ชุดทดสอบอยู่ในโฟลเดอร์ `tests/` (สตูดิโอ, multistream, กล้องมือถือ, SRT ขาเข้า/ขาออก, 4K, การเชื่อมต่อใหม่, การบันทึก, เสียง, บันทึกโชว์, Gateway หลายผู้ใช้)
 และรันอัตโนมัติบน GitHub Actions ทุกครั้งที่ push (รวมถึงการ build Docker image ของ Gateway)
 
 ```bash

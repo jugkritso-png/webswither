@@ -11,6 +11,9 @@
 #    MAX_DESTINATIONS=6        จำนวนปลายทางสูงสุดต่อการสตรีม
 #    VIDEO_ENCODER=h264_nvenc  ใช้การ์ดจอ NVIDIA เข้ารหัส (ต้องติดตั้ง NVIDIA Container Toolkit เอง)
 #    X264_PRESET=superfast     ปรับความเร็ว/คุณภาพของการเข้ารหัสด้วย CPU
+#    MAX_STREAMS=2             จำนวนสตรีมพร้อมกันทั้งเซิร์ฟเวอร์ (ค่าเริ่มต้น = จำนวนคอร์ ÷ 2)
+#    ALERT_WEBHOOK=https://...  ส่งแจ้งเตือนเข้า Discord / Slack / Google Chat (webhook URL)
+#    TELEGRAM_BOT_TOKEN=... TELEGRAM_CHAT_ID=...   ส่งแจ้งเตือนเข้า Telegram
 #    BRANCH=...                branch ของโค้ด (ค่าเริ่มต้น = branch หลักของ repo)
 #
 #  รันซ้ำเมื่อไหร่ก็ได้เพื่ออัปเดตเป็นเวอร์ชันล่าสุด — รหัส (token) และโดเมนเดิมจะถูกเก็บไว้
@@ -25,6 +28,10 @@ REQ_MAX="${MAX_DESTINATIONS:-}"
 REQ_ENCODER="${VIDEO_ENCODER:-}"
 REQ_PRESET="${X264_PRESET:-}"
 REQ_SRT_PORTS="${SRT_PORTS:-}"
+REQ_MAX_STREAMS="${MAX_STREAMS:-}"
+REQ_WEBHOOK="${ALERT_WEBHOOK:-}"
+REQ_TG_TOKEN="${TELEGRAM_BOT_TOKEN:-}"
+REQ_TG_CHAT="${TELEGRAM_CHAT_ID:-}"
 
 say()  { printf '\033[1;33m==>\033[0m %s\n' "$*"; }
 ok()   { printf '\033[1;32m ✓\033[0m %s\n' "$*"; }
@@ -63,6 +70,7 @@ cd "$INSTALL_DIR/server/deploy"
 
 # ---------------------------------------------------------------- 3. Config
 DOMAIN="" STREAM_TOKEN="" MAX_DESTINATIONS="" VIDEO_ENCODER="" X264_PRESET="" SRT_PORTS="" TURN_SECRET="" PUBLIC_IP=""
+MAX_STREAMS="" ALERT_WEBHOOK="" TELEGRAM_BOT_TOKEN="" TELEGRAM_CHAT_ID=""
 # shellcheck disable=SC1091
 [ -f .env ] && . ./.env
 DOMAIN="${REQ_DOMAIN:-$DOMAIN}"
@@ -70,6 +78,11 @@ MAX_DESTINATIONS="${REQ_MAX:-${MAX_DESTINATIONS:-6}}"
 VIDEO_ENCODER="${REQ_ENCODER:-${VIDEO_ENCODER:-libx264}}"
 X264_PRESET="${REQ_PRESET:-$X264_PRESET}"
 SRT_PORTS="${REQ_SRT_PORTS:-${SRT_PORTS:-9000-9009}}"
+CORES="$(nproc 2>/dev/null || echo 2)"
+MAX_STREAMS="${REQ_MAX_STREAMS:-${MAX_STREAMS:-$(( CORES / 2 > 0 ? CORES / 2 : 1 ))}}"
+ALERT_WEBHOOK="${REQ_WEBHOOK:-$ALERT_WEBHOOK}"
+TELEGRAM_BOT_TOKEN="${REQ_TG_TOKEN:-$TELEGRAM_BOT_TOKEN}"
+TELEGRAM_CHAT_ID="${REQ_TG_CHAT:-$TELEGRAM_CHAT_ID}"
 
 PUBLIC_IP="$(curl -fsS4 --max-time 10 https://api.ipify.org || curl -fsS4 --max-time 10 https://ifconfig.me || true)"
 if [ -z "$DOMAIN" ]; then
@@ -89,6 +102,10 @@ X264_PRESET=$X264_PRESET
 SRT_PORTS=$SRT_PORTS
 TURN_SECRET=$TURN_SECRET
 PUBLIC_IP=$PUBLIC_IP
+MAX_STREAMS=$MAX_STREAMS
+ALERT_WEBHOOK='$ALERT_WEBHOOK'
+TELEGRAM_BOT_TOKEN='$TELEGRAM_BOT_TOKEN'
+TELEGRAM_CHAT_ID='$TELEGRAM_CHAT_ID'
 EOF
 ok "โดเมน: $DOMAIN"
 
@@ -132,5 +149,8 @@ echo "พอร์ตที่ต้องเปิดในไฟร์วอ�
 echo "รับสัญญาณ SRT:          srt://$DOMAIN:<พอร์ต $SRT_PORTS> (เปิด UDP $SRT_PORTS ในไฟร์วอลล์ของผู้ให้บริการด้วย)"
 echo "ตรวจสถานะในเบราว์เซอร์:  https://$DOMAIN/"
 echo "ดูค่านี้อีกครั้ง:         cat $INSTALL_DIR/server/deploy/gateway-url.txt"
+echo "หน้าสถานะผู้ดูแล:        https://$DOMAIN/admin?token=$STREAM_TOKEN"
+echo "เพิ่มผู้ใช้ (token แยกคน): cd $INSTALL_DIR/server/deploy && docker compose exec gateway node stream-gateway.js user add <ชื่อ>"
+[ -n "$ALERT_WEBHOOK$TELEGRAM_BOT_TOKEN" ] && echo "แจ้งเตือน:                เปิดแล้ว" || echo "แจ้งเตือน:                ยังไม่ได้ตั้ง (รันซ้ำพร้อม ALERT_WEBHOOK=... หรือ TELEGRAM_BOT_TOKEN=... TELEGRAM_CHAT_ID=...)"
 echo "ดู log:                  cd $INSTALL_DIR/server/deploy && docker compose logs -f gateway"
 echo "อัปเดตเวอร์ชัน:           รันคำสั่งติดตั้งเดิมซ้ำ"

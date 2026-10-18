@@ -6,7 +6,7 @@
 // ใช้งาน:  cd server && npm install && npm start
 // ตัวแปรแวดล้อม:
 //   PORT          พอร์ตที่ให้บริการ (ค่าเริ่มต้น 8080)
-//   STREAM_TOKEN  ถ้าตั้งไว้ ไคลเอนต์ต้องส่ง ?token=... มาด้วย (แนะนำให้ตั้งเสมอเมื่อเปิดให้เข้าถึงจากอินเทอร์เน็ต)
+//   STREAM_TOKEN  token ของผู้ดูแลระบบ — ไคลเอนต์ต้องส่ง ?token=... (ไม่ตั้งทั้งค่านี้และไฟล์ผู้ใช้ = ใครก็ใช้ได้ เหมาะกับวงแลนเท่านั้น)
 //   FFMPEG_PATH   path ของ ffmpeg (ค่าเริ่มต้น "ffmpeg")
 //   MAX_DESTINATIONS  จำนวนปลายทางสูงสุดต่อการเชื่อมต่อ (ค่าเริ่มต้น 6)
 //   VIDEO_ENCODER libx264 (ค่าเริ่มต้น, ใช้ CPU) | h264_nvenc (การ์ดจอ NVIDIA) | h264_qsv (Intel Quick Sync)
@@ -27,17 +27,31 @@
 //   ws /srt-in/data?token=…&id=…   ข้อมูลภาพ MPEG-TS (binary) สำหรับ mpegts.js
 //   SRT_PORTS     ช่วงพอร์ต UDP สำหรับโหมด listener (ค่าเริ่มต้น 9000-9009)
 //
+// ผู้ใช้หลายคน (ดู users.js): แต่ละคนมี token และโควตาของตัวเอง — node stream-gateway.js user add <ชื่อ>
+//   USERS_FILE    ไฟล์รายชื่อผู้ใช้ (ค่าเริ่มต้น ./data/users.json)
+//   MAX_STREAMS   จำนวนสตรีม (ตัวเข้ารหัส) พร้อมกันทั้งเซิร์ฟเวอร์ (0 = ไม่จำกัด)
+//   MAX_SRT_INPUTS  จำนวน SRT ขาเข้าพร้อมกันทั้งเซิร์ฟเวอร์ (ค่าเริ่มต้น = จำนวนพอร์ตใน SRT_PORTS)
+//   TRUST_PROXY=1 ใช้ IP จาก X-Forwarded-For (เมื่ออยู่หลัง Caddy/nginx)
+// เฝ้าระวัง (ดู monitor.js): แจ้งเตือนผ่าน ALERT_WEBHOOK / Telegram, หน้า /admin?token=…, /metrics สำหรับ Prometheus
+//
 // กล้องมือถือ (ดูส่วน "PeerJS ของเราเอง + TURN"):
 //   PEER_PORT     เปิด PeerJS server ของเราเองที่พอร์ตนี้ (path /peerjs)
 //   TURN_SECRET   รหัสลับร่วมกับ coturn (static-auth-secret) · TURN_HOST / TURN_PORT ที่อยู่ของ TURN
 //   GET /ice?token=…  →  { iceServers, peer: { host, port, path, secure }, expires }
 
+const users = require('./users');
+if (process.argv[2] === 'user') {
+  try { users.cli(process.argv.slice(3)); process.exit(0); } catch (e) { console.error(e.message); process.exit(1); }
+}
+
 const http = require('http');
 const { WebSocketServer } = require('ws');
 const { spawn, spawnSync } = require('child_process');
+const monitor = require('./monitor');
 
 const PORT = Number(process.env.PORT) || 8080;
-const TOKEN = process.env.STREAM_TOKEN || '';
+const MAX_STREAMS = Number(process.env.MAX_STREAMS) || 0;
+const TRUST_PROXY = process.env.TRUST_PROXY === '1';
 const FFMPEG = process.env.FFMPEG_PATH || 'ffmpeg';
 const MAX_DESTINATIONS = Number(process.env.MAX_DESTINATIONS) || 6;
 const VIDEO_ENCODER = process.env.VIDEO_ENCODER || 'libx264';
@@ -83,6 +97,59 @@ const RETRY_MS = 5000;
 
 const maskUrl = url => (/^srt:/i.test(url) ? url.replace(/\?.*$/, '?***') : url.replace(/[^/]+$/, '***'));
 
+/* ==========================================================================
+   ผู้ใช้, โควตา และการกันเดารหัส
+   ========================================================================== */
+// IP ของผู้ใช้จริง — หลัง reverse proxy ใช้ค่าขวาสุดของ X-Forwarded-For (ค่าที่ proxy ของเราใส่เอง ปลอมไม่ได้)
+function clientIp(req) {
+  if (TRUST_PROXY && req.headers['x-forwarded-for']) return String(req.headers['x-forwarded-for']).split(',').pop().trim();
+  return String(req.socket.remoteAddress || '').replace(/^::ffff:/, '');
+}
+// ใส่ token ผิดเกิน 10 ครั้งใน 5 นาที → บล็อก IP นั้น 15 นาที
+const failures = new Map();
+const FAIL_LIMIT = 10, FAIL_WINDOW = 5 * 60 * 1000, BLOCK_MS = 15 * 60 * 1000;
+function isBlocked(ip) {
+  const f = failures.get(ip);
+  return !!(f && f.blockedUntil > Date.now());
+}
+function authFailed(ip) {
+  monitor.counters.authFailures++;
+  const now = Date.now();
+  let f = failures.get(ip);
+  if (!f || now - f.first > FAIL_WINDOW) { f = { first: now, count: 0, blockedUntil: 0 }; failures.set(ip, f); }
+  if (++f.count >= FAIL_LIMIT && !f.blockedUntil) {
+    f.blockedUntil = now + BLOCK_MS;
+    monitor.notify(`block:${ip}`, `บล็อก IP ${ip} 15 นาที — ใส่ token ผิด ${f.count} ครั้ง (อาจมีคนพยายามเดารหัส)`);
+  }
+}
+setInterval(() => { const now = Date.now(); for (const [ip, f] of failures) if (now - f.first > FAIL_WINDOW && f.blockedUntil < now) failures.delete(ip); }, 60000).unref();
+
+function authorize(req, token) {
+  const ip = clientIp(req);
+  if (isBlocked(ip)) return { error: 'too many attempts' };
+  const user = users.authenticate(token);
+  if (!user) { authFailed(ip); return { error: 'invalid token' }; }
+  return { user, ip };
+}
+
+// การเชื่อมต่อทั้งหมด (สตรีมและ SRT ขาเข้า) — ใช้ตรวจโควตาและแสดงในหน้าผู้ดูแล
+const sessions = new Map();
+const sessionList = () => [...sessions.values()].map(s => s.snapshot());
+const countFor = (kind, name, pred = () => true) => [...sessions.values()].filter(s => s.kind === kind && (name == null || s.user.name === name) && pred(s)).length;
+
+// เมื่อสตรีมที่กำลังไลฟ์หลุดโดยไม่ได้กดหยุด และไม่กลับมาภายใน 30 วินาที → แจ้งเตือน
+const dropTimers = new Map();
+function streamDropped(name, ip) {
+  clearTimeout(dropTimers.get(name));
+  dropTimers.set(name, setTimeout(() => {
+    dropTimers.delete(name);
+    monitor.notify(`drop:${name}`, `สตรีมของ ${name} (${ip}) ขาดการเชื่อมต่อจาก WebMix และยังไม่กลับมา — ตรวจอินเทอร์เน็ตของเครื่องที่ไลฟ์`);
+  }, 30000));
+}
+function streamBack(name) {
+  if (dropTimers.has(name)) { clearTimeout(dropTimers.get(name)); dropTimers.delete(name); }
+}
+
 // หน้าเช็กสถานะ: เปิด https://โดเมน/ ในเบราว์เซอร์แล้วต้องเห็นข้อความ OK
 /* ==========================================================================
    SRT Input — รับสัญญาณ SRT (จาก OBS, vMix, encoder, กล้อง) แล้วส่งต่อให้หน้า WebMix
@@ -100,8 +167,10 @@ const SRT_LATENCIES_MS = [120, 200, 500, 1000, 2000, 4000];
 const ingests = new Map();
 const usedPorts = new Set();
 
-function ingestControl(ws, req) {
-  const tag = `[${req.socket.remoteAddress} srt-in]`;
+const MAX_SRT_INPUTS = Number(process.env.MAX_SRT_INPUTS) || 0;
+
+function ingestControl(ws, req, auth) {
+  const tag = `[${auth.ip} ${auth.user.name} srt-in]`;
   let s = null;
   const send = obj => { if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(obj)); };
   const fail = message => { send({ type: 'error', message }); ws.close(1008, 'rejected'); };
@@ -112,6 +181,9 @@ function ingestControl(ws, req) {
     try { msg = JSON.parse(String(data)); } catch (e) { return; }
     if (msg.type !== 'open') return;
     if (!SRT_SUPPORTED) return fail('ffmpeg ในเซิร์ฟเวอร์นี้ไม่รองรับ SRT');
+    const lim = auth.user.limits;
+    if (lim && countFor('srt-in', auth.user.name) >= lim.srt) return fail(`บัญชี ${auth.user.name} รับ SRT ได้พร้อมกันสูงสุด ${lim.srt} สัญญาณ`);
+    if (MAX_SRT_INPUTS && countFor('srt-in') >= MAX_SRT_INPUTS) return fail(`เซิร์ฟเวอร์รับ SRT พร้อมกันได้สูงสุด ${MAX_SRT_INPUTS} สัญญาณ`);
 
     const mode = msg.mode === 'caller' ? 'caller' : 'listener';
     const latency = SRT_LATENCIES_MS.includes(Number(msg.latency)) ? Number(msg.latency) : 500;
@@ -136,6 +208,11 @@ function ingestControl(ws, req) {
       transcode: false, proc: null, viewers: new Set(), state: 'starting', info: null, message: '', closed: false, timer: null
     };
     ingests.set(s.id, s);
+    const label = mode === 'listener' ? `UDP ${port}` : target.replace(/\?.*$/, '');
+    sessions.set(s.id, {
+      kind: 'srt-in', user: auth.user, startedAt: Date.now(),
+      snapshot: () => ({ id: s.id, kind: 'srt-in', user: auth.user.name, ip: auth.ip, startedAt: sessions.get(s.id)?.startedAt, label, state: s.state, wasLive: !!s.wasLive, info: s.info })
+    });
     console.log(`${tag} open ${mode} ${mode === 'listener' ? 'port ' + port : target.replace(/\?.*$/, '')}`);
     send({ type: 'opened', id: s.id, mode, port, portRange: SRT_PORT_RANGE });
     startIngest(s, send, tag);
@@ -149,6 +226,8 @@ function ingestControl(ws, req) {
     for (const v of s.viewers) v.close(1000, 'closed');
     if (s.mode === 'listener') usedPorts.delete(s.port);
     ingests.delete(s.id);
+    sessions.delete(s.id);
+    monitor.forget(`srt:${s.id}`);
     console.log(`${tag} closed`);
   });
 }
@@ -225,6 +304,8 @@ function startIngest(s, send, tag) {
       if (v) {
         const fps = /([\d.]+) fps/.exec(line);
         s.info = { codec: v[1], width: Number(v[2]), height: Number(v[3]), fps: fps ? Number(fps[1]) : 0 };
+        // stderr กับ progress มาคนละท่อ — ถ้าแจ้ง live ไปก่อนรู้รายละเอียดภาพ ให้ส่งสถานะซ้ำพร้อมรายละเอียด
+        if (s.state === 'live' && s.proc === proc) setState(s, 'live', '', send);
       }
       if (/error|failed|refused|reject|invalid/i.test(line)) lastErr = line.trim().slice(0, 200);
     }
@@ -253,6 +334,7 @@ function startIngest(s, send, tag) {
 
 function setState(s, state, message, send) {
   s.state = state;
+  if (state === 'live') s.wasLive = true;
   s.message = message;
   send({ type: 'status', state, message, info: s.info, transcode: s.transcode });
 }
@@ -301,29 +383,61 @@ function iceConfig(req) {
   return { iceServers, peer, turn, expires };
 }
 
+const METRICS_TOKEN = process.env.METRICS_TOKEN || '';
 const server = http.createServer((req, res) => {
   const u = new URL(req.url, 'http://localhost');
+  const token = u.searchParams.get('token') || String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+  const json = (code, obj, extra = {}) => { res.writeHead(code, { 'content-type': 'application/json', 'cache-control': 'no-store', ...extra }); res.end(JSON.stringify(obj)); };
   if (u.pathname === '/ice') {
-    const headers = { 'content-type': 'application/json', 'cache-control': 'no-store', 'access-control-allow-origin': '*' };
-    if (TOKEN && u.searchParams.get('token') !== TOKEN) { res.writeHead(403, headers); return res.end('{"error":"invalid token"}'); }
-    res.writeHead(200, headers);
-    return res.end(JSON.stringify(iceConfig(req)));
+    const cors = { 'access-control-allow-origin': '*' };
+    const a = authorize(req, token);
+    if (a.error) return json(403, { error: a.error }, cors);
+    return json(200, iceConfig(req), cors);
+  }
+  if (u.pathname === '/admin' || u.pathname === '/admin/status.json') {
+    const a = authorize(req, token);
+    if (a.error || !a.user.admin) return json(403, { error: 'admin token required' });
+    if (u.pathname === '/admin') {
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'x-frame-options': 'DENY', 'content-security-policy': "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'" });
+      return res.end(monitor.ADMIN_HTML);
+    }
+    return json(200, monitor.status(sessionList()));
+  }
+  if (u.pathname === '/metrics') {
+    const ok = METRICS_TOKEN ? token === METRICS_TOKEN : (() => { const a = authorize(req, token); return !a.error && a.user.admin; })();
+    if (!ok) return json(403, { error: 'token required' });
+    res.writeHead(200, { 'content-type': 'text/plain; version=0.0.4', 'cache-control': 'no-store' });
+    return res.end(monitor.metrics(sessionList()));
   }
   res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' });
-  res.end(`WebMix Stream Gateway: OK (${wss.clients.size} active, ${ingests.size} SRT inputs)\n`);
+  res.end(`WebMix Stream Gateway: OK (${countFor('stream', null, s => s.encoding)} streams, ${ingests.size} SRT inputs)\n`);
 });
-const wss = new WebSocketServer({ server });
+const wss = new WebSocketServer({ server, maxPayload: 64 * 1024 * 1024 });
 server.listen(PORT);
 
+// ตัดการเชื่อมต่อที่ค้าง (เน็ตหลุดแบบไม่ปิด socket) ภายใน ~30 วินาที เพื่อคืนโควตาให้การเชื่อมต่อใหม่
+setInterval(() => {
+  for (const ws of wss.clients) {
+    if (ws.isAlive === false) { ws.terminate(); continue; }
+    ws.isAlive = false;
+    try { ws.ping(); } catch (e) {}
+  }
+}, 15000).unref();
+setInterval(() => monitor.check(sessionList()), 5000).unref();
+
 wss.on('connection', (ws, req) => {
+  ws.isAlive = true;
+  ws.on('pong', () => { ws.isAlive = true; });
   const reqUrl = new URL(req.url, 'http://localhost');
+  const auth = authorize(req, reqUrl.searchParams.get('token'));
+  if (auth.error) return ws.close(1008, auth.error);
   if (reqUrl.pathname === '/srt-in' || reqUrl.pathname === '/srt-in/data') {
-    if (TOKEN && reqUrl.searchParams.get('token') !== TOKEN) return ws.close(1008, 'invalid token');
-    return reqUrl.pathname === '/srt-in' ? ingestControl(ws, req) : ingestData(ws, reqUrl);
+    return reqUrl.pathname === '/srt-in' ? ingestControl(ws, req, auth) : ingestData(ws, reqUrl);
   }
   const params = reqUrl.searchParams;
-  const tag = `[${req.socket.remoteAddress}]`;
-  if (TOKEN && params.get('token') !== TOKEN) return ws.close(1008, 'invalid token');
+  const user = auth.user;
+  const tag = `[${auth.ip} ${user.name}]`;
+  const sessionId = crypto.randomBytes(8).toString('hex');
 
   // ค่าที่ส่งมาจากหน้าตั้งค่า (มีค่าเริ่มต้นและจำกัดช่วงไว้เสมอ)
   const fps = [24, 25, 30, 50, 60].includes(Number(params.get('fps'))) ? Number(params.get('fps')) : 30;
@@ -336,6 +450,47 @@ wss.on('connection', (ws, req) => {
   let closed = false;
 
   const send = obj => { if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(obj)); };
+  // ปฏิเสธพร้อมข้อความภาษาไทย (เหตุผลใน close frame ยาวได้ไม่เกิน 123 ไบต์ จึงส่งเป็นข้อความ JSON ก่อน)
+  const reject = (message, reason) => { send({ type: 'error', message }); ws.close(1008, reason); };
+  const session = {
+    kind: 'stream', user, startedAt: Date.now(), lastSeen: Date.now(), encoding: false, ws,
+    snapshot: () => ({
+      id: sessionId, kind: 'stream', user: user.name, ip: auth.ip, startedAt: session.startedAt, encoding: session.encoding,
+      format: `${height ? height + 'p' : ''}${fps} · ${kbps} kbps`, encoder: encoderStats,
+      destinations: [...dests.values()].map(d => ({ id: d.id, name: d.name, state: d.state, message: d.message, kbps: d.state === 'live' ? d.kbps : 0, wanted: d.wanted, failing: !!d.failing }))
+    })
+  };
+  sessions.set(sessionId, session);
+  const userLimits = user.limits;
+  const destLimit = userLimits ? Math.min(MAX_DESTINATIONS, userLimits.destinations) : MAX_DESTINATIONS;
+
+  // ตรวจโควตาก่อนเริ่มตัวเข้ารหัส — การเชื่อมต่อเดิมของผู้ใช้คนเดียวกันที่เงียบไปแล้ว (เน็ตหลุด) ถูกตัดทิ้งเพื่อให้เชื่อมต่อใหม่ได้ทันที
+  function allowEncoder() {
+    if (session.encoding) return true;
+    const now = Date.now();
+    for (const other of sessions.values()) {
+      if (other !== session && other.kind === 'stream' && other.encoding && other.user.name === user.name && now - other.lastSeen > 5000) {
+        console.log(`[${user.name}] replacing stale stream session`);
+        other.encoding = false;
+        other.ws.terminate();
+      }
+    }
+    const mine = countFor('stream', user.name, s => s.encoding);
+    if (userLimits && mine >= userLimits.streams) {
+      reject(`บัญชี ${user.name} สตรีมพร้อมกันได้สูงสุด ${userLimits.streams} สตรีม — หยุดสตรีมอื่นของบัญชีนี้ก่อน`, 'stream limit');
+      return false;
+    }
+    if (MAX_STREAMS && countFor('stream', null, s => s.encoding) >= MAX_STREAMS) {
+      reject(`เซิร์ฟเวอร์กำลังสตรีมเต็มจำนวน (${MAX_STREAMS} สตรีม) — ลองใหม่ภายหลังหรือติดต่อผู้ดูแล`, 'server busy');
+      monitor.notify('full', `มีคนเริ่มสตรีมไม่ได้เพราะเซิร์ฟเวอร์เต็ม (${MAX_STREAMS} สตรีม) — ผู้ใช้ ${user.name}`);
+      return false;
+    }
+    session.encoding = true;
+    monitor.counters.streamsStarted++;
+    streamBack(user.name);
+    return true;
+  }
+
   const report = () => send({
     type: 'status',
     destinations: [...dests.values()].map(d => ({ id: d.id, name: d.name, state: d.state, message: d.message, kbps: d.state === 'live' ? d.kbps : 0 })),
@@ -343,7 +498,8 @@ wss.on('connection', (ws, req) => {
   });
 
   function startEncoder() {
-    if (encoder) return;
+    if (encoder) return true;
+    if (!allowEncoder()) return false;
     console.log(`${tag} encoder start ${height ? height + 'p' : ''}${fps} ${kbps}kbps ${VIDEO_ENCODER}`);
     encoder = spawn(FFMPEG, [
       '-loglevel', 'warning', '-nostats', '-progress', 'pipe:3', '-stats_period', '2',
@@ -378,6 +534,7 @@ wss.on('connection', (ws, req) => {
       console.log(`${tag} encoder exited (${code})`);
       if (!closed && ws.readyState === ws.OPEN) ws.close(1011, `encoder exited (${code})`);
     });
+    return true;
   }
 
   function spawnDest(d) {
@@ -401,6 +558,7 @@ wss.on('connection', (ws, req) => {
       const m = /out_time_us=(\d+)/.exec(String(b));
       if (m && Number(m[1]) > 0 && d.state === 'connecting' && d.proc === proc) {
         d.state = 'live';
+        d.failing = false;
         console.log(`${tag} ✓ ${d.name} live`);
         report();
       }
@@ -420,6 +578,8 @@ wss.on('connection', (ws, req) => {
       }
       d.state = 'error';
       d.message = d.lastErr || `การเชื่อมต่อปิดลง (${code})`;
+      monitor.counters.destinationErrors++;
+      d.failing = true; // ยังนับว่าล่มอยู่ระหว่างลองเชื่อมต่อใหม่ จนกว่าจะกลับมา live
       console.log(`${tag} ✕ ${d.name}: ${d.message}`);
       report();
       d.retry = setTimeout(() => {
@@ -443,8 +603,8 @@ wss.on('connection', (ws, req) => {
     }
     let d = dests.get(id);
     if (!d) {
-      if (dests.size >= MAX_DESTINATIONS) {
-        send({ type: 'status', destinations: [{ id, name: String(raw.name || ''), state: 'error', message: `เกินจำนวนปลายทางสูงสุด (${MAX_DESTINATIONS})`, kbps: 0 }] });
+      if (dests.size >= destLimit) {
+        send({ type: 'status', destinations: [{ id, name: String(raw.name || ''), state: 'error', message: `เกินจำนวนปลายทางสูงสุด (${destLimit})`, kbps: 0 }] });
         return;
       }
       d = { id, name: String(raw.name || id).slice(0, 40), url, state: 'stopped', message: '', bytes: 0, kbps: 0, proc: null, retry: null, wanted: true };
@@ -485,20 +645,18 @@ wss.on('connection', (ws, req) => {
   const legacy = params.get('rtmp');
   if (legacy) {
     if (!RTMP_RE.test(legacy)) return ws.close(1008, 'invalid rtmp url');
-    startEncoder();
-    addDest({ id: 'default', name: 'RTMP', url: legacy });
+    if (startEncoder()) addDest({ id: 'default', name: 'RTMP', url: legacy });
   }
 
   ws.on('message', (data, isBinary) => {
+    session.lastSeen = Date.now();
     if (!isBinary) {
       let msg;
       try { msg = JSON.parse(String(data)); } catch (e) { return; }
       if (msg.type === 'start') {
-        startEncoder();
-        (Array.isArray(msg.destinations) ? msg.destinations : []).forEach(addDest);
+        if (startEncoder()) (Array.isArray(msg.destinations) ? msg.destinations : []).forEach(addDest);
       } else if (msg.type === 'add') {
-        startEncoder();
-        addDest(msg.destination);
+        if (startEncoder()) addDest(msg.destination);
       } else if (msg.type === 'stop') {
         stopDest(msg.id);
       }
@@ -507,9 +665,15 @@ wss.on('connection', (ws, req) => {
     if (encoder && encoder.stdin.writable) encoder.stdin.write(data);
   });
 
-  ws.on('close', () => {
+  ws.on('close', code => {
     closed = true;
     clearInterval(timer);
+    // หลุดระหว่างไลฟ์ (ไม่ใช่การกดหยุด) → แจ้งเตือนถ้าไม่กลับมาใน 30 วินาที
+    const wasLive = [...dests.values()].some(d => d.wanted && d.state === 'live');
+    if (wasLive && code !== 1000 && session.encoding) streamDropped(user.name, auth.ip);
+    sessions.delete(sessionId);
+    monitor.forget(`enc:${sessionId}`);
+    monitor.forget(`dest:${sessionId}:`);
     for (const d of dests.values()) {
       d.wanted = false;
       clearTimeout(d.retry);
@@ -528,4 +692,6 @@ wss.on('connection', (ws, req) => {
   });
 });
 
-console.log(`WebMix Stream Gateway (multistream) listening on ws://0.0.0.0:${PORT}${TOKEN ? ' (token required)' : ''} · SRT ${SRT_SUPPORTED ? 'enabled' : 'NOT available in this ffmpeg'} · PeerJS ${PEER_PORT ? 'on :' + PEER_PORT : 'off'} · TURN ${TURN_SECRET ? 'on' : 'off'}`);
+console.log(`WebMix Stream Gateway (multistream) listening on ws://0.0.0.0:${PORT}${users.authRequired() ? ' (token required)' : ' (NO TOKEN — open to anyone who can reach this port)'}` +
+  ` · users file ${users.USERS_FILE} · alerts ${monitor.alertsEnabled() ? 'on' : 'off'}${MAX_STREAMS ? ' · max ' + MAX_STREAMS + ' streams' : ''}`);
+console.log(`WebMix features: SRT ${SRT_SUPPORTED ? 'enabled' : 'NOT available in this ffmpeg'} · PeerJS ${PEER_PORT ? 'on :' + PEER_PORT : 'off'} · TURN ${TURN_SECRET ? 'on' : 'off'}`);

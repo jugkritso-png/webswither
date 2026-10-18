@@ -26,6 +26,8 @@ jobs:
           node --check assets/app.js
           node --check assets/webm-seek.js
           node --check server/stream-gateway.js
+          node --check server/users.js
+          node --check server/monitor.js
           node --check tests/run.js
           for f in tests/suites/*.js; do node --check "$f"; done
       - name: Install script syntax
@@ -86,4 +88,12 @@ jobs:
           for i in $(seq 1 30); do curl -fsS http://127.0.0.1:8080/ && break; sleep 1; done
           curl -fsS "http://127.0.0.1:8080/ice?token=t" | grep -q '"turn"'
           curl -fsS http://127.0.0.1:8081/peerjs/peerjs/id
+      - name: Users and admin page work inside the image
+        run: |
+          docker exec gw node stream-gateway.js user add ci-user | tee add.txt
+          TOKEN=$(sed -n 's/^Token: //p' add.txt)
+          docker exec gw node stream-gateway.js user list | grep -q ci-user
+          curl -fsS "http://127.0.0.1:8080/ice?token=$TOKEN" | grep -q '"iceServers"'
+          curl -fsS "http://127.0.0.1:8080/admin/status.json?token=t" | grep -q '"sessions"'
+          test "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:8080/admin/status.json?token=$TOKEN")" = 403
           docker logs gw

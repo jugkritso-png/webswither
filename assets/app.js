@@ -2551,10 +2551,11 @@
       if (typeof ev.data !== 'string') return;
       let msg;
       try { msg = JSON.parse(ev.data); } catch (e) { return; }
+      if (msg.type === 'error') ws.lastError = String(msg.message || '');
       if (msg.type === 'status' && msg.encoder) onEncoderStats(msg.encoder);
       if (msg.type === 'status' && Array.isArray(msg.destinations)) onDestStatus(msg.destinations);
     };
-    ws.onclose = ev => handleDisconnect(ws, ev.code, ev.reason);
+    ws.onclose = ev => handleDisconnect(ws, ev.code, ws.lastError || (ev.reason === 'invalid token' ? 'token ของ Gateway ไม่ถูกต้อง (ตรวจ Gateway URL ในหน้าตั้งค่า)' : ev.reason === 'too many attempts' ? 'ใส่ token ผิดหลายครั้ง — Gateway บล็อกชั่วคราว 15 นาที' : ev.reason));
   }
 
   // ความเร็วการเข้ารหัสของ Gateway — ต่ำกว่า 1.0x แปลว่าเซิร์ฟเวอร์เข้ารหัสไม่ทัน ภาพจะกระตุก/ดีเลย์
