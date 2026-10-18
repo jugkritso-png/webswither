@@ -114,3 +114,48 @@ jobs:
             desktop/target/release/bundle/**/*.AppImage
           if-no-files-found: error
           retention-days: 30
+
+  # ติด tag เวอร์ชัน (เช่น v1.0.0) → สร้าง GitHub Release พร้อมตัวติดตั้งทุกระบบ ให้ดาวน์โหลดได้โดยไม่ต้องล็อกอินและไม่หมดอายุ
+  release:
+    name: GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [gateway, app]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v7
+      - name: Tag matches the app version
+        run: |
+          APP_VERSION=$(node -p 'require("./desktop/src-tauri/tauri.conf.json").version')
+          test "v$APP_VERSION" = "$GITHUB_REF_NAME" || { echo "tag $GITHUB_REF_NAME ไม่ตรงกับเวอร์ชันแอป $APP_VERSION (desktop/src-tauri/tauri.conf.json)"; exit 1; }
+      - name: Collect installers
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --pattern 'WebMix-Pro-*' --dir artifacts
+          mkdir release
+          find artifacts -type f \( -name '*.msi' -o -name '*.exe' -o -name '*.dmg' -o -name '*.deb' -o -name '*.rpm' -o -name '*.AppImage' \) -print0 |
+            while IFS= read -r -d '' f; do cp "$f" "release/$(basename "$f" | tr ' ' '-')"; done
+          ls -la release
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cat > notes.md <<'NOTES'
+          ## ดาวน์โหลด
+
+          | ระบบ | ไฟล์ |
+          |---|---|
+          | Windows 10/11 | `.msi` หรือ `-setup.exe` |
+          | macOS 11+ (Apple Silicon) | `.dmg` — ครั้งแรกให้คลิกขวาที่แอป → Open (แอปยังไม่ได้ลงนาม) |
+          | Ubuntu / Debian | `.deb` (ติดตั้ง ffmpeg และ GStreamer ให้อัตโนมัติ) |
+          | Fedora / openSUSE | `.rpm` |
+          | Linux อื่น ๆ | `.AppImage` |
+
+          การสตรีมต้องมี ffmpeg — Windows: `winget install ffmpeg` · macOS: `brew install ffmpeg` (การบันทึกไม่ต้องใช้)
+          รายละเอียดและข้อจำกัด: ดู README หัวข้อ “แอปเดสก์ท็อป”
+          NOTES
+          sed -i 's/^          //' notes.md
+          gh release create "$GITHUB_REF_NAME" release/* --repo "$GITHUB_REPOSITORY" --title "WebMix Pro $GITHUB_REF_NAME" --notes-file notes.md --verify-tag

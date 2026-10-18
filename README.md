@@ -25,8 +25,12 @@
 - **บันทึกวิดีโอลงโฟลเดอร์โดยตรง** ทุกระบบปฏิบัติการ (ค่าเริ่มต้น `วิดีโอ/WebMix` เปลี่ยนได้ด้วยหน้าต่างเลือกโฟลเดอร์ของระบบ) ไฟล์ WebM เลื่อนหาตำแหน่งได้เหมือนเดิม
 - หน้าต่าง Program Output และ Multiview เป็นหน้าต่างจริงของแอป ย้ายไปจอที่สอง/โปรเจกเตอร์ได้
 
-**ดาวน์โหลด:** แท็บ **Actions → Desktop app** → รอบล่าสุดที่ผ่าน → Artifacts
-`WebMix-Pro-Windows` (.msi / .exe) · `WebMix-Pro-macOS` (.dmg) · `WebMix-Pro-Linux` (.deb / .rpm / .AppImage)
+**ดาวน์โหลด:** หน้า **[Releases](https://github.com/jugkritso-png/webswither/releases/latest)** —
+Windows (.msi / -setup.exe) · macOS (.dmg) · Linux (.deb / .rpm / .AppImage) ดาวน์โหลดได้โดยไม่ต้องล็อกอิน
+(รุ่นทดลองจากทุก commit อยู่ใน **Actions → Desktop app → Artifacts** ต้องล็อกอิน GitHub และหมดอายุใน 30 วัน)
+
+**ออกเวอร์ชันใหม่:** แก้ `version` ใน `desktop/src-tauri/tauri.conf.json` (และ `desktop/Cargo.toml`) แล้ว push tag ที่ตรงกัน
+เช่น `git tag v1.0.1 && git push origin v1.0.1` — workflow จะ build ทุกระบบ ทดสอบ แล้วสร้าง Release ให้อัตโนมัติ
 
 **ต้องติดตั้ง ffmpeg** (ตัวเข้ารหัสวิดีโอสำหรับการสตรีม — การบันทึกไม่ต้องใช้):
 
