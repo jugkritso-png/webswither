@@ -193,7 +193,8 @@
     guest: { icon: 'headphones', label: 'GUEST' },
     timer: { icon: 'clock', label: 'TIMER' },
     score: { icon: 'grid', label: 'SCORE' },
-    ticker: { icon: 'type', label: 'TICKER' }
+    ticker: { icon: 'type', label: 'TICKER' },
+    playlist: { icon: 'film', label: 'PLAYLIST' }
   };
   // กราฟิกที่วาดบนพื้นโปร่งใส (ซ้อนเป็น Overlay ได้ทันที)
   const GRAPHIC_TYPES = ['title', 'timer', 'score', 'ticker'];
@@ -230,6 +231,9 @@
         fillBlack(ctx, w, h);
         drawFit(ctx, inp.el, inp.el.naturalWidth, inp.el.naturalHeight, w, h);
         break;
+      case 'playlist':
+        if (inp.showImg) { fillBlack(ctx, w, h); drawFit(ctx, inp.showImg, inp.showImg.naturalWidth, inp.showImg.naturalHeight, w, h); break; }
+        // falls through — รายการปัจจุบันเป็นวิดีโอ
       default: {
         const v = inp.el;
         if (inp.status === 'live' && v && v.readyState >= 2 && v.videoWidth) {
@@ -394,6 +398,9 @@
       case 'title': case 'timer': case 'score': case 'ticker': drawGraphic(ctx, inp, w, h); return;
       case 'image': if (inp.status === 'live') drawFit(ctx, inp.el, inp.el.naturalWidth, inp.el.naturalHeight, w, h); return;
       case 'bars': case 'black': case 'slate': case 'clock': drawSource(ctx, inp, w, h); return;
+      case 'playlist':
+        if (inp.showImg) { drawFit(ctx, inp.showImg, inp.showImg.naturalWidth, inp.showImg.naturalHeight, w, h); return; }
+        // falls through
       default: {
         const v = inp.el;
         if (inp.status === 'live' && v && v.readyState >= 2 && v.videoWidth) drawFit(ctx, v, v.videoWidth, v.videoHeight, w, h);
@@ -565,6 +572,14 @@
         if (e.stamp !== inp.el.src) { gpu.upload(e, inp.el, inp.el.naturalWidth, inp.el.naturalHeight); e.stamp = inp.el.src; }
         return { e };
       }
+      case 'playlist':
+        if (inp.showImg) {
+          if (!inp.showImg.naturalWidth) return noSignal();
+          const e = gpu.entry('pi:' + inp.id);
+          if (e.stamp !== inp.showImg.src) { gpu.upload(e, inp.showImg, inp.showImg.naturalWidth, inp.showImg.naturalHeight); e.stamp = inp.showImg.src; }
+          return { e };
+        }
+        // falls through
       default: {
         const v = inp.el;
         if (!(inp.status === 'live' && v && v.readyState >= 2 && v.videoWidth)) return noSignal();
@@ -942,6 +957,11 @@
           <span class="card-num">${i + 1}</span>
           <span class="card-tally"></span>
           <div class="card-actions">
+            ${inp.type === 'playlist' && inp.list.items.length ? `
+              <button class="mini txt" data-card="pprev" title="รายการก่อนหน้า">‹</button>
+              <button class="mini ${inp.list.playing ? 'is-on' : ''}" data-card="pplay" title="เล่น / หยุดชั่วคราว">${icon(inp.list.playing ? 'pause' : 'play')}</button>
+              <button class="mini txt" data-card="pnext" title="รายการถัดไป">›</button>
+              <button class="mini ${inp.list.loop ? 'is-on' : ''}" data-card="ploop" title="เล่นวนซ้ำทั้งรายการ">${icon('repeat')}</button>` : ''}
             ${isMedia ? `
               <button class="mini" data-card="play" title="เล่น / หยุดชั่วคราว">${icon(inp.el.paused ? 'play' : 'pause')}</button>
               <button class="mini" data-card="restart" title="เล่นใหม่ตั้งแต่ต้น">${icon('restart')}</button>
@@ -990,6 +1010,9 @@
       else if (act === 'tplay' || act === 'treset') { timerControl(inp, act === 'tplay' ? 'toggle' : 'reset'); }
       else if (/^s[ab][+-]$/.test(act)) { const k = act[1] === 'a' ? 'scoreA' : 'scoreB'; inp.score[k] = Math.max(0, (+inp.score[k] || 0) + (act[2] === '+' ? 1 : -1)); }
       else if (act === 'dprev' || act === 'dnext') dataSources.step(inp, act === 'dnext' ? 1 : -1);
+      else if (act === 'pprev' || act === 'pnext') playlist.go(inp, inp.list.index + (act === 'pnext' ? 1 : -1), true);
+      else if (act === 'pplay') playlist.setPlaying(inp, !inp.list.playing);
+      else if (act === 'ploop') { inp.list.loop = !inp.list.loop; renderInputs(); }
       else if (act === 'play') { inp.el.paused ? inp.el.play().catch(() => {}) : inp.el.pause(); }
       else if (act === 'restart') { inp.el.currentTime = 0; inp.el.play().catch(() => {}); }
       else if (act === 'loop') { inp.el.loop = !inp.el.loop; actionBtn.classList.toggle('is-on', inp.el.loop); }
@@ -1047,6 +1070,7 @@
     }
     if (inp.type === 'srt') closeSrtInput(inp);
     if (forget && (inp.type === 'media' || inp.type === 'image')) mediaStore.del(inp.id);
+    if (inp.type === 'playlist') playlist.dispose(inp, forget);
     inp.removed = true;
     if (gpu) gpu.drop(inp.id);
     audio.removeForInput(inp.id);
@@ -1072,6 +1096,7 @@
   }
 
   async function renameInput(inp) {
+    if (inp.type === 'playlist') return playlist.edit(inp);
     if (inp.type === 'title') return openTitleDialog(inp);
     if (inp.type === 'timer') return openTimerDialog(inp);
     if (inp.type === 'score') return openScoreDialog(inp);
@@ -1539,6 +1564,163 @@
     readDataFields(inp, f);
     renderInputs();
     refreshSourceSelects();
+  }
+
+  /* ---------------------------------------------------- playlist */
+  // เล่นวิดีโอ/รูปต่อกันอัตโนมัติ: วิดีโอจบแล้วไปรายการถัดไป, รูปแสดงตามเวลาที่ตั้ง · ไฟล์เก็บในเบราว์เซอร์เหมือน Input วิดีโอ/รูป
+  // ใช้ <video> ตัวเดียวต่อ Playlist เสียงจึงอยู่ในช่องมิกเซอร์เดียวตลอด
+  const playlist = {
+    create(props = {}) {
+      const v = document.createElement('video');
+      v.playsInline = true; v.preload = 'auto';
+      pool.appendChild(v);
+      const inp = addInput({ type: 'playlist', status: 'nosignal', ...props, el: v,
+        list: { items: [], index: 0, loop: true, imageSec: 5, playing: true, ...(props.list || {}) }, urls: new Map() });
+      v.addEventListener('ended', () => this.next(inp));
+      v.addEventListener('error', () => { if (v.getAttribute('src')) { toast(`${inp.name}: เล่นไฟล์ “${this.current(inp)?.name || ''}” ไม่ได้ — ข้ามไปรายการถัดไป`, 'warn'); this.next(inp); } });
+      v.addEventListener('playing', () => setInputStatus(inp, 'live'));
+      audio.addElement(inp, v);
+      return inp;
+    },
+    current: inp => inp.list.items[inp.list.index] || null,
+    async url(inp, item) {
+      if (inp.urls.has(item.key)) return inp.urls.get(item.key);
+      const file = await mediaStore.get(item.key);
+      if (!file) return null;
+      const u = URL.createObjectURL(file);
+      inp.urls.set(item.key, u);
+      return u;
+    },
+    // แสดงรายการที่ index (manual = ผู้ใช้กดเอง: เล่นต่อแม้ปิดวนซ้ำ)
+    async go(inp, index, manual) {
+      const L = inp.list, n = L.items.length;
+      clearTimeout(inp.imgTimer);
+      if (!n) { inp.showImg = null; inp.el.removeAttribute('src'); inp.el.load(); setInputStatus(inp, 'nosignal'); renderInputs(); return; }
+      if (index >= n) { if (!L.loop && !manual) { this.setPlaying(inp, false); return; } index = 0; }
+      if (index < 0) index = n - 1;
+      L.index = index;
+      const item = L.items[index], token = (inp.goToken = (inp.goToken || 0) + 1);
+      const src = await this.url(inp, item);
+      if (inp.removed || token !== inp.goToken) return;
+      if (!src) {
+        // ไฟล์ไม่อยู่ในเครื่องนี้ (เช่นเปิดไฟล์โชว์บนเครื่องอื่น) — ข้าม
+        if (!item.missingWarned) { item.missingWarned = true; toast(`${inp.name}: ไม่พบไฟล์ “${item.name}” ในเครื่องนี้ — ข้ามไป (เพิ่มไฟล์ใหม่ในหน้าแก้ไข Playlist)`, 'warn', 6000); }
+        if (L.items.every(x => x.missingWarned)) { setInputStatus(inp, 'nosignal'); return; }
+        return this.go(inp, index + 1, manual);
+      }
+      if (item.kind === 'image') {
+        inp.el.pause();
+        const img = new Image();
+        img.onload = () => { if (token !== inp.goToken) return; inp.showImg = img; setInputStatus(inp, 'live'); this.armImage(inp); };
+        img.src = src;
+      } else {
+        inp.showImg = null;
+        inp.el.src = src;
+        inp.el.currentTime = 0;
+        if (L.playing) inp.el.play().catch(() => {});
+      }
+      const sub = $(`#inputs-grid .card[data-id="${inp.id}"] .card-sub`);
+      if (sub) sub.textContent = cardSub(inp);
+    },
+    armImage(inp) {
+      clearTimeout(inp.imgTimer);
+      if (inp.list.playing && inp.showImg) inp.imgTimer = setTimeout(() => this.next(inp), inp.list.imageSec * 1000);
+    },
+    next(inp) { if (!inp.removed) this.go(inp, inp.list.index + 1, false); },
+    setPlaying(inp, on) {
+      inp.list.playing = on;
+      if (inp.showImg) { if (on) this.armImage(inp); else clearTimeout(inp.imgTimer); }
+      else if (inp.el.getAttribute('src')) { if (on) inp.el.play().catch(() => {}); else inp.el.pause(); }
+      renderInputs();
+    },
+    async addFiles(inp, files) {
+      for (const file of files) {
+        const kind = /^image\//.test(file.type) ? 'image' : /^(video|audio)\//.test(file.type) || /\.(mp4|webm|mov|mkv|m4v|mp3|wav|m4a)$/i.test(file.name) ? 'video' : null;
+        if (!kind) { toast(`ข้ามไฟล์ “${file.name}” (ไม่ใช่วิดีโอหรือรูป)`, 'warn'); continue; }
+        const item = { key: `${inp.id}-${uid()}`, name: file.name, kind };
+        inp.urls.set(item.key, URL.createObjectURL(file));
+        inp.list.items.push(item);
+        mediaStore.put(item.key, file).then(ok => { if (!ok && !inp.removed) toast(`พื้นที่ในเบราว์เซอร์ไม่พอเก็บ “${file.name}” — เปิดหน้าใหม่แล้วต้องเพิ่มไฟล์นี้อีกครั้ง`, 'warn', 7000); });
+      }
+      if (inp.list.items.length && inp.status !== 'live') this.go(inp, inp.list.index);
+      renderInputs();
+    },
+    remove(inp, i) {
+      const [item] = inp.list.items.splice(i, 1);
+      if (!item) return;
+      mediaStore.del(item.key);
+      const u = inp.urls.get(item.key);
+      if (u) { URL.revokeObjectURL(u); inp.urls.delete(item.key); }
+      if (i < inp.list.index) inp.list.index--;
+      else if (i === inp.list.index) this.go(inp, Math.min(inp.list.index, inp.list.items.length - 1), true);
+    },
+    move(inp, i, d) {
+      const it = inp.list.items, j = i + d;
+      if (j < 0 || j >= it.length) return;
+      [it[i], it[j]] = [it[j], it[i]];
+      if (inp.list.index === i) inp.list.index = j; else if (inp.list.index === j) inp.list.index = i;
+    },
+    dispose(inp, forget) {
+      clearTimeout(inp.imgTimer);
+      for (const u of inp.urls.values()) URL.revokeObjectURL(u);
+      if (forget) for (const it of inp.list.items) mediaStore.del(it.key);
+    },
+    keys: () => inputs.filter(i => i.type === 'playlist').flatMap(i => i.list.items.map(x => x.key)),
+    async edit(inp) {
+      const L = inp.list;
+      const rows = () => L.items.length ? L.items.map((it, i) => `
+        <div class="pl-row ${i === L.index ? 'is-current' : ''}" data-i="${i}">
+          <span class="pl-num">${i + 1}</span>${icon(it.kind === 'image' ? 'image' : 'film')}<span class="pl-name">${esc(it.name)}</span>
+          <button type="button" class="mini" data-pl="up" title="เลื่อนขึ้น">▲</button><button type="button" class="mini" data-pl="down" title="เลื่อนลง">▼</button>
+          <button type="button" class="mini" data-pl="play" title="เล่นรายการนี้">${icon('play')}</button><button type="button" class="mini danger" data-pl="del" title="ลบออกจากรายการ">${icon('x')}</button>
+        </div>`).join('') : '<p class="note">ยังไม่มีไฟล์ — กด “เพิ่มไฟล์”</p>';
+      const result = await dialog({
+        title: `Playlist — ${inp.name}`,
+        body: `
+          <label class="field"><span>ชื่อ Input</span><input name="name" class="input" maxlength="40" value="${esc(inp.name)}"></label>
+          <div class="pl-list">${rows()}</div>
+          <button type="button" class="btn" data-pl="add">${icon('plus')}เพิ่มไฟล์ (วิดีโอ / รูป)</button>
+          <div class="field-row">
+            <label class="field"><span>แสดงรูปนาน (วินาที)</span><input name="imageSec" class="input mono" type="number" min="1" max="600" value="${L.imageSec}"></label>
+            <label class="check" style="align-self:end"><input type="checkbox" name="loop" ${L.loop ? 'checked' : ''}> เล่นวนซ้ำทั้งรายการ</label>
+          </div>
+          <p class="note">วิดีโอเล่นจนจบแล้วไปรายการถัดไปเอง · ปุ่ม ‹ ⏯ › บนการ์ดใช้ควบคุมระหว่างไลฟ์ · ไฟล์เก็บไว้ในเบราว์เซอร์นี้</p>`,
+        actions: [{ label: 'เสร็จ', primary: true, value: 'save' }],
+        onOpen(modal) {
+          const list = $('.pl-list', modal);
+          const redraw = () => { list.innerHTML = rows(); };
+          modal.addEventListener('click', e => {
+            const b = e.target.closest('[data-pl]');
+            if (!b) return;
+            const act = b.dataset.pl, i = +(b.closest('[data-i]')?.dataset.i ?? -1);
+            if (act === 'add') {
+              pickFiles('video/*,image/*,audio/*', files => playlist.addFiles(inp, files).then(redraw));
+              return;
+            }
+            if (act === 'up' || act === 'down') playlist.move(inp, i, act === 'up' ? -1 : 1);
+            else if (act === 'del') playlist.remove(inp, i);
+            else if (act === 'play') { L.playing = true; playlist.go(inp, i, true); }
+            redraw();
+            renderInputs();
+          });
+        }
+      });
+      if (result?.value === 'save') {
+        const f = result.form;
+        inp.name = f.name.value.trim() || inp.name;
+        L.imageSec = clamp(Math.round(+f.imageSec.value || 5), 1, 600);
+        L.loop = f.loop.checked;
+      }
+      renderInputs();
+      refreshSourceSelects();
+    }
+  };
+  function addPlaylist() {
+    audio.ensure();
+    const n = inputs.filter(i => i.type === 'playlist').length + 1;
+    const inp = playlist.create({ name: `PLAYLIST ${n}` });
+    pickFiles('video/*,image/*,audio/*', files => playlist.addFiles(inp, files));
+    return inp;
   }
 
   /* ---------------------------------------------------- data graphics */
@@ -3418,6 +3600,7 @@
       ['video', 'กล้อง / แคปเจอร์การ์ด', openCameraDialog],
       ['monitor', 'แชร์หน้าจอ', addScreen],
       ['film', 'ไฟล์วิดีโอ', () => pickFiles('video/*', addVideoFiles)],
+      ['repeat', 'Playlist (วิดีโอ/รูปเล่นต่อกัน)', addPlaylist],
       ['image', 'ภาพนิ่ง / โลโก้', () => pickFiles('image/*', addImageFiles)],
       ['phone', 'กล้องมือถือไร้สาย', showWirelessDialog],
       ['headphones', 'แขกรับเชิญทางไกล (ภาพ+เสียงไป-กลับ)', addGuest],
@@ -3506,6 +3689,7 @@
     if (inp.status !== 'live') return 'NO SIGNAL';
     if (inp.data && inp.data.error) return 'DATA ERROR';
     if (inp.type === 'title' && inp.data && inp.data.rows && inp.data.rows.length) return `${inp.data.row + 1}/${inp.data.rows.length}`;
+    if (inp.type === 'playlist') return inp.list.items.length ? `${inp.list.index + 1}/${inp.list.items.length}` : 'ว่าง';
     const meta = TYPE_META[inp.type];
     const label = inp.name.toUpperCase() === meta.label ? '' : meta.label;
     const w = inp.el?.videoWidth || inp.el?.naturalWidth, h = inp.el?.videoHeight || inp.el?.naturalHeight;
@@ -3668,7 +3852,7 @@
      - ไฟล์วิดีโอ/รูปเก็บสำเนาไว้ในพื้นที่ของเบราว์เซอร์ (OPFS) จึงไม่ต้องเลือกไฟล์ใหม่
      - บันทึกเป็นไฟล์ .webmix.json เพื่อย้ายเครื่องหรือเก็บหลายรายการ (ไฟล์สื่อไม่ได้รวมอยู่ในไฟล์ ต้องเลือกใหม่บนเครื่องอื่น) */
 
-  const SHOW_TYPES = ['bars', 'black', 'slate', 'clock', 'image', 'media', 'camera', 'screen', 'wireless', 'srt', 'title', 'guest', 'timer', 'score', 'ticker'];
+  const SHOW_TYPES = ['bars', 'black', 'slate', 'clock', 'image', 'media', 'camera', 'screen', 'wireless', 'srt', 'title', 'guest', 'timer', 'score', 'ticker', 'playlist'];
   const show = {
     ready: false, last: '', savedAt: 0,
     get name() { return store.get('showName', '') || 'โชว์ใหม่'; },
@@ -3695,6 +3879,7 @@
           if (i.type === 'timer') o.timer = freeze(i.timer);
           if (i.type === 'score') o.score = { ...i.score, clock: freeze(i.score.clock) };
           if (i.type === 'ticker') o.ticker = { ...i.ticker, items: [...i.ticker.items] };
+          if (i.type === 'playlist') o.list = { items: i.list.items.map(x => ({ key: x.key, name: x.name, kind: x.kind })), index: i.list.index, loop: i.list.loop, imageSec: i.list.imageSec };
           if (i.data) o.data = { url: i.data.url, header: i.data.header, row: i.data.row || 0 };
           if (i.type === 'guest') o.guest = i.guest;
           if (i.layout) o.layout = JSON.parse(JSON.stringify(i.layout));
@@ -3796,6 +3981,13 @@
             colorA: TITLE_COLORS.includes(c.colorA) ? c.colorA : '#ef4444', colorB: TITLE_COLORS.includes(c.colorB) ? c.colorB : '#3b82f6', period: String(c.period || '').slice(0, 20),
             clock: { mode: ['none', 'up', 'down'].includes(ck.mode) ? ck.mode : 'none', duration: clamp(+ck.duration || 2700, 1, 86400), base: Math.max(0, +ck.base || 0), running: false, since: 0 } } });
           break;
+        }
+        case 'playlist': {
+          const l = raw.list || {};
+          const items = (Array.isArray(l.items) ? l.items : []).filter(x => x && typeof x.key === 'string' && x.key.startsWith(base.id + '-'))
+            .map(x => ({ key: x.key, name: String(x.name || '').slice(0, 120), kind: x.kind === 'image' ? 'image' : 'video' })).slice(0, 500);
+          const inp = playlist.create({ ...base, list: { items, index: clamp(+l.index || 0, 0, Math.max(0, items.length - 1)), loop: l.loop !== false, imageSec: clamp(+l.imageSec || 5, 1, 600), playing: true } });
+          return playlist.go(inp, inp.list.index);
         }
         case 'ticker': {
           const t = raw.ticker || {};
@@ -4018,7 +4210,7 @@
     show.autosave(true);
     setInterval(() => show.autosave(), 1500);
     addEventListener('pagehide', () => show.autosave());
-    mediaStore.prune(new Set(inputs.filter(i => i.type === 'media' || i.type === 'image').map(i => i.id)));
+    mediaStore.prune(new Set([...inputs.filter(i => i.type === 'media' || i.type === 'image').map(i => i.id), ...playlist.keys()]));
 
     wireless.init();
     loadRecFolder();
@@ -4028,7 +4220,7 @@
     requestAnimationFrame(rafLoop);
 
     // สำหรับดีบัก/ทดสอบอัตโนมัติ
-    window.webmix = { dataSources, timerControl, multiview, renderer, gpu, setRenderer: v => { settings.renderer = v; renderer.resolve(); updateStatus(); }, show, ovl, setChannel, toggleInputOverlay, useRecFolder: dir => { recFolder = dir; }, inputs, state, settings, overlays, audio, rec, streamer, wireless, cut, autoTransition, setPreview, tr, ftb };
+    window.webmix = { playlist, dataSources, timerControl, multiview, renderer, gpu, setRenderer: v => { settings.renderer = v; renderer.resolve(); updateStatus(); }, show, ovl, setChannel, toggleInputOverlay, useRecFolder: dir => { recFolder = dir; }, inputs, state, settings, overlays, audio, rec, streamer, wireless, cut, autoTransition, setPreview, tr, ftb };
   }
 
   boot();

@@ -984,3 +984,11 @@ kbd {
 .guest-card h1 { margin: 6px 0 0; font-size: 22px; }
 .guest-card .guest-name { margin: 0; font-size: 16px; color: var(--amber); font-weight: 600; }
 .guest-card .btn-lg { min-width: 200px; height: 48px; font-size: 16px; }
+
+/* ---------------------------------------------------------- playlist */
+.pl-list { display: flex; flex-direction: column; gap: 4px; max-height: 280px; overflow-y: auto; }
+.pl-row { display: flex; align-items: center; gap: 6px; padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-2); }
+.pl-row.is-current { border-color: var(--pvw); }
+.pl-row .i { width: 14px; height: 14px; color: var(--muted); flex: none; }
+.pl-num { width: 20px; text-align: right; font: 600 11px var(--mono); color: var(--dim); flex: none; }
+.pl-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; }
