@@ -116,7 +116,7 @@ rm -rf "$BUILD/ffmpeg" && mkdir -p "$BUILD/ffmpeg"
   --enable-encoder=libx264,aac,wrapped_avframe \
   --enable-muxer=flv,mpegts,null,matroska,mp4 \
   --enable-parser=h264,hevc,aac,opus,vp8,vp9,av1 \
-  --enable-bsf=dump_extra,h264_mp4toannexb,aac_adtstoasc,extract_extradata,vp9_superframe_split,h264_metadata \
+  --enable-bsf=dump_extradata,h264_mp4toannexb,aac_adtstoasc,extract_extradata,vp9_superframe_split,h264_metadata \
   --enable-filter=color,testsrc,scale,format,aformat,aresample,fps,null,anull,setpts,asetpts,anullsrc,trim,atrim \
   "${FF_ARGS[@]}" >"$BUILD/ffmpeg-configure.log" 2>&1) || { tail -40 "$BUILD/ffmpeg-configure.log"; tail -60 "$BUILD/ffmpeg/ffbuild/config.log" 2>/dev/null; exit 1; }
 make -C "$BUILD/ffmpeg" -j "$JOBS" ffmpeg >"$BUILD/ffmpeg-make.log" 2>&1 || { tail -40 "$BUILD/ffmpeg-make.log"; exit 1; }

@@ -51,6 +51,13 @@ node -e '
   process.exit(r.ok ? 0 : 1);
 ' "$OUT/android-selftest.json"
 
+# emulator มี MediaCodec ที่ใช้ได้ — แอปต้องเลือกตัวเข้ารหัสฮาร์ดแวร์ ไม่ใช่ถอยไปใช้ libx264
+node -e '
+  const r = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+  const c = (r.checks || []).find(c => c.name === "encoder");
+  if (!c || !/^h264_mediacodec/.test(c.detail)) { console.log("ไม่ได้ใช้ตัวเข้ารหัสฮาร์ดแวร์:", c && c.detail); process.exit(1); }
+' "$OUT/android-selftest.json"
+
 # ปลายทางต้องได้สตรีมที่ถอดรหัสได้จริง
 PROBE=$(ffprobe -v error -show_entries stream=codec_name,width,height -show_entries format=duration -of compact=p=0 "$OUT/android-stream.flv" || true)
 echo "RTMP ที่ได้รับ: $PROBE"
