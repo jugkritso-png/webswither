@@ -42,8 +42,9 @@ const send = (port, size, extra = [], dur = 40) => spawn('ffmpeg', ['-loglevel',
   st = await srt('OBS STUDIO');
   ok('sender drop detected', ['waiting', 'error'].includes(st.state), st.state);
   tx = send(9007, '1920x1080');
-  for (let i = 0; i < 30; i++) { await p.waitForTimeout(500); st = await srt('OBS STUDIO'); if (st.state === 'live' && st.info && st.info.height === 1080) break; }
-  ok('sender returns at 1080p → live again', st.state === 'live' && st.info && st.info.height === 1080, JSON.stringify(st.info));
+  // CI ที่เครื่องช้า: ผู้ส่งต้องเข้ารหัส 1080p ใหม่และ Gateway ต้องอ่านหัวสตรีมก่อน — รอได้ถึง 30 วินาที
+  for (let i = 0; i < 60; i++) { await p.waitForTimeout(500); st = await srt('OBS STUDIO'); if (st.state === 'live' && st.info && st.info.height === 1080) break; }
+  ok('sender returns at 1080p → live again', st.state === 'live' && st.info && st.info.height === 1080, JSON.stringify({ state: st.state, info: st.info }));
   const mi2 = await probe('OBS STUDIO');
   ok('player gets the new 1080p stream', mi2 && mi2.h === 1080, JSON.stringify(mi2));
   tx.kill('SIGKILL');
