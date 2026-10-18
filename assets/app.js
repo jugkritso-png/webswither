@@ -9,7 +9,7 @@
     downloadBlob, store, toast, keepScreenOn, b64url, unb64url, peerOptionsFromSig, initCaller,
     fillBlack, drawFit, fitFont, drawBars, drawSlate, drawClock, RELINK_HINT, drawNoSignal, drawTitle, TITLE_STYLES, drawTitleInput,
     createKeyer, createGpu, idb, canUseOpfs, mediaStore, createMultiview, SHORTCUTS, MANUAL,
-    TIMER_MODES, TIMER_STYLES, timerText, drawTimer, drawScore, TICKER_BAR, drawTickerBar, drawTicker, sheetCsvUrl, parseCsv } = window.WebMix;
+    TIMER_MODES, TIMER_STYLES, timerText, drawTimer, drawScore, TICKER_BAR, drawTickerBar, drawTicker, sheetCsvUrl, parseCsv, desktop } = window.WebMix;
   /* ====================================================================== */
   /*  PHONE CAMERA MODE (?call=<studio id>)                                  */
   /* ====================================================================== */
@@ -53,7 +53,8 @@
     pip: { position: 'br', size: 0.32 },
     key: { color: 'green', tolerance: 60 },
     srtInputs: [], titlePresets: [],
-    renderer: 'auto'
+    renderer: 'auto',
+    localGateway: true
   };
   const saved = store.get('settings', {}) || {};
   const settings = {
@@ -95,6 +96,12 @@
       enabled: d.enabled !== false
     }));
   delete settings.platform; delete settings.server; delete settings.streamKey;
+
+  // แอปเดสก์ท็อป: ใช้ Stream Gateway ที่รันอยู่ในแอป (ค่าเริ่มต้น) — ช่อง Gateway ในการตั้งค่ายังเก็บค่าของเซิร์ฟเวอร์ไว้ให้สลับกลับได้
+  const usingLocalGateway = () => !!(desktop && settings.localGateway !== false && desktop.info && desktop.info.gateway);
+  const gatewayUrl = () => usingLocalGateway() ? desktop.info.gateway.url : settings.gateway.trim();
+  // ที่อยู่ของหน้า WebMix สำหรับลิงก์/QR ที่เปิดจากเครื่องอื่น (ในแอปเดสก์ท็อปใช้หน้าเว็บสาธารณะ)
+  const pageBase = () => desktop ? desktop.publicPage : location.origin + location.pathname;
 
   function saveSettings() {
     const copy = JSON.parse(JSON.stringify(settings));
@@ -2323,7 +2330,7 @@
     async fetchSig() {
       if (gatewayProblem()) return null;
       try {
-        const u = new URL(settings.gateway.trim());
+        const u = new URL(gatewayUrl());
         u.protocol = u.protocol === 'wss:' ? 'https:' : 'http:';
         u.pathname = '/ice';
         const res = await fetch(u.toString(), { cache: 'no-store' });
@@ -2338,6 +2345,7 @@
     async init() {
       let id = store.raw('webmix-host-id');
       if (!id) { id = 'webmix-' + uid().slice(0, 6); store.setRaw('webmix-host-id', id); }
+      if (desktop) await desktop.ready;
       this.sig = await this.fetchSig();
       this.create(id, 0);
     },
@@ -2353,7 +2361,7 @@
       if (fresh && fresh.h === this.sig.h && fresh.p === this.sig.p) { this.sig = fresh; this.buildLink(); }
     },
     buildLink() {
-      const base = `${location.origin}${location.pathname}?call=${encodeURIComponent(this.peerId)}`;
+      const base = `${pageBase()}?call=${encodeURIComponent(this.peerId)}`;
       this.link = this.sig ? `${base}&sig=${b64url(JSON.stringify(this.sig))}` : base;
     },
     create(id, attempt) {
@@ -2470,7 +2478,7 @@
     guestLink(inp) {
       const q = new URLSearchParams({ call: this.peerId, guest: inp.guest, n: inp.name });
       if (this.sig) q.set('sig', b64url(JSON.stringify(this.sig)));
-      return `${location.origin}${location.pathname}?${q}`;
+      return `${pageBase()}?${q}`;
     }
   };
 
@@ -2493,7 +2501,7 @@
   }
 
   function gatewayEndpoint(path, extra = {}) {
-    const u = new URL(settings.gateway.trim());
+    const u = new URL(gatewayUrl());
     u.pathname = path;
     for (const [k, v] of Object.entries(extra)) u.searchParams.set(k, v);
     return u.toString();
@@ -2507,7 +2515,7 @@
   // ที่อยู่สำหรับใส่ใน OBS / vMix (โหมด listener: ผู้ส่งเป็นฝ่ายเชื่อมต่อเข้ามาที่ Gateway)
   function srtSenderUrl(cfg) {
     let host = '';
-    try { host = new URL(settings.gateway.trim()).hostname; } catch (e) {}
+    try { host = new URL(gatewayUrl()).hostname; } catch (e) {}
     let url = `srt://${host}:${cfg.port}?mode=caller&latency=${cfg.latency * 1000}`;
     if (cfg.passphrase) url += `&passphrase=${cfg.passphrase}&pbkeylen=16`;
     return url;
@@ -2689,7 +2697,7 @@
   function showSrtSenderInfo(inp) {
     const c = inp.srt;
     let host = '';
-    try { host = new URL(settings.gateway.trim()).hostname; } catch (e) {}
+    try { host = new URL(gatewayUrl()).hostname; } catch (e) {}
     const url = srtSenderUrl(c);
     dialog({
       title: `ตั้งค่าผู้ส่งสำหรับ “${inp.name}”`,
@@ -2868,11 +2876,25 @@
      2) พื้นที่เก็บข้อมูลของเบราว์เซอร์บนดิสก์ (OPFS) แล้วดาวน์โหลดเมื่อหยุด
      3) ถ้าเบราว์เซอร์ไม่รองรับทั้งสองแบบ เก็บใน RAM (เตือนเมื่อไฟล์ใหญ่) */
   let recFolder = null;
-  const canPickFolder = typeof window.showDirectoryPicker === 'function';
+  const canPickFolder = !!desktop || typeof window.showDirectoryPicker === 'function';
+  // แอปเดสก์ท็อป: โฟลเดอร์เป็นที่อยู่จริงบนเครื่อง (ค่าเริ่มต้น วิดีโอ/WebMix) เขียนผ่าน Rust ได้ทุกระบบปฏิบัติการ
+  const nativeFolder = path => ({ name: path, native: true });
   async function loadRecFolder() {
+    if (desktop) {
+      const info = await desktop.ready;
+      const dir = store.raw('webmix-rec-dir') || (info && info.recDir);
+      recFolder = dir ? nativeFolder(dir) : null;
+      return;
+    }
     try { recFolder = (await idb.get('recFolder')) || null; } catch (e) { recFolder = null; }
   }
   async function pickRecFolder() {
+    if (desktop) {
+      const dir = await desktop.pickFolder().catch(() => null);
+      if (!dir) return null;
+      store.setRaw('webmix-rec-dir', dir);
+      return (recFolder = nativeFolder(dir));
+    }
     try {
       const dir = await window.showDirectoryPicker({ id: 'webmix-recordings', mode: 'readwrite', startIn: 'videos' });
       recFolder = dir;
@@ -2880,10 +2902,18 @@
       return dir;
     } catch (e) { return null; }
   }
-  async function clearRecFolder() { recFolder = null; await idb.del('recFolder').catch(() => {}); }
+  async function clearRecFolder() {
+    if (desktop) { store.setRaw('webmix-rec-dir', ''); await loadRecFolder(); return; }
+    recFolder = null; await idb.del('recFolder').catch(() => {});
+  }
 
   async function openRecordingSink(name) {
-    if (recFolder) {
+    if (recFolder && recFolder.native) {
+      try {
+        return { kind: 'folder', label: recFolder.name, writable: await desktop.createFile(name, recFolder.name) };
+      } catch (e) { toast('เขียนไฟล์ลงโฟลเดอร์ไม่ได้: ' + e, 'warn'); }
+    }
+    if (recFolder && !recFolder.native) {
       try {
         let perm = await recFolder.queryPermission({ mode: 'readwrite' });
         if (perm !== 'granted') perm = await recFolder.requestPermission({ mode: 'readwrite' });
@@ -3005,7 +3035,7 @@
   function toggleStream() { openLiveDialog(); }
 
   function gatewayProblem() {
-    const gw = settings.gateway.trim();
+    const gw = gatewayUrl();
     return !gw ? 'ยังไม่ได้ตั้งค่า Stream Gateway'
       : !/^wss?:\/\//i.test(gw) ? 'Gateway URL ต้องขึ้นต้นด้วย ws:// หรือ wss://'
       : location.protocol === 'https:' && /^ws:\/\//i.test(gw) ? 'หน้านี้เปิดผ่าน HTTPS จึงต้องใช้ Gateway แบบ wss://' : '';
@@ -3142,7 +3172,7 @@
       toast('เริ่มสตรีมไม่ได้: ' + e.message, 'error');
       return;
     }
-    const gw = settings.gateway.trim();
+    const gw = gatewayUrl();
     const sep = gw.includes('?') ? '&' : '?';
     const ws = new WebSocket(`${gw}${sep}fps=${settings.fps}&vb=${settings.videoKbps}&res=${H}`);
     const reconnecting = !!streamer.reconnecting;
@@ -3313,7 +3343,7 @@
   }
 
   function openOutputWindow() {
-    const win = window.open('', 'webmix-program-output', 'width=1280,height=720');
+    const win = window.open('about:blank', 'webmix-program-output', 'width=1280,height=720');
     if (!win) { toast('เบราว์เซอร์บล็อกหน้าต่างใหม่ — อนุญาต Pop-up สำหรับเว็บนี้ก่อน', 'warn'); return; }
     win.document.open();
     win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>WebMix — Program Output</title>
@@ -3403,6 +3433,20 @@
     return !!(r && r.value);
   }
 
+  // ส่วนตั้งค่า Gateway ในแอปเดสก์ท็อป: สถานะ Gateway ในตัว + ffmpeg (ตัวเข้ารหัสวิดีโอที่ต้องติดตั้งแยก)
+  function desktopGatewayHtml() {
+    const info = desktop.info || {};
+    const gw = info.gateway;
+    const ff = info.ffmpeg;
+    const install = { windows: '<code>winget install ffmpeg</code>', macos: '<code>brew install ffmpeg</code>' }[info.os] || '<code>sudo apt install ffmpeg</code> (หรือตัวจัดการแพ็กเกจของระบบ)';
+    return `
+      <label class="check"><input type="checkbox" name="localGateway" ${settings.localGateway !== false ? 'checked' : ''} ${gw ? '' : 'disabled'}>
+        ใช้ Stream Gateway ในแอปนี้ (สตรีมจากเครื่องนี้โดยตรง ไม่ต้องมีเซิร์ฟเวอร์)</label>
+      <p class="note">${gw ? `Gateway ในแอปพร้อม · ${esc(gw.url.replace(/\?.*$/, ''))}${gw.srt ? ' · ส่ง SRT ได้' : ''}` : `เปิด Gateway ในแอปไม่ได้: ${esc(info.gatewayError || desktop.error || 'ไม่ทราบสาเหตุ')}`}</p>
+      <p class="note ${ff ? '' : 'warn'}">${ff ? `ffmpeg: ${esc(ff.version)}` : `ไม่พบ ffmpeg — ติดตั้งด้วย ${install} แล้วเปิดแอปใหม่`}</p>
+      <p class="note">อินเทอร์เน็ตขาขึ้นของเครื่องนี้ต้องพอสำหรับทุกปลายทางรวมกัน (ffmpeg ส่งแยกทีละปลายทาง) · การรับสัญญาณ SRT (Input) และ TURN สำหรับมือถือยังต้องใช้ Gateway บนเซิร์ฟเวอร์</p>`;
+  }
+
   function openSettings(tab = 'output') {
     const live = rec.active || streamer.active;
     let readDests = null;
@@ -3437,9 +3481,10 @@
           <p class="note warn res-4k-note" ${RESOLUTIONS[settings.resolution][1] >= 1440 ? '' : 'hidden'}>ความละเอียด 1440p/4K ต้องใช้คอมพิวเตอร์แรง (แนะนำ CPU 8 คอร์ขึ้นไปหรือมีการ์ดจอแยก) และอินเทอร์เน็ตขาขึ้นอย่างน้อย 1.5 เท่าของบิตเรต · Stream Gateway ควรมี 8 vCPU ขึ้นไป · Facebook และ Twitch รับสูงสุด 1080p ส่วน YouTube รับได้ถึง 4K</p>
         </div>
         <div class="modal-pane" data-mpane="stream">
-          <label class="field"><span>Stream Gateway (WebSocket)</span>
+          ${desktop ? desktopGatewayHtml() : ''}
+          <label class="field gateway-remote"><span>${desktop ? 'Stream Gateway บนเซิร์ฟเวอร์ (WebSocket)' : 'Stream Gateway (WebSocket)'}</span>
             <input name="gateway" class="input mono" placeholder="wss://gateway.example.com:8080/?token=..." value="${esc(settings.gateway)}"></label>
-          <p class="note">เบราว์เซอร์ส่ง RTMP เองไม่ได้ ต้องมี Gateway (โฟลเดอร์ <code>server/</code> ในโปรเจกต์) คอยแปลงสัญญาณ — หน้า HTTPS ต้องใช้ <code>wss://</code> · ภาพถูกส่งขึ้น Gateway ครั้งเดียวแล้วกระจายไปทุกปลายทาง จึงใช้อินเทอร์เน็ตขาขึ้นเท่ากับสตรีมช่องเดียว</p>
+          <p class="note" ${desktop ? 'hidden' : ''}>เบราว์เซอร์ส่ง RTMP เองไม่ได้ ต้องมี Gateway (โฟลเดอร์ <code>server/</code> ในโปรเจกต์) คอยแปลงสัญญาณ — หน้า HTTPS ต้องใช้ <code>wss://</code> · ภาพถูกส่งขึ้น Gateway ครั้งเดียวแล้วกระจายไปทุกปลายทาง จึงใช้อินเทอร์เน็ตขาขึ้นเท่ากับสตรีมช่องเดียว</p>
           ${streamer.ws ? '<p class="note warn">กำลังสตรีมอยู่ — การแก้ไขปลายทางจะมีผลเมื่อหยุดแล้วเริ่มปลายทางนั้นใหม่ในแผง STREAM</p>' : ''}
           <div class="field">
             <span>ปลายทาง (สูงสุด ${MAX_DESTINATIONS} ช่อง) — ช่องที่ติ๊กไว้จะเริ่มพร้อมกันเมื่อกด “เริ่มทั้งหมด” ส่วนช่องอื่นเริ่มทีละช่องได้ในแผง STREAM</span>
@@ -3471,10 +3516,15 @@
         });
         $('.rec-folder-clear', modal)?.addEventListener('click', async e => {
           await clearRecFolder();
-          $('.rec-folder-name', modal).value = 'ยังไม่ได้เลือก — ดาวน์โหลดไฟล์เมื่อกดหยุด';
+          $('.rec-folder-name', modal).value = recFolder ? recFolder.name : 'ยังไม่ได้เลือก — ดาวน์โหลดไฟล์เมื่อกดหยุด';
           e.currentTarget.remove();
         });
         fo.fps.addEventListener('change', suggest);
+        if (fo.localGateway) {
+          const syncGw = () => { $('.gateway-remote', modal).hidden = fo.localGateway.checked; };
+          fo.localGateway.addEventListener('change', syncGw);
+          syncGw();
+        }
         const list = $('.dest-list', modal);
         const addBtn = $('.dest-add', modal);
         const showKeys = $('.dest-showkeys', modal);
@@ -3544,8 +3594,10 @@
         settings.fps = +f.fps.value;
         settings.videoKbps = clamp(Math.round(+f.videoKbps.value || 4500), 800, MAX_KBPS);
       }
-      const gatewayChanged = settings.gateway !== f.gateway.value.trim();
+      const gwBefore = gatewayUrl();
       settings.gateway = f.gateway.value.trim();
+      if (f.localGateway) settings.localGateway = f.localGateway.checked;
+      const gatewayChanged = gwBefore !== gatewayUrl();
       if (gatewayChanged) wireless.restart();
       if (readDests) settings.destinations = readDests();
       settings.rememberKey = f.rememberKey.checked;
@@ -3660,7 +3712,7 @@
       setStat('#st-stream', `LIVE ${fmtDuration(Date.now() - streamer.start)} · ${streamer.kbps} kbps · ${live}/${active} ปลายทาง${enc}${slow ? ' · เน็ตช้า' : ''}`, slow || errors || encSlow ? 'warn' : 'live');
     } else {
       const n = settings.destinations.filter(d => d.enabled).length;
-      setStat('#st-stream', streamer.reconnecting ? `RECONNECTING… (ครั้งที่ ${streamer.attempt})` : streamer.state === 'connecting' ? 'CONNECTING…' : settings.gateway ? `READY · ${n} ปลายทาง` : 'NOT SET',
+      setStat('#st-stream', streamer.reconnecting ? `RECONNECTING… (ครั้งที่ ${streamer.attempt})` : streamer.state === 'connecting' ? 'CONNECTING…' : gatewayUrl() ? `READY · ${n} ปลายทาง` : 'NOT SET',
         streamer.reconnecting || streamer.state === 'connecting' ? 'warn' : '');
     }
     setStat('#st-rec', rec.active ? `${fmtDuration(Date.now() - rec.start)} · ${fmtBytes(rec.bytes)} → ${rec.sink.kind === 'folder' ? 'โฟลเดอร์ ' + rec.sink.label : rec.sink.label}` : 'OFF',

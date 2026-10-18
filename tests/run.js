@@ -10,7 +10,7 @@ const http = require('http');
 const { spawn, spawnSync } = require('child_process');
 const { ROOT, WORK } = require('./lib');
 
-const ALL = ['switcher', 'multistream', 'mobile', 'srt-output', 'srt-input', 'uhd-4k', 'reconnect', 'record-disk', 'audio-fx', 'show', 'gateway-admin', 'overlay', 'gpu', 'guest', 'multiview', 'graphics', 'playlist'];
+const ALL = ['switcher', 'multistream', 'mobile', 'srt-output', 'srt-input', 'uhd-4k', 'reconnect', 'record-disk', 'audio-fx', 'show', 'gateway-admin', 'overlay', 'gpu', 'guest', 'multiview', 'graphics', 'playlist', 'desktop'];
 const selected = process.argv.slice(2).length ? process.argv.slice(2) : ALL;
 const SUITE_TIMEOUT = 6 * 60 * 1000;
 
@@ -77,7 +77,11 @@ function runSuite(name) {
   const web = await staticServer(8765);
   const { PeerServer } = require('peer');
   const peer = PeerServer({ port: 9900, host: '127.0.0.1', path: '/' });
-  const gateway = spawn(process.execPath, ['stream-gateway.js'], { cwd: path.join(ROOT, 'server'), env: { ...process.env, PORT: '8089', STREAM_TOKEN: 'abc' }, stdio: 'ignore' });
+  // GATEWAY_BIN=desktop/target/release/webmix-gateway → ทดสอบ Gateway เวอร์ชัน Rust (ของแอปเดสก์ท็อป) แทนเวอร์ชัน Node
+  const gwEnv = { ...process.env, PORT: '8089', STREAM_TOKEN: 'abc' };
+  const gateway = process.env.GATEWAY_BIN
+    ? spawn(path.resolve(ROOT, process.env.GATEWAY_BIN), [], { env: gwEnv, stdio: process.env.VERBOSE ? 'inherit' : 'ignore' })
+    : spawn(process.execPath, ['stream-gateway.js'], { cwd: path.join(ROOT, 'server'), env: gwEnv, stdio: 'ignore' });
   await waitHttp('http://127.0.0.1:8089/');
   await waitHttp('http://127.0.0.1:9900/');
 

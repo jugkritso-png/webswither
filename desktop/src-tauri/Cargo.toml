@@ -1,0 +1,25 @@
+[package]
+name = "webmix-desktop"
+description = "WebMix Pro — live production switcher (desktop app for Windows, macOS and Linux)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "webmix_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["fs", "io-util", "sync", "process", "time"] }
+getrandom = "0.3"
+webmix-gateway = { path = "../gateway" }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+webkit2gtk = { version = "2", features = ["v2_40"] }

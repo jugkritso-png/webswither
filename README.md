@@ -13,7 +13,50 @@
   ภาพนิ่ง, หน้าต่าง Program Output แยก, เต็มจอ
 - คู่มือในแอป (ปุ่ม ?) และดาวน์โหลดคู่มือเป็นไฟล์ Word
 
-โครงสร้างไฟล์: `index.html` (หน้าเว็บ), `assets/app.css` (ดีไซน์), `assets/app.js` (การทำงาน), `server/` (Stream Gateway)
+โครงสร้างไฟล์: `index.html` (หน้าเว็บ), `assets/app.css` (ดีไซน์), `assets/app.js` (การทำงาน), `server/` (Stream Gateway),
+`desktop/` (แอปเดสก์ท็อป Windows / macOS / Linux เขียนด้วย Rust)
+
+## แอปเดสก์ท็อป (Windows / macOS / Linux)
+
+แอป WebMix Pro สำหรับคอมพิวเตอร์ สร้างด้วย **Rust + [Tauri](https://tauri.app)** ใช้หน้าตาและความสามารถเดียวกับหน้าเว็บทุกอย่าง และเพิ่มสิ่งที่เบราว์เซอร์ทำเองไม่ได้:
+
+- **Stream Gateway ในตัว** (เขียนใหม่ด้วย Rust) — สตรีมไป YouTube / Facebook / Twitch / SRT จากเครื่องนี้ได้ทันที ไม่ต้องเช่าเซิร์ฟเวอร์
+  (การตั้งค่า → การสตรีม → “ใช้ Stream Gateway ในแอปนี้” ติ๊กไว้เป็นค่าเริ่มต้น) — ภายในเครื่องเท่านั้น (127.0.0.1) และใช้รหัสสุ่มใหม่ทุกครั้งที่เปิดแอป
+- **บันทึกวิดีโอลงโฟลเดอร์โดยตรง** ทุกระบบปฏิบัติการ (ค่าเริ่มต้น `วิดีโอ/WebMix` เปลี่ยนได้ด้วยหน้าต่างเลือกโฟลเดอร์ของระบบ) ไฟล์ WebM เลื่อนหาตำแหน่งได้เหมือนเดิม
+- หน้าต่าง Program Output และ Multiview เป็นหน้าต่างจริงของแอป ย้ายไปจอที่สอง/โปรเจกเตอร์ได้
+
+**ดาวน์โหลด:** แท็บ **Actions → Desktop app** → รอบล่าสุดที่ผ่าน → Artifacts
+`WebMix-Pro-Windows` (.msi / .exe) · `WebMix-Pro-macOS` (.dmg) · `WebMix-Pro-Linux` (.deb / .rpm / .AppImage)
+
+**ต้องติดตั้ง ffmpeg** (ตัวเข้ารหัสวิดีโอสำหรับการสตรีม — การบันทึกไม่ต้องใช้):
+
+| ระบบ | คำสั่ง |
+|---|---|
+| Windows | `winget install ffmpeg` |
+| macOS | `brew install ffmpeg` |
+| Ubuntu / Debian | ติดตั้งให้อัตโนมัติพร้อมไฟล์ .deb (`ffmpeg` และปลั๊กอิน GStreamer) |
+
+แอปหา ffmpeg จาก PATH และตำแหน่งที่ติดตั้งบ่อย (Homebrew, WinGet, `C:\ffmpeg\bin`) หรือกำหนดเองด้วยตัวแปร `WEBMIX_FFMPEG`
+ใช้การ์ดจอเข้ารหัสได้ด้วย `WEBMIX_VIDEO_ENCODER` (`h264_nvenc`, `h264_qsv`, `h264_videotoolbox`, `h264_amf`)
+
+ข้อจำกัดที่ควรรู้:
+
+- **macOS:** ตัวติดตั้งยังไม่ได้ลงนาม (unsigned) — ครั้งแรกให้คลิกขวาที่แอป → Open แล้วกด Open อีกครั้ง
+- **Linux:** WebKitGTK ของ Ubuntu/Debian ไม่มี WebRTC จึง**ใช้กล้องมือถือไร้สายและแขกรับเชิญไม่ได้** (กล้อง USB, จับภาพหน้าจอ, บันทึก และสตรีมใช้ได้)
+  — ถ้าต้องใช้กล้องมือถือบน Linux ให้เปิดหน้าเว็บใน Chrome แทน · บันทึกเป็น MP4 (ต้องมี `gstreamer1.0-plugins-bad`)
+- Gateway ในแอปยังไม่รับสัญญาณ SRT เป็น Input และไม่มี TURN สำหรับมือถือเน็ต 4G/5G — ใช้ Gateway บนเซิร์ฟเวอร์ (ช่องด้านล่างในการตั้งค่าเดียวกัน)
+- ลิงก์/QR ของกล้องมือถือและแขกรับเชิญจากแอปชี้ไปที่หน้าเว็บ GitHub Pages ของโปรเจกต์ (มือถือเปิดหน้าภายในแอปไม่ได้)
+- การสตรีมจากแอปใช้อินเทอร์เน็ตขาขึ้นของเครื่องนี้ = บิตเรต × จำนวนปลายทาง
+
+**Build เอง:** ต้องมี [Rust](https://rustup.rs) และ Node.js (Linux ต้องมี `libwebkit2gtk-4.1-dev` ตาม[คู่มือ Tauri](https://tauri.app/start/prerequisites/))
+
+```bash
+cd desktop
+npx @tauri-apps/cli@2 build      # ตัวติดตั้งอยู่ใน desktop/target/release/bundle/
+npx @tauri-apps/cli@2 dev        # รันแบบพัฒนา
+cargo run -p webmix-gateway -- --port 8080 --token รหัส   # รันเฉพาะ Gateway (Rust) แทนเวอร์ชัน Node ได้
+WEBMIX_SELFTEST=1 ./target/release/webmix-desktop          # ทดสอบตัวเอง: ตรวจ Gateway/ไฟล์/หน้าต่าง/การบันทึก แล้วปิดแอป
+```
 
 ## เปิดใช้งานผ่าน GitHub Pages (HTTPS)
 
@@ -295,12 +338,17 @@ SRT (Secure Reliable Transport) ทนอินเทอร์เน็ตกร
 | `assets/js/multiview.js` · `assets/js/manual.js` | Multiview · คู่มือและคีย์ลัดในแอป |
 | `assets/webm-seek.js` | ทำให้ไฟล์ WebM ที่บันทึกมีความยาวและเลื่อนหาตำแหน่งได้ |
 | `assets/app.js` | สตูดิโอ: Input, การสลับภาพ, Overlay, เสียง, บันทึก, สตรีม, โชว์ |
+| `assets/js/desktop.js` | เชื่อมกับแอปเดสก์ท็อป (Gateway ในแอป, บันทึกลงโฟลเดอร์, ทดสอบตัวเอง) — ในเบราว์เซอร์ไม่ทำอะไร |
 | `server/` | Stream Gateway (`stream-gateway.js`), ผู้ใช้ (`users.js`), การเฝ้าระวัง (`monitor.js`), ชุดติดตั้ง (`deploy/`) |
+| `desktop/gateway/` | Stream Gateway เวอร์ชัน Rust (โปรโตคอลเดียวกับเวอร์ชัน Node) |
+| `desktop/src-tauri/` | แอปเดสก์ท็อป (Tauri): Gateway ในตัว, เขียนไฟล์บันทึก, หน้าต่าง Output |
 
 ## การทดสอบอัตโนมัติ
 
 ชุดทดสอบอยู่ในโฟลเดอร์ `tests/` (สตูดิโอ, multistream, กล้องมือถือ, SRT ขาเข้า/ขาออก, 4K, การเชื่อมต่อใหม่, การบันทึก, เสียง, บันทึกโชว์, Gateway หลายผู้ใช้, Overlay)
 และรันอัตโนมัติบน GitHub Actions ทุกครั้งที่ push (รวมถึงการ build Docker image ของ Gateway)
+workflow **Desktop app** build แอปบน Windows / macOS / Linux แล้วเปิดแอปจริงในโหมดทดสอบตัวเอง และรันชุดทดสอบการสตรีมกับ Gateway เวอร์ชัน Rust
+(`GATEWAY_BIN=desktop/target/release/webmix-gateway npm test -- multistream`)
 
 ```bash
 # ต้องมี Node.js 22 และ ffmpeg (พร้อม libsrt)

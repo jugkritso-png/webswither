@@ -11,7 +11,7 @@
     W: 1920, H: 1080,
     open() {
       if (this.win && !this.win.closed) { this.win.focus(); return; }
-      const win = window.open('', 'webmix-multiview', 'width=1280,height=720');
+      const win = window.open('about:blank', 'webmix-multiview', 'width=1280,height=720');
       if (!win) { toast('เบราว์เซอร์บล็อกหน้าต่างใหม่ — อนุญาต Pop-up สำหรับเว็บนี้ก่อน', 'warn'); return; }
       if (!this.canvas) {
         this.canvas = document.createElement('canvas');
