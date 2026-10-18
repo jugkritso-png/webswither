@@ -1,0 +1,14 @@
+{
+  "name": "webmix-tests",
+  "private": true,
+  "description": "End-to-end tests for WebMix Pro (studio, streaming gateway, SRT, wireless cameras)",
+  "scripts": {
+    "test": "node run.js"
+  },
+  "devDependencies": {
+    "peer": "1.0.2",
+    "peerjs": "1.5.2",
+    "playwright": "1.56.1",
+    "qrcodejs": "1.0.0"
+  }
+}

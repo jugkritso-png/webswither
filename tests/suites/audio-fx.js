@@ -1,0 +1,41 @@
+// สร้างโดยชุดทดสอบ WebMix — รันผ่าน tests/run.js (ตั้งค่า WORK, เซิร์ฟเวอร์ทดสอบ และ fixtures ให้อัตโนมัติ)
+const { fixture, out, listenRtmp, probe, ROOT } = require('../lib');
+const { chromium } = require('playwright');
+const S = process.env.WORK;
+const results = []; const ok = (n, c, x = '') => results.push(`${c ? 'PASS' : 'FAIL'}  ${n} ${x}`);
+(async () => {
+  const b = await chromium.launch({ args: ['--autoplay-policy=no-user-gesture-required'] });
+  const ctx = await b.newContext({ viewport: { width: 1440, height: 900 } });
+  await ctx.route(/fonts\.(googleapis|gstatic)|qrcode|peerjs/, r => r.fulfill({ body: '' }));
+  const p = await ctx.newPage(); const errs = []; p.on('pageerror', e => errs.push(e.message));
+  await p.goto('http://localhost:8765/index.html'); await p.evaluate(() => localStorage.clear()); await p.reload(); await p.waitForTimeout(600);
+  const fc = p.waitForEvent('filechooser'); await p.click('[data-action=add-menu]'); await p.click('.menu button:has-text("ไฟล์วิดีโอ")'); await (await fc).setFiles(S + '/loud.webm');
+  await p.waitForTimeout(800);
+  await p.evaluate(() => { const ch = window.webmix.audio.channels[0]; ch.db = 10; window.webmix.audio.applyGain(ch); });
+  const peak = () => p.evaluate(() => new Promise(r => { const m = window.webmix.audio.masterStrip; m.peak = -90; m.peakAt = 0; setTimeout(() => r(+m.peak.toFixed(1)), 2500); }));
+  ok('limiter on by default', await p.evaluate(() => window.webmix.audio.masterStrip.limiter) && await p.locator('.chip-btn.lim.is-on').count() === 1);
+  const withLim = await peak();
+  ok('limiter keeps master at/below 0 dBFS', withLim <= 0.3, `${withLim} dBFS (channel driven ~+10 dB)`);
+  ok('LIM light shows gain reduction', await p.locator('.chip-btn.lim.is-active').count() === 1);
+  await p.click('.chip-btn.lim');
+  const noLim = await peak();
+  ok('limiter off → clipping visible', noLim > 5, `${noLim} dBFS`);
+  await p.click('.chip-btn.lim');
+  // channel FX dialog
+  await p.locator('.strip:not(.master) .chip-btn.fx').click(); await p.waitForSelector('.modal [data-fx=low]');
+  const setRange = (key, v) => p.evaluate(([k, val]) => { const el = document.querySelector(`.modal [data-fx=${k}]`); el.value = val; el.dispatchEvent(new Event('input', { bubbles: true })); }, [key, v]);
+  await setRange('low', -12); await setRange('high', 6); await setRange('delayMs', 200);
+  await p.click('.modal [data-fx=comp]'); await setRange('threshold', -30); await setRange('ratio', 8);
+  await p.waitForTimeout(400);
+  const fx = await p.evaluate(() => { const c = window.webmix.audio.channels[0]; return { low: +c.low.gain.value.toFixed(1), high: +c.high.gain.value.toFixed(1), delay: +c.delay.delayTime.value.toFixed(2), comp: c.compOn, thr: c.comp.threshold.value, ratio: c.comp.ratio.value, red: +c.comp.reduction.toFixed(1) }; });
+  ok('EQ / delay / compressor applied', fx.low === -12 && fx.high === 6 && fx.delay === 0.2 && fx.comp && fx.thr === -30 && fx.ratio === 8, JSON.stringify(fx));
+  ok('compressor is reducing gain', fx.red < -3, `${fx.red} dB`);
+  ok('dialog shows values', (await p.textContent('.modal')).includes('-12 dB') && (await p.textContent('.modal')).includes('200 ms'));
+  await p.screenshot({ path: S + '/fx.png' });
+  await p.click('.modal-foot .btn:has-text("รีเซ็ต")'); await p.waitForTimeout(300);
+  const reset = await p.evaluate(() => { const c = window.webmix.audio.channels[0]; return { low: c.fx.low, comp: c.compOn, delay: c.fx.delayMs }; });
+  ok('reset clears processing', reset.low === 0 && !reset.comp && reset.delay === 0, JSON.stringify(reset));
+  ok('FX chip off after reset', await p.locator('.strip:not(.master) .chip-btn.fx.is-on').count() === 0);
+  ok('no page errors', errs.length === 0, JSON.stringify(errs));
+  console.log(results.join('\n')); await b.close();
+})().catch(e => { console.log(results.join('\n')); console.error('CRASH', e.message); process.exit(1); });

@@ -62,7 +62,7 @@ fi
 cd "$INSTALL_DIR/server/deploy"
 
 # ---------------------------------------------------------------- 3. Config
-DOMAIN="" STREAM_TOKEN="" MAX_DESTINATIONS="" VIDEO_ENCODER="" X264_PRESET="" SRT_PORTS=""
+DOMAIN="" STREAM_TOKEN="" MAX_DESTINATIONS="" VIDEO_ENCODER="" X264_PRESET="" SRT_PORTS="" TURN_SECRET="" PUBLIC_IP=""
 # shellcheck disable=SC1091
 [ -f .env ] && . ./.env
 DOMAIN="${REQ_DOMAIN:-$DOMAIN}"
@@ -77,6 +77,7 @@ if [ -z "$DOMAIN" ]; then
   DOMAIN="${PUBLIC_IP//./-}.sslip.io"
 fi
 STREAM_TOKEN="${STREAM_TOKEN:-$(openssl rand -hex 16)}"
+TURN_SECRET="${TURN_SECRET:-$(openssl rand -hex 24)}"
 
 umask 077
 cat > .env <<EOF
@@ -86,13 +87,16 @@ MAX_DESTINATIONS=$MAX_DESTINATIONS
 VIDEO_ENCODER=$VIDEO_ENCODER
 X264_PRESET=$X264_PRESET
 SRT_PORTS=$SRT_PORTS
+TURN_SECRET=$TURN_SECRET
+PUBLIC_IP=$PUBLIC_IP
 EOF
 ok "โดเมน: $DOMAIN"
 
 # ------------------------------------------------------------- 4. Firewall
 if command -v ufw >/dev/null && ufw status 2>/dev/null | grep -q "Status: active"; then
   ufw allow 80/tcp >/dev/null && ufw allow 443/tcp >/dev/null && ufw allow "${SRT_PORTS/-/:}/udp" >/dev/null
-  ok "เปิดพอร์ต 80, 443 (TCP) และ $SRT_PORTS (UDP สำหรับรับ SRT) ใน ufw แล้ว"
+  ufw allow 3478 >/dev/null && ufw allow 49160:49250/udp >/dev/null
+  ok "เปิดพอร์ต 80, 443 (TCP), $SRT_PORTS (UDP รับ SRT), 3478 และ 49160–49250/UDP (TURN) ใน ufw แล้ว"
 fi
 
 # ---------------------------------------------------------------- 5. Start
@@ -124,6 +128,7 @@ echo "นำค่านี้ไปใส่ช่อง Stream Gateway ใน 
 echo
 printf '    \033[1;36m%s\033[0m\n' "$GATEWAY_URL"
 echo
+echo "พอร์ตที่ต้องเปิดในไฟร์วอลล์ของผู้ให้บริการ: TCP 80, 443, 3478 · UDP 3478, 49160-49250, $SRT_PORTS"
 echo "รับสัญญาณ SRT:          srt://$DOMAIN:<พอร์ต $SRT_PORTS> (เปิด UDP $SRT_PORTS ในไฟร์วอลล์ของผู้ให้บริการด้วย)"
 echo "ตรวจสถานะในเบราว์เซอร์:  https://$DOMAIN/"
 echo "ดูค่านี้อีกครั้ง:         cat $INSTALL_DIR/server/deploy/gateway-url.txt"

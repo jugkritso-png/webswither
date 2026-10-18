@@ -11,8 +11,13 @@ services:
       VIDEO_ENCODER: ${VIDEO_ENCODER:-libx264}
       X264_PRESET: ${X264_PRESET:-}
       SRT_PORTS: ${SRT_PORTS:-9000-9009}
+      PEER_PORT: "8081"
+      TURN_SECRET: ${TURN_SECRET:?ต้องตั้ง TURN_SECRET ในไฟล์ .env}
+      TURN_HOST: ${DOMAIN}
+      TURN_PORT: "3478"
     expose:
       - "8080"
+      - "8081"
     ports:
       # รับสัญญาณ SRT จาก OBS / vMix / encoder (UDP)
       - "${SRT_PORTS:-9000-9009}:${SRT_PORTS:-9000-9009}/udp"
@@ -34,6 +39,36 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
+
+  # TURN server สำหรับกล้องมือถือที่อยู่หลัง NAT/ไฟร์วอลล์ (4G/5G, Wi-Fi องค์กร)
+  # ใช้ network_mode: host เพราะ TURN ต้องใช้พอร์ต UDP จำนวนมากสำหรับ relay
+  coturn:
+    image: coturn/coturn:4.6
+    restart: unless-stopped
+    network_mode: host
+    command:
+      - -n
+      - --log-file=stdout
+      - --listening-port=3478
+      - --fingerprint
+      - --use-auth-secret
+      - --static-auth-secret=${TURN_SECRET}
+      - --realm=${DOMAIN}
+      - --external-ip=${PUBLIC_IP:-}
+      - --min-port=49160
+      - --max-port=49250
+      - --no-cli
+      - --no-tls
+      - --no-dtls
+      - --no-multicast-peers
+      # ห้าม relay เข้าเครือข่ายภายในของเซิร์ฟเวอร์ (กันการใช้ TURN เจาะเครือข่ายภายใน)
+      - --denied-peer-ip=0.0.0.0-0.255.255.255
+      - --denied-peer-ip=10.0.0.0-10.255.255.255
+      - --denied-peer-ip=100.64.0.0-100.127.255.255
+      - --denied-peer-ip=127.0.0.0-127.255.255.255
+      - --denied-peer-ip=169.254.0.0-169.254.255.255
+      - --denied-peer-ip=172.16.0.0-172.31.255.255
+      - --denied-peer-ip=192.168.0.0-192.168.255.255
 
 volumes:
   caddy_data:

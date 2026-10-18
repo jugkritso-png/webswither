@@ -80,6 +80,26 @@
     if (document.visibilityState === 'visible' && wantWakeLock) keepScreenOn(true);
   });
 
+  /* ---------------------------------------------------- WebRTC signaling */
+  // ข้อมูลเซิร์ฟเวอร์ที่ฝังในลิงก์/QR กล้องมือถือ (sig): PeerJS ของ Gateway + TURN แบบรหัสชั่วคราว
+  // ไม่มี token ของ Gateway อยู่ในลิงก์ — มีแค่รหัส TURN ที่หมดอายุเอง
+  const b64url = str => btoa(unescape(encodeURIComponent(str))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  const unb64url = str => decodeURIComponent(escape(atob(str.replace(/-/g, '+').replace(/_/g, '/'))));
+  function peerOptionsFromSig(sig) {
+    const iceServers = [];
+    if (sig && sig.th) {
+      const tp = sig.tp || 3478;
+      iceServers.push({ urls: `stun:${sig.th}:${tp}` });
+      if (sig.u) iceServers.push({ urls: [`turn:${sig.th}:${tp}?transport=udp`, `turn:${sig.th}:${tp}?transport=tcp`], username: sig.u, credential: sig.c });
+    }
+    iceServers.push({ urls: 'stun:stun.l.google.com:19302' });
+    const config = { iceServers };
+    // สำหรับทดสอบ: บังคับให้ส่งผ่าน TURN เท่านั้น (localStorage webmix:forceRelay = true)
+    if (store.get('forceRelay', false)) config.iceTransportPolicy = 'relay';
+    if (!sig || !sig.h) return { config };
+    return { host: sig.h, port: sig.p, path: sig.pa || '/peerjs', secure: !!sig.s, config };
+  }
+
   /* ====================================================================== */
   /*  PHONE CAMERA MODE (?call=<studio id>)                                  */
   /* ====================================================================== */
@@ -176,7 +196,9 @@
         showMsg('โหลดระบบเชื่อมต่อ (PeerJS) ไม่สำเร็จ ตรวจสอบอินเทอร์เน็ตแล้วลองใหม่');
         return;
       }
-      peer = new Peer();
+      let sig = null;
+      try { const raw = new URLSearchParams(location.search).get('sig'); if (raw) sig = JSON.parse(unb64url(raw)); } catch (e) {}
+      peer = new Peer(peerOptionsFromSig(sig));
       peer.on('open', () => { placeCall(); openData(); });
       peer.on('error', err => {
         if (stopped) return;
@@ -1273,7 +1295,7 @@
   const audio = {
     ctx: null, master: null, monitor: null, dest: null, analyser: null, buf: null,
     channels: [],
-    masterStrip: { name: 'MASTER', db: 0, muted: false, level: -90, peak: -90, peakAt: 0, ui: null },
+    masterStrip: { name: 'MASTER', db: 0, muted: false, limiter: store.get('limiter', true), level: -90, peak: -90, peakAt: 0, ui: null },
     monitorOn: false,
 
     ensure() {
@@ -1282,15 +1304,25 @@
         if (!AC) return null;
         const ctx = this.ctx = new AC({ latencyHint: 'interactive' });
         this.master = ctx.createGain();
+        // ลิมิตเตอร์ที่ Master กันเสียงแตก (clipping) ในไฟล์บันทึกและสตรีม
+        this.limiter = ctx.createDynamicsCompressor();
+        this.limiter.threshold.value = -3;
+        this.limiter.knee.value = 0;
+        this.limiter.ratio.value = 20;
+        this.limiter.attack.value = 0.002;
+        this.limiter.release.value = 0.12;
+        this.post = ctx.createGain();
         this.analyser = ctx.createAnalyser();
         this.analyser.fftSize = 1024;
         this.dest = ctx.createMediaStreamDestination();
         this.monitor = ctx.createGain();
         this.monitor.gain.value = 0;
-        this.master.connect(this.analyser);
-        this.master.connect(this.dest);
-        this.master.connect(this.monitor);
+        this.limiter.connect(this.post);
+        this.post.connect(this.analyser);
+        this.post.connect(this.dest);
+        this.post.connect(this.monitor);
         this.monitor.connect(ctx.destination);
+        this.setLimiter(this.masterStrip.limiter);
         this.buf = new Float32Array(1024);
         this.applyMaster();
         ctx.onstatechange = updateStatus;
@@ -1299,19 +1331,57 @@
       return this.ctx;
     },
 
+    setLimiter(on) {
+      this.masterStrip.limiter = on;
+      store.set('limiter', on);
+      if (!this.ctx) return;
+      try { this.master.disconnect(); } catch (e) {}
+      this.master.connect(on ? this.limiter : this.post);
+    },
+
+    // สายสัญญาณต่อช่อง: แหล่งเสียง → ดีเลย์ → EQ ต่ำ/กลาง/สูง → (คอมเพรสเซอร์) → เฟดเดอร์ → AFV → Master
     addChannel(node, opts) {
       const ctx = this.ctx;
+      const delay = ctx.createDelay(1.0);
+      const low = ctx.createBiquadFilter(); low.type = 'lowshelf'; low.frequency.value = 120;
+      const mid = ctx.createBiquadFilter(); mid.type = 'peaking'; mid.frequency.value = 1000; mid.Q.value = 1;
+      const high = ctx.createBiquadFilter(); high.type = 'highshelf'; high.frequency.value = 8000;
+      const comp = ctx.createDynamicsCompressor();
+      comp.knee.value = 6; comp.attack.value = 0.005; comp.release.value = 0.15;
       const fader = ctx.createGain(), afv = ctx.createGain(), analyser = ctx.createAnalyser();
       analyser.fftSize = 1024;
-      node.connect(fader);
+      node.connect(delay);
+      delay.connect(low); low.connect(mid); mid.connect(high); high.connect(fader);
+      comp.connect(fader);
       fader.connect(afv);
       afv.connect(analyser);
       afv.connect(this.master);
-      const ch = { id: uid(), node, fader, afvGain: afv, analyser, db: 0, muted: false, afv: false, level: -90, peak: -90, peakAt: 0, ...opts };
+      const ch = {
+        id: uid(), node, input: delay, delay, low, mid, high, comp, fader, afvGain: afv, analyser,
+        db: 0, muted: false, afv: false, level: -90, peak: -90, peakAt: 0,
+        fx: { delayMs: 0, low: 0, mid: 0, high: 0, comp: false, threshold: -18, ratio: 4 },
+        ...opts
+      };
       this.channels.push(ch);
       this.applyGain(ch);
+      this.applyFx(ch);
       renderMixer();
       return ch;
+    },
+    applyFx(ch) {
+      if (!this.ctx) return;
+      const t = this.ctx.currentTime, f = ch.fx;
+      ch.delay.delayTime.setTargetAtTime(f.delayMs / 1000, t, 0.01);
+      ch.low.gain.setTargetAtTime(f.low, t, 0.01);
+      ch.mid.gain.setTargetAtTime(f.mid, t, 0.01);
+      ch.high.gain.setTargetAtTime(f.high, t, 0.01);
+      ch.comp.threshold.setTargetAtTime(f.threshold, t, 0.01);
+      ch.comp.ratio.setTargetAtTime(f.ratio, t, 0.01);
+      if (ch.compOn !== f.comp) {
+        ch.compOn = f.comp;
+        try { ch.high.disconnect(); } catch (e) {}
+        ch.high.connect(f.comp ? ch.comp : ch.fader);
+      }
     },
     addStream(inp, stream) {
       if (!stream.getAudioTracks().length || !this.ensure()) return;
@@ -1323,7 +1393,7 @@
       if (!stream.getAudioTracks().length) return;
       try { ch.node.disconnect(); } catch (e) {}
       ch.node = this.ctx.createMediaStreamSource(stream);
-      ch.node.connect(ch.fader);
+      ch.node.connect(ch.input);
     },
     addElement(inp, el) {
       if (!this.ensure()) return;
@@ -1387,6 +1457,10 @@
       if (!this.ctx || document.hidden) return;
       for (const ch of this.channels) this.measure(ch.analyser, ch, now);
       this.measure(this.analyser, this.masterStrip, now);
+      // ไฟ LIM / COMP สว่างเมื่อกำลังลดระดับเสียงอยู่
+      const lim = this.masterStrip.ui?.lim;
+      if (lim) lim.classList.toggle('is-active', this.masterStrip.limiter && this.limiter.reduction < -0.5);
+      for (const ch of this.channels) if (ch.ui?.fxBtn) ch.ui.fxBtn.classList.toggle('is-active', ch.fx.comp && ch.comp.reduction < -1);
     }
   };
 
@@ -1415,10 +1489,12 @@
       <div class="strip-db">${fmtDb(ch.db)} dB</div>
       <div class="strip-btns">
         <button class="chip-btn mute ${ch.muted ? 'is-on' : ''}" title="ปิดเสียง">M</button>
+        ${isMaster ? `<button class="chip-btn lim ${ch.limiter ? 'is-on' : ''}" title="ลิมิตเตอร์ — กันเสียงแตกในไฟล์บันทึกและสตรีม (ไฟแดง = กำลังลดระดับเสียง)">LIM</button>` : ''}
         ${!isMaster && ch.inputId ? `<button class="chip-btn afv ${ch.afv ? 'is-on' : ''}" title="Audio Follow Video — เปิดเสียงเฉพาะตอนภาพนี้อยู่ใน Program">AFV</button>` : ''}
+        ${!isMaster ? `<button class="chip-btn fx ${fxActive(ch) ? 'is-on' : ''}" title="ดีเลย์ / EQ / คอมเพรสเซอร์">FX</button>` : ''}
         ${!isMaster && ch.kind === 'mic' ? '<button class="chip-btn rm" title="ลบช่องเสียงนี้">✕</button>' : ''}
       </div>`;
-    ch.ui = { cover: el.querySelector('.meter-cover'), peak: el.querySelector('.meter-peak') };
+    ch.ui = { cover: el.querySelector('.meter-cover'), peak: el.querySelector('.meter-peak'), lim: el.querySelector('.lim'), fxBtn: el.querySelector('.fx') };
     const dbEl = el.querySelector('.strip-db');
     makeFader(el.querySelector('.vfader'), {
       value: dbToPos(ch.db) * 100,
@@ -1436,6 +1512,13 @@
       e.currentTarget.classList.toggle('is-on', ch.muted);
       isMaster ? audio.applyMaster() : audio.applyGain(ch);
     });
+    el.querySelector('.lim')?.addEventListener('click', e => {
+      audio.ensure();
+      audio.setLimiter(!audio.masterStrip.limiter);
+      e.currentTarget.classList.toggle('is-on', audio.masterStrip.limiter);
+      toast(audio.masterStrip.limiter ? 'เปิดลิมิตเตอร์ที่ Master' : 'ปิดลิมิตเตอร์ — ระวังเสียงแตกเมื่อระดับเกิน 0 dB', audio.masterStrip.limiter ? 'success' : 'warn');
+    });
+    el.querySelector('.fx')?.addEventListener('click', () => openChannelFx(ch));
     el.querySelector('.afv')?.addEventListener('click', e => {
       ch.afv = !ch.afv;
       e.currentTarget.classList.toggle('is-on', ch.afv);
@@ -1445,6 +1528,48 @@
       if (await confirmDialog(`ลบช่องเสียง “${ch.name}”`, 'ไมค์นี้จะถูกปิดและนำออกจากมิกเซอร์', 'ลบ')) audio.remove(ch);
     });
     return el;
+  }
+
+  const fxActive = ch => ch.fx && (ch.fx.delayMs || ch.fx.low || ch.fx.mid || ch.fx.high || ch.fx.comp);
+
+  // หน้าต่างปรับเสียงต่อช่อง — เปลี่ยนค่าแล้วได้ยินผลทันที
+  function openChannelFx(ch) {
+    const f = ch.fx;
+    const row = (key, label, min, max, step, unit) => `
+      <label class="field fx-row"><span>${label}: <b class="mono" data-val="${key}">${f[key] > 0 && unit === 'dB' ? '+' : ''}${f[key]} ${unit}</b></span>
+        <input class="range" type="range" data-fx="${key}" min="${min}" max="${max}" step="${step}" value="${f[key]}"></label>`;
+    dialog({
+      title: `ปรับเสียง — ${ch.name}`,
+      body: `
+        <div class="help"><h3>ดีเลย์ (ให้เสียงตรงกับภาพ)</h3></div>
+        ${row('delayMs', 'หน่วงเสียง', 0, 500, 10, 'ms')}
+        <div class="help"><h3>EQ</h3></div>
+        ${row('low', 'เสียงต่ำ (120 Hz)', -12, 12, 0.5, 'dB')}
+        ${row('mid', 'เสียงกลาง (1 kHz)', -12, 12, 0.5, 'dB')}
+        ${row('high', 'เสียงสูง (8 kHz)', -12, 12, 0.5, 'dB')}
+        <div class="help"><h3>คอมเพรสเซอร์ (เกลี่ยระดับเสียงพูดให้สม่ำเสมอ)</h3></div>
+        <label class="check"><input type="checkbox" data-fx="comp" ${f.comp ? 'checked' : ''}> เปิดคอมเพรสเซอร์</label>
+        ${row('threshold', 'Threshold', -50, 0, 1, 'dB')}
+        ${row('ratio', 'Ratio', 1, 20, 0.5, ': 1')}`,
+      actions: [{ label: 'รีเซ็ต', value: 'reset' }, { label: 'เสร็จสิ้น', primary: true }],
+      onOpen(modal) {
+        modal.addEventListener('input', e => {
+          const key = e.target.dataset.fx;
+          if (!key) return;
+          f[key] = e.target.type === 'checkbox' ? e.target.checked : +e.target.value;
+          const label = $(`[data-val="${key}"]`, modal);
+          if (label) label.textContent = `${f[key] > 0 && /low|mid|high|threshold/.test(key) ? '+' : ''}${f[key]} ${key === 'delayMs' ? 'ms' : key === 'ratio' ? ': 1' : 'dB'}`;
+          audio.applyFx(ch);
+          ch.ui?.fxBtn?.classList.toggle('is-on', !!fxActive(ch));
+        });
+      }
+    }).then(r => {
+      if (r?.value !== 'reset') return;
+      Object.assign(f, { delayMs: 0, low: 0, mid: 0, high: 0, comp: false, threshold: -18, ratio: 4 });
+      audio.applyFx(ch);
+      ch.ui?.fxBtn?.classList.toggle('is-on', false);
+      toast(`รีเซ็ตการปรับเสียงของ “${ch.name}” แล้ว`);
+    });
   }
 
   /* ----------------------------------------------------------- fader UI */
@@ -1499,21 +1624,55 @@
 
   /* ----------------------------------------------------------- wireless */
   const wireless = {
-    peer: null, status: 'offline', link: '', conns: new Map(), blocked: new Set(),
+    peer: null, status: 'offline', link: '', conns: new Map(), blocked: new Set(), sig: null, peerId: '',
 
-    init() {
+    // ถ้าตั้ง Stream Gateway ไว้ ใช้ PeerJS + TURN ของ Gateway (มือถือเน็ต 4G/5G เชื่อมต่อได้)
+    // ไม่เช่นนั้นใช้เซิร์ฟเวอร์ PeerJS สาธารณะ
+    async fetchSig() {
+      if (gatewayProblem()) return null;
+      try {
+        const u = new URL(settings.gateway.trim());
+        u.protocol = u.protocol === 'wss:' ? 'https:' : 'http:';
+        u.pathname = '/ice';
+        const res = await fetch(u.toString(), { cache: 'no-store' });
+        if (!res.ok) return null;
+        const j = await res.json();
+        const sig = {};
+        if (j.peer) Object.assign(sig, { h: j.peer.host, p: j.peer.port, s: j.peer.secure ? 1 : 0, pa: j.peer.path });
+        if (j.turn) Object.assign(sig, { th: j.turn.host, tp: j.turn.port, u: j.turn.username, c: j.turn.credential });
+        return Object.keys(sig).length ? sig : null;
+      } catch (e) { return null; }
+    },
+    async init() {
       let id = store.raw('webmix-host-id');
       if (!id) { id = 'webmix-' + uid().slice(0, 6); store.setRaw('webmix-host-id', id); }
+      this.sig = await this.fetchSig();
       this.create(id, 0);
+    },
+    async restart() {
+      if (this.peer && !this.peer.destroyed) this.peer.destroy();
+      this.conns.clear();
+      await this.init();
+    },
+    // ต่ออายุรหัส TURN ในลิงก์/QR (ไม่ต้องเปลี่ยน ID ของสตูดิโอ)
+    async refreshLink() {
+      if (!this.sig) return;
+      const fresh = await this.fetchSig();
+      if (fresh && fresh.h === this.sig.h && fresh.p === this.sig.p) { this.sig = fresh; this.buildLink(); }
+    },
+    buildLink() {
+      const base = `${location.origin}${location.pathname}?call=${encodeURIComponent(this.peerId)}`;
+      this.link = this.sig ? `${base}&sig=${b64url(JSON.stringify(this.sig))}` : base;
     },
     create(id, attempt) {
       if (typeof Peer === 'undefined') { this.status = 'unavailable'; updateStatus(); return; }
-      const peer = new Peer(id);
+      const peer = new Peer(id, peerOptionsFromSig(this.sig));
       this.peer = peer;
       this.status = 'connecting';
       peer.on('open', openId => {
         this.status = 'ready';
-        this.link = `${location.origin}${location.pathname}?call=${encodeURIComponent(openId)}`;
+        this.peerId = openId;
+        this.buildLink();
         updateStatus();
       });
       peer.on('disconnected', () => {
@@ -1836,6 +1995,7 @@
   }
 
   async function showWirelessDialog() {
+    await wireless.refreshLink();
     const insecure = location.protocol === 'file:' || !window.isSecureContext || (location.protocol !== 'https:' && !/^(localhost|127\.)/.test(location.hostname));
     const ready = wireless.status === 'ready';
     await dialog({
@@ -1846,7 +2006,9 @@
         ${ready ? `
           <div class="qr-box" id="qr-target"></div>
           <div class="link-row"><input class="input" id="wireless-link" readonly value="${esc(wireless.link)}"><button type="button" class="btn btn-icon" id="copy-link" title="คัดลอกลิงก์">${icon('copy')}</button></div>
-          <p class="note">ลิงก์นี้ใช้ได้ถาวรสำหรับเบราว์เซอร์เครื่องนี้ · มือถือจะเห็นไฟ Tally สีแดงเมื่อภาพของตัวเองออกอากาศ</p>`
+          <p class="note">มือถือจะเห็นไฟ Tally สีแดงเมื่อภาพของตัวเองออกอากาศ · ${wireless.sig && wireless.sig.u
+            ? 'เชื่อมต่อผ่าน Stream Gateway พร้อม TURN — มือถือที่ใช้ 4G/5G ส่งภาพได้ (ลิงก์นี้ใช้ได้ 7 วัน เปิดหน้าต่างนี้ใหม่เพื่อต่ออายุ)'
+            : 'ใช้เซิร์ฟเวอร์สาธารณะ — มือถือที่ใช้ 4G/5G หรือ Wi-Fi บางเครือข่ายอาจเชื่อมต่อไม่ได้ ตั้งค่า Stream Gateway เพื่อเปิดใช้ TURN'}</p>`
         : `<p class="note warn">${wireless.status === 'unavailable' ? 'โหลดระบบเชื่อมต่อ (PeerJS) ไม่สำเร็จ ตรวจสอบอินเทอร์เน็ตแล้วรีเฟรชหน้า' : 'กำลังเชื่อมต่อเซิร์ฟเวอร์ — ลองเปิดหน้าต่างนี้อีกครั้งในไม่กี่วินาที'}</p>`}
         <p class="modal-text">เชื่อมต่ออยู่ <b>${wireless.connectedCount()}</b> เครื่อง</p>`,
       actions: [{ label: 'ปิด', primary: true }],
@@ -1908,22 +2070,137 @@
     return new MediaRecorder(output.get(), opts);
   }
 
-  const rec = { active: false, recorder: null, chunks: [], bytes: 0, start: 0 };
+  /* ---- บันทึกลงดิสก์ระหว่างอัด (ไม่เก็บทั้งไฟล์ไว้ใน RAM) ----
+     1) โฟลเดอร์ที่เลือกไว้ (Chrome/Edge — File System Access) เขียนไฟล์ลงโฟลเดอร์โดยตรง
+     2) พื้นที่เก็บข้อมูลของเบราว์เซอร์บนดิสก์ (OPFS) แล้วดาวน์โหลดเมื่อหยุด
+     3) ถ้าเบราว์เซอร์ไม่รองรับทั้งสองแบบ เก็บใน RAM (เตือนเมื่อไฟล์ใหญ่) */
+  const idb = {
+    open() {
+      return new Promise((resolve, reject) => {
+        const req = indexedDB.open('webmix', 1);
+        req.onupgradeneeded = () => req.result.createObjectStore('kv');
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+    },
+    async get(key) {
+      const db = await this.open();
+      return new Promise(res => { const r = db.transaction('kv').objectStore('kv').get(key); r.onsuccess = () => res(r.result); r.onerror = () => res(undefined); });
+    },
+    async set(key, value) {
+      const db = await this.open();
+      return new Promise(res => { const t = db.transaction('kv', 'readwrite'); t.objectStore('kv').put(value, key); t.oncomplete = () => res(); t.onerror = () => res(); });
+    },
+    async del(key) {
+      const db = await this.open();
+      return new Promise(res => { const t = db.transaction('kv', 'readwrite'); t.objectStore('kv').delete(key); t.oncomplete = () => res(); t.onerror = () => res(); });
+    }
+  };
+  let recFolder = null;
+  const canPickFolder = typeof window.showDirectoryPicker === 'function';
+  const canUseOpfs = !!(navigator.storage && navigator.storage.getDirectory && window.FileSystemFileHandle && 'createWritable' in FileSystemFileHandle.prototype);
+  async function loadRecFolder() {
+    try { recFolder = (await idb.get('recFolder')) || null; } catch (e) { recFolder = null; }
+  }
+  async function pickRecFolder() {
+    try {
+      const dir = await window.showDirectoryPicker({ id: 'webmix-recordings', mode: 'readwrite', startIn: 'videos' });
+      recFolder = dir;
+      await idb.set('recFolder', dir);
+      return dir;
+    } catch (e) { return null; }
+  }
+  async function clearRecFolder() { recFolder = null; await idb.del('recFolder').catch(() => {}); }
 
-  function toggleRecord() {
+  async function openRecordingSink(name) {
+    if (recFolder) {
+      try {
+        let perm = await recFolder.queryPermission({ mode: 'readwrite' });
+        if (perm !== 'granted') perm = await recFolder.requestPermission({ mode: 'readwrite' });
+        if (perm === 'granted') {
+          const fh = await recFolder.getFileHandle(name, { create: true });
+          return { kind: 'folder', label: recFolder.name, writable: await fh.createWritable(), handle: fh };
+        }
+        toast('ไม่ได้รับสิทธิ์เขียนโฟลเดอร์บันทึก — ใช้พื้นที่ชั่วคราวแล้วดาวน์โหลดแทน', 'warn');
+      } catch (e) { toast('เขียนไฟล์ลงโฟลเดอร์ไม่ได้: ' + e.message, 'warn'); }
+    }
+    if (canUseOpfs) {
+      try {
+        const root = await navigator.storage.getDirectory();
+        const fh = await root.getFileHandle(name, { create: true });
+        return { kind: 'opfs', label: 'ดิสก์', writable: await fh.createWritable(), handle: fh, root };
+      } catch (e) {}
+    }
+    return { kind: 'memory', label: 'RAM', chunks: [] };
+  }
+
+  // ลบไฟล์ชั่วคราวที่ค้างจากครั้งก่อน (เกิน 1 วัน) ใน OPFS
+  async function cleanupOpfs() {
+    if (!canUseOpfs) return;
+    try {
+      const root = await navigator.storage.getDirectory();
+      for await (const [name, h] of root.entries()) {
+        if (h.kind !== 'file' || !/^WebMix-/.test(name)) continue;
+        const f = await h.getFile();
+        if (Date.now() - f.lastModified > 86400000) await root.removeEntry(name);
+      }
+    } catch (e) {}
+  }
+
+  const rec = { active: false, starting: false, recorder: null, sink: null, chain: Promise.resolve(), bytes: 0, start: 0, warnedRam: false };
+
+  async function toggleRecord() {
     if (rec.active) { rec.recorder.stop(); return; }
+    if (rec.starting) return;
     let r;
     try { r = makeRecorder(); } catch (e) { toast('เริ่มบันทึกไม่ได้: ' + e.message, 'error'); return; }
-    rec.recorder = r; rec.chunks = []; rec.bytes = 0; rec.start = Date.now(); rec.active = true;
-    r.ondataavailable = e => { if (e.data.size) { rec.chunks.push(e.data); rec.bytes += e.data.size; } };
-    r.onstop = () => {
-      const type = r.mimeType || 'video/webm';
-      const ext = type.includes('mp4') ? 'mp4' : 'webm';
-      downloadBlob(new Blob(rec.chunks, { type }), `WebMix-${stamp()}.${ext}`);
-      toast(`บันทึกไฟล์ ${fmtBytes(rec.bytes)} แล้ว`, 'success');
-      rec.active = false; rec.chunks = [];
+    rec.starting = true;
+    const type = r.mimeType || 'video/webm';
+    const name = `WebMix-${stamp()}.${type.includes('mp4') ? 'mp4' : 'webm'}`;
+    const sink = await openRecordingSink(name);
+    rec.starting = false;
+    Object.assign(rec, { recorder: r, sink, chain: Promise.resolve(), bytes: 0, start: Date.now(), active: true, warnedRam: false, failed: false });
+    r.ondataavailable = e => {
+      if (!e.data.size) return;
+      rec.bytes += e.data.size;
+      if (sink.kind === 'memory') {
+        sink.chunks.push(e.data);
+        if (!rec.warnedRam && rec.bytes > 1.5e9) {
+          rec.warnedRam = true;
+          toast('ไฟล์บันทึกเกิน 1.5 GB และเก็บอยู่ใน RAM — ควรหยุดบันทึกเป็นช่วง ๆ (เบราว์เซอร์นี้เขียนลงดิสก์ระหว่างอัดไม่ได้)', 'warn', 10000);
+        }
+      } else {
+        // เขียนต่อท้ายไฟล์ตามลำดับ
+        rec.chain = rec.chain.then(() => sink.writable.write(e.data)).catch(err => {
+          if (!rec.failed) { rec.failed = true; toast('เขียนไฟล์บันทึกไม่สำเร็จ: ' + err.message, 'error', 8000); }
+        });
+      }
+    };
+    r.onstop = async () => {
+      rec.active = false;
       setRecButton();
       updateOnAir();
+      try {
+        if (sink.kind === 'memory') {
+          downloadBlob(new Blob(sink.chunks, { type }), name);
+          sink.chunks = [];
+          toast(`บันทึกไฟล์ ${fmtBytes(rec.bytes)} แล้ว`, 'success');
+        } else {
+          await rec.chain;
+          await sink.writable.close();
+          if (sink.kind === 'folder') {
+            toast(`บันทึก ${name} (${fmtBytes(rec.bytes)}) ลงโฟลเดอร์ “${sink.label}” แล้ว`, 'success', 6000);
+          } else {
+            const file = await sink.handle.getFile();
+            downloadBlob(file, name);
+            toast(`บันทึกไฟล์ ${fmtBytes(rec.bytes)} แล้ว`, 'success');
+            // ลบไฟล์ชั่วคราวหลังเบราว์เซอร์ดาวน์โหลดเสร็จ
+            setTimeout(() => sink.root.removeEntry(name).catch(() => {}), 180000);
+          }
+        }
+      } catch (e) {
+        toast('ปิดไฟล์บันทึกไม่สำเร็จ: ' + e.message, 'error', 8000);
+      }
     };
     r.onerror = e => toast('การบันทึกผิดพลาด: ' + (e.error?.message || 'unknown'), 'error');
     r.start(1000);
@@ -1971,7 +2248,9 @@
     }
 
     for (const d of list) streamer.dests.set(d.id, { state: 'connecting', message: '', kbps: 0 });
-    if (streamer.ws) {
+    if (streamer.reconnecting && !streamer.ws) {
+      // กำลังรอเชื่อมต่อใหม่ — ปลายทางนี้จะเริ่มพร้อมกันเมื่อเชื่อมต่อได้
+    } else if (streamer.ws) {
       if (streamer.ws.readyState === WebSocket.OPEN) {
         for (const d of list) streamer.ws.send(JSON.stringify({ type: 'add', destination: destPayload(d) }));
       } else {
@@ -1987,7 +2266,14 @@
 
   function stopDestination(id) {
     const ws = streamer.ws;
-    if (!ws) return;
+    if (!ws) {
+      if (streamer.reconnecting) {
+        streamer.dests.delete(id);
+        if (!destCounts().active) stopAllStreams();
+        refreshLiveDialog();
+      }
+      return;
+    }
     if (ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: 'stop', id }));
     } else {
@@ -2000,8 +2286,69 @@
   }
 
   function stopAllStreams() {
-    streamer.ws && streamer.ws.close(1000, 'stopped by user');
+    cancelReconnect();
+    if (streamer.ws) streamer.ws.close(1000, 'stopped by user');
+    else if (streamer.reconnecting) finishStream(true, true, '');
   }
+
+  /* ---- ต่อสตรีมใหม่อัตโนมัติ ----
+     ถ้าการเชื่อมต่อกับ Gateway หลุดระหว่างไลฟ์ (เน็ตสะดุด, Gateway รีสตาร์ท) ระบบจะเชื่อมต่อใหม่
+     และเริ่มปลายทางที่ไลฟ์อยู่ให้เอง — ตรวจจับการเชื่อมต่อที่ค้าง (ไม่มีสถานะจาก Gateway เกิน 8 วินาที) ด้วย */
+  const RECONNECT_DELAYS = [1000, 2000, 4000, 8000, 10000];
+  function cancelReconnect() {
+    clearTimeout(streamer.reconnectTimer);
+    streamer.reconnectTimer = null;
+  }
+
+  function finishStream(byUser, wasLive, reason) {
+    cancelReconnect();
+    Object.assign(streamer, { active: false, state: 'idle', ws: null, recorder: null, kbps: 0, queue: [], encoder: null, reconnecting: false, attempt: 0 });
+    streamer.dests.clear();
+    setStreamButton();
+    refreshLiveDialog();
+    updateOnAir();
+    output.reset();
+    if (byUser) { if (wasLive) toast('หยุดสตรีมแล้ว'); }
+    else toast((wasLive ? 'การสตรีมหยุดลง: ' : 'เชื่อมต่อ Stream Gateway ไม่ได้: ') + (reason || 'ตรวจสอบว่า Gateway ทำงานอยู่และ URL ถูกต้อง'), 'error', 7000);
+  }
+
+  function handleDisconnect(ws, code, reason) {
+    if (streamer.ws !== ws) return;
+    ws.onopen = ws.onmessage = ws.onclose = null;
+    if (streamer.recorder && streamer.recorder.state !== 'inactive') streamer.recorder.stop();
+    const byUser = code === 1000;
+    const fatal = code === 1008; // token/URL ไม่ถูกต้อง — ลองใหม่ไปก็ไม่สำเร็จ
+    const wasLive = streamer.active || streamer.reconnecting;
+    // ปลายทางที่ยังไลฟ์อยู่ตอนหลุด จะถูกเริ่มใหม่เมื่อเชื่อมต่อได้
+    const resume = settings.destinations.filter(d => { const st = streamer.dests.get(d.id); return st && st.state !== 'stopped'; });
+    if (byUser || fatal || !wasLive || !resume.length) { finishStream(byUser, wasLive, reason); return; }
+
+    streamer.attempt = (streamer.attempt || 0) + 1;
+    const delay = RECONNECT_DELAYS[Math.min(streamer.attempt - 1, RECONNECT_DELAYS.length - 1)];
+    Object.assign(streamer, { ws: null, recorder: null, active: false, reconnecting: true, state: 'reconnecting', kbps: 0, encoder: null, queue: [] });
+    for (const d of resume) streamer.dests.set(d.id, { state: 'connecting', message: 'กำลังเชื่อมต่อใหม่…', kbps: 0 });
+    if (streamer.attempt === 1) toast('การเชื่อมต่อ Stream Gateway หลุด — กำลังเชื่อมต่อใหม่อัตโนมัติ', 'warn', 6000);
+    setStreamButton();
+    refreshLiveDialog();
+    updateOnAir();
+    cancelReconnect();
+    streamer.reconnectTimer = setTimeout(() => {
+      streamer.reconnectTimer = null;
+      if (!streamer.reconnecting) return;
+      const list = settings.destinations.filter(d => { const st = streamer.dests.get(d.id); return st && st.state !== 'stopped'; });
+      if (!list.length) { finishStream(true, true, ''); return; }
+      connectGateway(list);
+    }, delay);
+  }
+
+  // Watchdog: Gateway ส่งสถานะทุก 2 วินาที ถ้าเงียบเกิน 8 วินาทีถือว่าการเชื่อมต่อค้าง (เช่น เน็ตหลุดแบบไม่ปิด socket)
+  setInterval(() => {
+    const ws = streamer.ws;
+    if (ws && streamer.active && ws.readyState === WebSocket.OPEN && Date.now() - (streamer.lastMsgAt || 0) > 8000) {
+      handleDisconnect(ws, 4001, 'ไม่ได้รับสัญญาณตอบกลับจาก Gateway');
+      try { ws.close(); } catch (e) {}
+    }
+  }, 2000);
 
   function connectGateway(initial) {
     let r;
@@ -2013,7 +2360,8 @@
     const gw = settings.gateway.trim();
     const sep = gw.includes('?') ? '&' : '?';
     const ws = new WebSocket(`${gw}${sep}fps=${settings.fps}&vb=${settings.videoKbps}&res=${H}`);
-    Object.assign(streamer, { ws, recorder: r, state: 'connecting', sent: 0, kbps: 0, lastBytes: 0, lastAt: performance.now(), queue: [...initial] });
+    const reconnecting = !!streamer.reconnecting;
+    Object.assign(streamer, { ws, recorder: r, state: reconnecting ? 'reconnecting' : 'connecting', sent: 0, kbps: 0, lastBytes: 0, lastAt: performance.now(), queue: [...initial] });
 
     ws.onopen = () => {
       ws.send(JSON.stringify({ type: 'start', destinations: streamer.queue.map(destPayload) }));
@@ -2022,30 +2370,22 @@
         if (e.data.size && ws.readyState === WebSocket.OPEN) { ws.send(e.data); streamer.sent += e.data.size; }
       };
       r.start(1000);
-      Object.assign(streamer, { active: true, state: 'live', start: Date.now() });
+      streamer.lastMsgAt = Date.now();
+      Object.assign(streamer, { active: true, state: 'live', reconnecting: false, attempt: 0 });
+      if (!reconnecting) streamer.start = Date.now();
+      else toast('เชื่อมต่อ Stream Gateway ใหม่สำเร็จ — กำลังเริ่มปลายทางอีกครั้ง', 'success', 4000);
       setStreamButton();
       updateOnAir();
     };
     ws.onmessage = ev => {
+      streamer.lastMsgAt = Date.now();
       if (typeof ev.data !== 'string') return;
       let msg;
       try { msg = JSON.parse(ev.data); } catch (e) { return; }
       if (msg.type === 'status' && msg.encoder) onEncoderStats(msg.encoder);
       if (msg.type === 'status' && Array.isArray(msg.destinations)) onDestStatus(msg.destinations);
     };
-    ws.onclose = ev => {
-      const byUser = ev.code === 1000;
-      const wasLive = streamer.active;
-      if (r.state !== 'inactive') r.stop();
-      Object.assign(streamer, { active: false, state: 'idle', ws: null, recorder: null, kbps: 0, queue: [], encoder: null });
-      streamer.dests.clear();
-      setStreamButton();
-      refreshLiveDialog();
-      updateOnAir();
-      output.reset();
-      if (byUser) { if (wasLive) toast('หยุดสตรีมแล้ว'); }
-      else toast((wasLive ? 'การสตรีมหยุดลง: ' : 'เชื่อมต่อ Stream Gateway ไม่ได้: ') + (ev.reason || 'ตรวจสอบว่า Gateway ทำงานอยู่และ URL ถูกต้อง'), 'error', 7000);
-    };
+    ws.onclose = ev => handleDisconnect(ws, ev.code, ev.reason);
   }
 
   // ความเร็วการเข้ารหัสของ Gateway — ต่ำกว่า 1.0x แปลว่าเซิร์ฟเวอร์เข้ารหัสไม่ทัน ภาพจะกระตุก/ดีเลย์
@@ -2092,7 +2432,8 @@
     const on = streamer.state === 'live' && live > 0;
     b.classList.toggle('is-on', on);
     b.classList.toggle('is-pending', !!streamer.ws && !on);
-    b.querySelector('.label').textContent = on ? `ON AIR ${live}/${active}` : streamer.ws ? 'CONNECTING' : 'STREAM';
+    b.classList.toggle('is-pending', (!!streamer.ws && !on) || !!streamer.reconnecting);
+    b.querySelector('.label').textContent = streamer.reconnecting ? 'RECONNECTING' : on ? `ON AIR ${live}/${active}` : streamer.ws ? 'CONNECTING' : 'STREAM';
   }
 
   let liveDialog = null, closeLiveDialog = null;
@@ -2157,12 +2498,12 @@
     const enabledIdle = settings.destinations.some(d => d.enabled && !isRunning(d.id));
     const startAll = $('.dest-start-all', liveDialog), stopAll = $('.dest-stop-all', liveDialog);
     if (startAll) startAll.disabled = !enabledIdle;
-    if (stopAll) stopAll.disabled = !streamer.ws;
+    if (stopAll) stopAll.disabled = !streamer.ws && !streamer.reconnecting;
   }
 
   let onAirSince = null;
   function updateOnAir() {
-    const live = rec.active || streamer.active;
+    const live = rec.active || streamer.active || !!streamer.reconnecting;
     if (live && !onAirSince) onAirSince = Date.now();
     if (!live) onAirSince = null;
     const lamp = $('#tally-lamp');
@@ -2289,6 +2630,10 @@
           </div>
           <label class="field"><span>บิตเรตวิดีโอ (kbps) — ใช้ทั้งบันทึกและสตรีม</span>
             <input name="videoKbps" class="input" type="number" min="800" max="${MAX_KBPS}" step="100" value="${settings.videoKbps}" ${live ? 'disabled' : ''}></label>
+          <div class="field"><span>โฟลเดอร์บันทึกวิดีโอ (REC)</span>
+            <div class="link-row"><input class="input rec-folder-name" readonly value="${esc(recFolder ? recFolder.name : canPickFolder ? 'ยังไม่ได้เลือก — ดาวน์โหลดไฟล์เมื่อกดหยุด' : 'เบราว์เซอร์นี้เลือกโฟลเดอร์ไม่ได้ — ดาวน์โหลดไฟล์เมื่อกดหยุด')}">
+            ${canPickFolder ? `<button type="button" class="btn rec-folder-pick">เลือกโฟลเดอร์</button>${recFolder ? '<button type="button" class="btn btn-ghost rec-folder-clear">ล้าง</button>' : ''}` : ''}</div></div>
+          <p class="note">ระหว่างบันทึก ไฟล์ถูกเขียนลง${recFolder ? 'โฟลเดอร์ที่เลือก' : canUseOpfs ? 'ดิสก์ (พื้นที่ชั่วคราวของเบราว์เซอร์) แล้วดาวน์โหลดเมื่อหยุด' : ' RAM — บันทึกนาน ๆ ควรใช้ Chrome หรือ Edge'} จึงบันทึกนานหลายชั่วโมงได้โดยไม่กินหน่วยความจำ</p>
           <p class="note">ค่าแนะนำจะใส่ให้อัตโนมัติเมื่อเปลี่ยนความละเอียด/เฟรมเรต: 720p ≈ 4500 · 1080p ≈ 6000 · 1440p ≈ 13000 · 4K ≈ 25000 kbps (×1.5 สำหรับ 50/60 fps)</p>
           <p class="note warn res-4k-note" ${RESOLUTIONS[settings.resolution][1] >= 1440 ? '' : 'hidden'}>ความละเอียด 1440p/4K ต้องใช้คอมพิวเตอร์แรง (แนะนำ CPU 8 คอร์ขึ้นไปหรือมีการ์ดจอแยก) และอินเทอร์เน็ตขาขึ้นอย่างน้อย 1.5 เท่าของบิตเรต · Stream Gateway ควรมี 8 vCPU ขึ้นไป · Facebook และ Twitch รับสูงสุด 1080p ส่วน YouTube รับได้ถึง 4K</p>
         </div>
@@ -2321,6 +2666,15 @@
           $('.res-4k-note', modal).hidden = RESOLUTIONS[fo.resolution.value][1] < 1440;
         };
         fo.resolution.addEventListener('change', suggest);
+        $('.rec-folder-pick', modal)?.addEventListener('click', async () => {
+          const dir = await pickRecFolder();
+          if (dir) { $('.rec-folder-name', modal).value = dir.name; toast(`บันทึกวิดีโอลงโฟลเดอร์ “${dir.name}”`, 'success'); }
+        });
+        $('.rec-folder-clear', modal)?.addEventListener('click', async e => {
+          await clearRecFolder();
+          $('.rec-folder-name', modal).value = 'ยังไม่ได้เลือก — ดาวน์โหลดไฟล์เมื่อกดหยุด';
+          e.currentTarget.remove();
+        });
         fo.fps.addEventListener('change', suggest);
         const list = $('.dest-list', modal);
         const addBtn = $('.dest-add', modal);
@@ -2391,7 +2745,9 @@
         settings.fps = +f.fps.value;
         settings.videoKbps = clamp(Math.round(+f.videoKbps.value || 4500), 800, MAX_KBPS);
       }
+      const gatewayChanged = settings.gateway !== f.gateway.value.trim();
       settings.gateway = f.gateway.value.trim();
+      if (gatewayChanged) wireless.restart();
       if (readDests) settings.destinations = readDests();
       settings.rememberKey = f.rememberKey.checked;
       saveSettings();
@@ -2431,13 +2787,17 @@
       'KEY: ลบฉากเขียว/ฟ้าของแหล่งภาพที่เลือกแล้ววางทับ Program ปรับความไวด้วย Tolerance']],
     ['เสียง', ['ทุกช่องมีมิเตอร์ระดับเสียงจริง (dBFS) เฟดเดอร์ (ดับเบิลคลิก = 0 dB) และปุ่ม M ปิดเสียง',
       'AFV (Audio Follow Video) เปิดเสียงของช่องนั้นเฉพาะตอนที่ภาพของมันอยู่ใน Program',
-      'MON ฟังเสียง Master ผ่านลำโพง/หูฟังของเครื่องนี้ (ปิดไว้เป็นค่าเริ่มต้นเพื่อกันเสียงหอน)']],
+      'MON ฟังเสียง Master ผ่านลำโพง/หูฟังของเครื่องนี้ (ปิดไว้เป็นค่าเริ่มต้นเพื่อกันเสียงหอน)',
+      'LIM ลิมิตเตอร์ที่ Master กันเสียงแตกในไฟล์บันทึกและสตรีม (เปิดไว้เป็นค่าเริ่มต้น ไฟแดง = กำลังลดระดับเสียง)',
+      'FX ในแต่ละช่อง: หน่วงเสียงให้ตรงกับภาพ (0–500 ms), EQ ต่ำ/กลาง/สูง และคอมเพรสเซอร์']],
     ['บันทึก สตรีม และเอาต์พุต', ['REC บันทึก Program เป็นไฟล์ (WebM หรือ MP4 ตามเบราว์เซอร์) แล้วดาวน์โหลดอัตโนมัติเมื่อกดหยุด',
       'SRT: เลือกแพลตฟอร์ม “SRT” แล้วใส่ srt://host:port, Stream ID, รหัสผ่านเข้ารหัส (ถ้ามี) และ Latency — ใช้ส่งเข้า vMix, OBS, Wowza, Haivision หรือ SRT Server ได้ทนเน็ตกระตุกกว่า RTMP',
       'STREAM ส่งภาพไปหลายปลายทางพร้อมกัน (YouTube / Facebook / Twitch / SRT / RTMP อื่น ๆ สูงสุด 6 ช่อง) ผ่าน Stream Gateway — เพิ่มปลายทางที่ปุ่มตั้งค่า (ไอคอนแถบเลื่อน) แท็บการสตรีม',
       'กดปุ่ม STREAM เพื่อเปิดแผงปลายทาง: กด “เริ่ม” ทีละช่องเพื่อไลฟ์เฉพาะช่องนั้น หรือ “เริ่มทั้งหมด” สำหรับทุกช่องที่ติ๊กไว้ — แต่ละช่องหยุดได้อิสระ ช่องที่หลุดจะเชื่อมต่อใหม่เอง',
       'ความละเอียดสูงสุด 4K (3840×2160) ตั้งได้ที่ปุ่มตั้งค่า → เอาต์พุต ระบบใส่บิตเรตแนะนำให้ · กล้องเลือก 4K ได้ และการ์ด Input แสดงความละเอียดจริง · มือถือแตะปุ่ม HD/FHD/4K เพื่อเลือกคุณภาพ',
       'ปุ่มกล้องบันทึกภาพนิ่ง PNG · ปุ่มหน้าต่างเปิด Program Output แยกสำหรับต่อจอหรือโปรเจกเตอร์ · ปุ่มเต็มจอบนจอ Program',
+      'บันทึกลงดิสก์ระหว่างอัด (ไม่กิน RAM) — Chrome/Edge เลือกโฟลเดอร์บันทึกได้ที่ ตั้งค่า → เอาต์พุต',
+      'ถ้าการเชื่อมต่อกับ Stream Gateway หลุดระหว่างไลฟ์ ระบบจะเชื่อมต่อใหม่และเริ่มปลายทางเดิมให้เอง',
       'ระบบยังทำงานต่อแม้สลับแท็บ และกันหน้าจอดับระหว่างออกอากาศ']]
   ];
 
@@ -2534,13 +2894,15 @@
       setStat('#st-stream', `LIVE ${fmtDuration(Date.now() - streamer.start)} · ${streamer.kbps} kbps · ${live}/${active} ปลายทาง${enc}${slow ? ' · เน็ตช้า' : ''}`, slow || errors || encSlow ? 'warn' : 'live');
     } else {
       const n = settings.destinations.filter(d => d.enabled).length;
-      setStat('#st-stream', streamer.state === 'connecting' ? 'CONNECTING…' : settings.gateway ? `READY · ${n} ปลายทาง` : 'NOT SET', streamer.state === 'connecting' ? 'warn' : '');
+      setStat('#st-stream', streamer.reconnecting ? `RECONNECTING… (ครั้งที่ ${streamer.attempt})` : streamer.state === 'connecting' ? 'CONNECTING…' : settings.gateway ? `READY · ${n} ปลายทาง` : 'NOT SET',
+        streamer.reconnecting || streamer.state === 'connecting' ? 'warn' : '');
     }
-    setStat('#st-rec', rec.active ? `${fmtDuration(Date.now() - rec.start)} · ${fmtBytes(rec.bytes)}` : 'OFF', rec.active ? 'live' : '');
+    setStat('#st-rec', rec.active ? `${fmtDuration(Date.now() - rec.start)} · ${fmtBytes(rec.bytes)} → ${rec.sink.kind === 'folder' ? 'โฟลเดอร์ ' + rec.sink.label : rec.sink.label}` : 'OFF',
+      rec.active ? (rec.sink.kind === 'memory' && rec.bytes > 1.5e9 ? 'warn' : 'live') : '');
     const ws = wireless.status;
     const count = wireless.connectedCount();
     setStat('#st-wireless',
-      ws === 'ready' ? (count ? `${count} CONNECTED` : 'READY') : ws === 'connecting' ? 'CONNECTING…' : ws === 'unavailable' ? 'UNAVAILABLE' : 'OFFLINE',
+      ws === 'ready' ? `${count ? `${count} CONNECTED` : 'READY'}${wireless.sig && wireless.sig.u ? ' · TURN' : ''}` : ws === 'connecting' ? 'CONNECTING…' : ws === 'unavailable' ? 'UNAVAILABLE' : 'OFFLINE',
       ws === 'ready' ? 'ok' : ws === 'connecting' ? 'warn' : 'bad');
     const st = $('#st-audio');
     if (!audio.ctx || audio.ctx.state !== 'running') {
@@ -2718,6 +3080,8 @@
     updateTally();
 
     wireless.init();
+    loadRecFolder();
+    cleanupOpfs();
     // สร้าง Input SRT ที่ตั้งไว้ครั้งก่อนกลับมา (เชื่อมต่อ Gateway ใหม่ให้อัตโนมัติ)
     if (Array.isArray(settings.srtInputs)) {
       for (const c of settings.srtInputs) {
@@ -2731,7 +3095,7 @@
     requestAnimationFrame(rafLoop);
 
     // สำหรับดีบัก/ทดสอบอัตโนมัติ
-    window.webmix = { inputs, state, settings, overlays, audio, rec, streamer, wireless, cut, autoTransition, setPreview, tr, ftb };
+    window.webmix = { useRecFolder: dir => { recFolder = dir; }, inputs, state, settings, overlays, audio, rec, streamer, wireless, cut, autoTransition, setPreview, tr, ftb };
   }
 
   boot();

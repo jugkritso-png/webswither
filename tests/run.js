@@ -1,0 +1,91 @@
+#!/usr/bin/env node
+// ชุดทดสอบอัตโนมัติของ WebMix
+//   cd tests && npm ci && npm test            รันทุกชุด
+//   npm test -- switcher srt-input            รันเฉพาะบางชุด
+// ต้องมี ffmpeg (พร้อม libsrt) และ Chromium ของ Playwright
+// ตัวทดสอบจะเปิด: เว็บเซิร์ฟเวอร์ :8765, PeerJS :9900, Stream Gateway :8089 แล้วรันแต่ละชุดตามลำดับ
+const fs = require('fs');
+const path = require('path');
+const http = require('http');
+const { spawn, spawnSync } = require('child_process');
+const { ROOT, WORK } = require('./lib');
+
+const ALL = ['switcher', 'multistream', 'mobile', 'srt-output', 'srt-input', 'uhd-4k', 'reconnect', 'record-disk', 'audio-fx'];
+const selected = process.argv.slice(2).length ? process.argv.slice(2) : ALL;
+const SUITE_TIMEOUT = 6 * 60 * 1000;
+
+const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.svg': 'image/svg+xml', '.json': 'application/json', '.txt': 'text/plain' };
+
+function ffmpeg(args) {
+  const r = spawnSync('ffmpeg', ['-loglevel', 'error', '-y', ...args], { stdio: 'inherit' });
+  if (r.status !== 0) throw new Error('ffmpeg failed: ' + args.join(' '));
+}
+
+function makeFixtures() {
+  fs.mkdirSync(WORK, { recursive: true });
+  const f = n => path.join(WORK, n);
+  if (!fs.existsSync(f('clip.webm'))) ffmpeg(['-f', 'lavfi', '-i', 'testsrc2=size=640x360:rate=30', '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000', '-t', '4', '-c:v', 'libvpx', '-b:v', '800k', '-c:a', 'libopus', '-shortest', f('clip.webm')]);
+  if (!fs.existsSync(f('logo.png'))) ffmpeg(['-f', 'lavfi', '-i', 'testsrc=size=400x400', '-frames:v', '1', f('logo.png')]);
+  if (!fs.existsSync(f('loud.webm'))) ffmpeg(['-f', 'lavfi', '-i', 'testsrc2=size=640x360:rate=30', '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000,volume=7', '-t', '20', '-c:v', 'libvpx', '-b:v', '500k', '-c:a', 'libopus', '-b:a', '128k', '-shortest', f('loud.webm')]);
+}
+
+function staticServer(port) {
+  const server = http.createServer((req, res) => {
+    const p = decodeURIComponent(new URL(req.url, 'http://x').pathname);
+    let file = path.join(ROOT, p === '/' ? 'index.html' : p);
+    if (!file.startsWith(ROOT) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) { res.writeHead(404); return res.end(); }
+    res.writeHead(200, { 'content-type': MIME[path.extname(file)] || 'application/octet-stream' });
+    fs.createReadStream(file).pipe(res);
+  });
+  return new Promise(r => server.listen(port, () => r(server)));
+}
+
+function waitHttp(url, ms = 15000) {
+  const until = Date.now() + ms;
+  return new Promise((resolve, reject) => {
+    const tick = () => http.get(url, res => { res.resume(); resolve(); }).on('error', () => Date.now() > until ? reject(new Error('timeout ' + url)) : setTimeout(tick, 300));
+    tick();
+  });
+}
+
+function runSuite(name) {
+  return new Promise(resolve => {
+    const started = Date.now();
+    // detached = กลุ่มโปรเซสของตัวเอง เพื่อปิด ffmpeg ที่ชุดทดสอบเปิดค้างไว้ได้หมด
+    const child = spawn(process.execPath, [path.join(__dirname, 'suites', name + '.js')], { env: { ...process.env, WORK }, detached: true });
+    let output = '';
+    child.stdout.on('data', d => { output += d; });
+    child.stderr.on('data', d => { output += d; });
+    const timer = setTimeout(() => { output += '\nCRASH suite timed out'; try { process.kill(-child.pid, 'SIGKILL'); } catch (e) {} }, SUITE_TIMEOUT);
+    child.on('close', code => {
+      clearTimeout(timer);
+      try { process.kill(-child.pid, 'SIGKILL'); } catch (e) {}
+      const lines = output.split('\n').filter(l => /^(PASS|FAIL|CRASH)/.test(l));
+      const pass = lines.filter(l => l.startsWith('PASS')).length;
+      const fail = lines.filter(l => !l.startsWith('PASS'));
+      const bad = fail.length > 0 || code !== 0 || pass === 0;
+      console.log(`\n${bad ? '✗' : '✓'} ${name}  ${pass} passed${fail.length ? `, ${fail.length} failed` : ''}  (${((Date.now() - started) / 1000).toFixed(0)}s)`);
+      for (const l of bad ? output.split('\n').filter(Boolean) : []) console.log('    ' + l);
+      resolve(!bad);
+    });
+  });
+}
+
+(async () => {
+  makeFixtures();
+  const web = await staticServer(8765);
+  const { PeerServer } = require('peer');
+  const peer = PeerServer({ port: 9900, host: '127.0.0.1', path: '/' });
+  const gateway = spawn(process.execPath, ['stream-gateway.js'], { cwd: path.join(ROOT, 'server'), env: { ...process.env, PORT: '8089', STREAM_TOKEN: 'abc' }, stdio: 'ignore' });
+  await waitHttp('http://127.0.0.1:8089/');
+  await waitHttp('http://127.0.0.1:9900/');
+
+  let failed = 0;
+  for (const name of selected) if (!(await runSuite(name))) failed++;
+
+  gateway.kill('SIGKILL');
+  web.close();
+  try { peer._server && peer._server.close(); } catch (e) {}
+  console.log(`\n${failed ? `✗ ${failed} of ${selected.length} suites failed` : `✓ all ${selected.length} suites passed`}`);
+  process.exit(failed ? 1 : 0);
+})().catch(e => { console.error(e); process.exit(1); });

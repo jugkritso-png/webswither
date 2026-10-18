@@ -26,6 +26,11 @@
 //                             server → { type: 'opened', id, port } แล้ว { type: 'status', state: waiting|connecting|live|error, info }
 //   ws /srt-in/data?token=…&id=…   ข้อมูลภาพ MPEG-TS (binary) สำหรับ mpegts.js
 //   SRT_PORTS     ช่วงพอร์ต UDP สำหรับโหมด listener (ค่าเริ่มต้น 9000-9009)
+//
+// กล้องมือถือ (ดูส่วน "PeerJS ของเราเอง + TURN"):
+//   PEER_PORT     เปิด PeerJS server ของเราเองที่พอร์ตนี้ (path /peerjs)
+//   TURN_SECRET   รหัสลับร่วมกับ coturn (static-auth-secret) · TURN_HOST / TURN_PORT ที่อยู่ของ TURN
+//   GET /ice?token=…  →  { iceServers, peer: { host, port, path, secure }, expires }
 
 const http = require('http');
 const { WebSocketServer } = require('ws');
@@ -259,7 +264,51 @@ function ingestData(ws, url) {
   ws.on('close', () => s.viewers.delete(ws));
 }
 
+/* ==========================================================================
+   กล้องมือถือ: PeerJS ของเราเอง + TURN (coturn)
+   - PeerServer (สัญญาณ WebRTC) ที่ PEER_PORT — ผ่าน Caddy ที่ https://โดเมน/peerjs
+   - /ice?token=…  ให้ค่า ICE (STUN/TURN) แบบรหัสชั่วคราว (HMAC ตามมาตรฐาน TURN REST API)
+     มือถือที่ใช้ 4G/5G หรือ Wi-Fi ที่ปิดกั้น WebRTC จะส่งภาพผ่าน TURN ได้
+   ========================================================================== */
+const PEER_PORT = Number(process.env.PEER_PORT) || 0;
+const TURN_SECRET = process.env.TURN_SECRET || '';
+const TURN_HOST = process.env.TURN_HOST || '';
+const TURN_PORT = Number(process.env.TURN_PORT) || 3478;
+const ICE_TTL = 7 * 24 * 3600; // ลิงก์/QR กล้องมือถือใช้ TURN ได้ 7 วัน (เปิดหน้าต่าง QR ใหม่เพื่อต่ออายุ)
+if (PEER_PORT) {
+  const { PeerServer } = require('peer');
+  PeerServer({ port: PEER_PORT, host: process.env.PEER_HOST || '0.0.0.0', path: '/peerjs', proxied: true, allow_discovery: false });
+}
+
+function iceConfig(req) {
+  const reqHost = String(req.headers['x-forwarded-host'] || req.headers.host || '').replace(/:\d+$/, '');
+  const host = TURN_HOST || reqHost;
+  const iceServers = [];
+  let expires = 0;
+  if (TURN_SECRET && host) {
+    expires = Math.floor(Date.now() / 1000) + ICE_TTL;
+    const username = `${expires}:webmix`;
+    const credential = crypto.createHmac('sha1', TURN_SECRET).update(username).digest('base64');
+    iceServers.push({ urls: `stun:${host}:${TURN_PORT}` });
+    iceServers.push({ urls: [`turn:${host}:${TURN_PORT}?transport=udp`, `turn:${host}:${TURN_PORT}?transport=tcp`], username, credential });
+  }
+  iceServers.push({ urls: 'stun:stun.l.google.com:19302' });
+  const https = req.headers['x-forwarded-proto'] === 'https';
+  const peer = !PEER_PORT ? null : https
+    ? { host: reqHost, port: 443, path: '/peerjs', secure: true }
+    : { host: reqHost, port: PEER_PORT, path: '/peerjs', secure: false };
+  const turn = TURN_SECRET && host ? { host, port: TURN_PORT, username: iceServers[1].username, credential: iceServers[1].credential } : null;
+  return { iceServers, peer, turn, expires };
+}
+
 const server = http.createServer((req, res) => {
+  const u = new URL(req.url, 'http://localhost');
+  if (u.pathname === '/ice') {
+    const headers = { 'content-type': 'application/json', 'cache-control': 'no-store', 'access-control-allow-origin': '*' };
+    if (TOKEN && u.searchParams.get('token') !== TOKEN) { res.writeHead(403, headers); return res.end('{"error":"invalid token"}'); }
+    res.writeHead(200, headers);
+    return res.end(JSON.stringify(iceConfig(req)));
+  }
   res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' });
   res.end(`WebMix Stream Gateway: OK (${wss.clients.size} active, ${ingests.size} SRT inputs)\n`);
 });
@@ -479,4 +528,4 @@ wss.on('connection', (ws, req) => {
   });
 });
 
-console.log(`WebMix Stream Gateway (multistream) listening on ws://0.0.0.0:${PORT}${TOKEN ? ' (token required)' : ''} · SRT ${SRT_SUPPORTED ? 'enabled' : 'NOT available in this ffmpeg'}`);
+console.log(`WebMix Stream Gateway (multistream) listening on ws://0.0.0.0:${PORT}${TOKEN ? ' (token required)' : ''} · SRT ${SRT_SUPPORTED ? 'enabled' : 'NOT available in this ffmpeg'} · PeerJS ${PEER_PORT ? 'on :' + PEER_PORT : 'off'} · TURN ${TURN_SECRET ? 'on' : 'off'}`);

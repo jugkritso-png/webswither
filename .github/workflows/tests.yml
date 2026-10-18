@@ -1,0 +1,87 @@
+name: Tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    name: Syntax & config checks
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: JavaScript syntax
+        run: |
+          node --check assets/app.js
+          node --check server/stream-gateway.js
+          node --check tests/run.js
+          for f in tests/suites/*.js; do node --check "$f"; done
+      - name: Install script syntax
+        run: bash -n server/deploy/install.sh
+      - name: Docker Compose config
+        working-directory: server/deploy
+        run: |
+          printf 'DOMAIN=example.sslip.io\nSTREAM_TOKEN=t\nTURN_SECRET=s\nPUBLIC_IP=203.0.113.7\n' > .env
+          docker compose config -q
+
+  e2e:
+    name: End-to-end tests (browser + gateway + ffmpeg)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Install ffmpeg (with SRT)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg
+          ffmpeg -hide_banner -protocols | grep -qw srt
+      - name: Install gateway dependencies
+        working-directory: server
+        run: npm ci
+      - name: Install test dependencies
+        working-directory: tests
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+      - name: Run tests
+        working-directory: tests
+        run: npm test
+      - name: Upload screenshots and recordings
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-output
+          path: tests/.work/
+          retention-days: 7
+
+  gateway-image:
+    name: Gateway Docker image
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build image
+        run: docker build -t webmix-gateway server
+      - name: ffmpeg in the image supports SRT and H.264
+        run: |
+          docker run --rm --entrypoint sh webmix-gateway -c "ffmpeg -hide_banner -protocols | grep -qw srt && ffmpeg -hide_banner -encoders | grep -q libx264 && echo 'ffmpeg OK (srt + libx264)'"
+      - name: Gateway starts and answers health checks
+        run: |
+          docker run -d --name gw -e STREAM_TOKEN=t -e PEER_PORT=8081 -e TURN_SECRET=s -p 8080:8080 -p 8081:8081 webmix-gateway
+          for i in $(seq 1 30); do curl -fsS http://127.0.0.1:8080/ && break; sleep 1; done
+          curl -fsS "http://127.0.0.1:8080/ice?token=t" | grep -q '"turn"'
+          curl -fsS http://127.0.0.1:8081/peerjs/peerjs/id
+          docker logs gw

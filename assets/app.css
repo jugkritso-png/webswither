@@ -601,6 +601,12 @@ kbd {
 .chip-btn:hover { color: var(--text); border-color: #3d4556; }
 .chip-btn.mute.is-on { background: #b91c1c; border-color: #ef4444; color: #fff; }
 .chip-btn.afv.is-on { background: #b45309; border-color: #f5a524; color: #fff; }
+.chip-btn.fx.is-on { background: #1e40af; border-color: #3b82f6; color: #fff; }
+.chip-btn.lim.is-on { background: #14532d; border-color: #22c55e; color: #bbf7d0; }
+.chip-btn.lim.is-on.is-active, .chip-btn.fx.is-on.is-active { background: #b91c1c; border-color: #f87171; color: #fff; }
+.strip-btns { flex-wrap: wrap; }
+.strip-btns .chip-btn { flex: 1 1 40%; }
+.fx-row .range { margin-top: 2px; }
 .chip-btn.rm:hover { background: #b91c1c; border-color: #ef4444; color: #fff; }
 .mixer-empty { align-self: center; padding: 0 12px; color: var(--dim); font-size: 12px; max-width: 220px; }
 

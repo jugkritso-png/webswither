@@ -1,5 +1,7 @@
 # Caddy ขอใบรับรอง HTTPS ให้โดเมนนี้อัตโนมัติ และส่งต่อ WebSocket (wss://) ไปที่ Gateway
 {$DOMAIN} {
 	encode gzip
+	# PeerJS ของเราเอง (สัญญาณกล้องมือถือ)
+	reverse_proxy /peerjs* gateway:8081
 	reverse_proxy gateway:8080
 }
