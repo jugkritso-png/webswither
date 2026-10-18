@@ -18,6 +18,7 @@
 //            state: connecting | live | error | stopped
 //   (ยังรองรับแบบเดิม ?rtmp=URL สำหรับปลายทางเดียว)
 
+const http = require('http');
 const { WebSocketServer } = require('ws');
 const { spawn } = require('child_process');
 
@@ -30,7 +31,13 @@ const RETRY_MS = 5000;
 
 const maskUrl = url => url.replace(/[^/]+$/, '***');
 
-const wss = new WebSocketServer({ port: PORT });
+// หน้าเช็กสถานะ: เปิด https://โดเมน/ ในเบราว์เซอร์แล้วต้องเห็นข้อความ OK
+const server = http.createServer((req, res) => {
+  res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' });
+  res.end(`WebMix Stream Gateway: OK (${wss.clients.size} active)\n`);
+});
+const wss = new WebSocketServer({ server });
+server.listen(PORT);
 
 wss.on('connection', (ws, req) => {
   const params = new URL(req.url, 'http://localhost').searchParams;

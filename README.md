@@ -41,6 +41,45 @@
 - แต่ละปลายทางเริ่ม/หยุดได้อิสระระหว่างไลฟ์ ปลายทางที่หลุดจะเชื่อมต่อใหม่เองทุก 5 วินาที โดยไม่กระทบช่องอื่น
 - จำนวนปลายทางสูงสุดต่อการเชื่อมต่อตั้งได้ด้วยตัวแปร `MAX_DESTINATIONS` (ค่าเริ่มต้น 6)
 
+### ติดตั้ง Gateway บนเซิร์ฟเวอร์ด้วยคำสั่งเดียว (แนะนำ)
+
+ต้องมี VPS ที่ใช้ **Ubuntu 22.04 / 24.04** หรือ **Debian 12** (เช่น DigitalOcean, Vultr, Linode, AWS Lightsail, Google Cloud)
+
+| ใช้งาน | CPU / RAM ขั้นต่ำ |
+|---|---|
+| 720p30 | 2 vCPU / 2 GB |
+| 1080p30 – 1080p60 | 4 vCPU / 4 GB |
+
+1. เปิดพอร์ต **80** และ **443** (TCP) ในไฟร์วอลล์ของผู้ให้บริการ (Security Group / Firewall rules)
+2. SSH เข้าเซิร์ฟเวอร์แล้วรัน:
+
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/jugkritso-png/webswither/HEAD/server/deploy/install.sh | sudo bash
+   ```
+
+3. เมื่อเสร็จ สคริปต์จะแสดงค่า `wss://…/?token=…` — นำไปใส่ช่อง **Stream Gateway** ใน WebMix
+   (ปุ่มตั้งค่า → แท็บการสตรีม) แล้วกด STREAM ได้เลย
+
+สคริปต์จะติดตั้ง Docker, สร้างรหัสลับ (token) แบบสุ่ม และใช้ **Caddy** ขอใบรับรอง HTTPS ให้อัตโนมัติ
+ถ้าไม่มีโดเมน จะใช้ `<IP>.sslip.io` ให้เอง ถ้ามีโดเมนของตัวเอง ให้ชี้ A record มาที่ IP ของเซิร์ฟเวอร์แล้วรัน:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/jugkritso-png/webswither/HEAD/server/deploy/install.sh | sudo DOMAIN=live.example.com bash
+```
+
+การดูแลหลังติดตั้ง (ไฟล์อยู่ที่ `/opt/webmix-gateway/server/deploy`):
+
+| ต้องการ | คำสั่ง |
+|---|---|
+| ดูค่า Gateway URL อีกครั้ง | `sudo cat /opt/webmix-gateway/server/deploy/gateway-url.txt` |
+| ตรวจสถานะ | เปิด `https://โดเมน/` ในเบราว์เซอร์ ต้องเห็น `WebMix Stream Gateway: OK` |
+| ดู log | `cd /opt/webmix-gateway/server/deploy && sudo docker compose logs -f gateway` |
+| อัปเดตเป็นเวอร์ชันล่าสุด | รันคำสั่งติดตั้งเดิมซ้ำ (token และโดเมนเดิมยังอยู่) |
+| เปลี่ยน token | ลบบรรทัด `STREAM_TOKEN=` ใน `.env` แล้วรันคำสั่งติดตั้งซ้ำ |
+| ถอนการติดตั้ง | `cd /opt/webmix-gateway/server/deploy && sudo docker compose down -v && sudo rm -rf /opt/webmix-gateway` |
+
+### รันเองแบบไม่ใช้ Docker
+
 ```bash
 # ต้องมี Node.js 18+ และ ffmpeg ติดตั้งในเครื่องที่รัน Gateway
 cd server

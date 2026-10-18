@@ -1,1 +1,3 @@
 node_modules/
+server/deploy/.env
+server/deploy/gateway-url.txt
