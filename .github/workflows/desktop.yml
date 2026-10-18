@@ -201,7 +201,7 @@ jobs:
           target: google_apis
           emulator-options: -no-window -gpu swiftshader_indirect -no-boot-anim -camera-back none -camera-front none
           disable-animations: true
-          script: bash desktop/android/emulator-test.sh dist-android/WebMix-Pro_*_android-x86_64.apk test-output/android
+          script: bash desktop/android/emulator-test.sh dist-android/WebMix-Pro_*_android-x86_64.apk test-output/android desktop/android/ffmpeg-out/x86_64/ffmpeg
       - name: Upload APK
         uses: actions/upload-artifact@v7
         with:

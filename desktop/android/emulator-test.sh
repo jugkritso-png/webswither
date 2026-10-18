@@ -6,6 +6,7 @@
 set -euo pipefail
 APK=${1:?APK}
 OUT=$(mkdir -p "${2:?OUTDIR}" && cd "$2" && pwd)
+FFMPEG=${3:-}   # ffmpeg สำหรับ Android (x86_64) — ถ้าให้มา จะทดสอบ DNS + RTMPS ไป Facebook จริงด้วย
 PKG=io.github.jugkritsopng.webmix
 PORT=1935
 
@@ -59,3 +60,16 @@ FRAMES=$(ffprobe -v error -count_frames -select_streams v -show_entries stream=n
 echo "ถอดรหัสได้ $FRAMES เฟรม"
 [ "${FRAMES:-0}" -ge 150 ] || { echo "สตรีมที่ได้สั้นหรือถอดรหัสไม่ได้"; exit 1; }
 echo "Android: สตรีมผ่าน Gateway ในแอปสำเร็จ"
+
+# RTMPS ไปเซิร์ฟเวอร์จริงของ Facebook ด้วย ffmpeg ตัวเดียวกับในแอป (คีย์ปลอม): ต้องผ่าน DNS และ TLS
+# แล้วไปติดที่ Facebook ปฏิเสธคีย์ — ถ้าติดที่ DNS หรือ TLS แปลว่าการสตรีมไป Facebook/YouTube จากมือถือจะใช้ไม่ได้
+if [ -n "$FFMPEG" ]; then
+  adb push "$FFMPEG" /data/local/tmp/webmix-ffmpeg >/dev/null
+  adb shell chmod 755 /data/local/tmp/webmix-ffmpeg
+  adb shell /data/local/tmp/webmix-ffmpeg -hide_banner -loglevel verbose -re -f lavfi -i color=c=blue:s=640x360:r=30 -t 6 \
+    -c:v libx264 -preset ultrafast -g 60 -f flv rtmps://live-api-s.facebook.com:443/rbtmp/webmix-ci-invalid-key > "$OUT/rtmps.txt" 2>&1 || true
+  grep -iE "tls|rtmp|resolve|error|server|connect" "$OUT/rtmps.txt" | grep -v "^ *Stream" | tail -25
+  if grep -qiE "resolve hostname|name or service" "$OUT/rtmps.txt"; then echo "RTMPS: หาชื่อเซิร์ฟเวอร์ไม่ได้ (DNS)"; exit 1; fi
+  if grep -qiE "mbedtls_ssl_handshake returned|tls.*handshake.*fail" "$OUT/rtmps.txt"; then echo "RTMPS: TLS ไม่สำเร็จ"; exit 1; fi
+  echo "RTMPS: ผ่าน DNS + TLS ไปถึงเซิร์ฟเวอร์ Facebook แล้ว (คีย์ปลอมถูกปฏิเสธตามคาด)"
+fi

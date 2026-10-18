@@ -97,7 +97,7 @@ rm -rf "$BUILD/ffmpeg" && mkdir -p "$BUILD/ffmpeg"
   --enable-protocol=file,pipe,tcp,udp,tls,rtmp,rtmps,libsrt \
   --enable-demuxer=matroska,mov,mpegts,flv,aac,h264 \
   --enable-indev=lavfi --enable-avdevice --enable-avfilter --enable-swscale --enable-swresample \
-  --enable-decoder=vp8,vp9,h264,hevc,av1,opus,aac,mp3,pcm_s16le,pcm_f32le \
+  --enable-decoder=vp8,vp9,h264,hevc,av1,opus,aac,mp3,pcm_s16le,pcm_f32le,wrapped_avframe \
   --enable-encoder=libx264,aac,wrapped_avframe \
   --enable-muxer=flv,mpegts,null,matroska,mp4 \
   --enable-parser=h264,hevc,aac,opus,vp8,vp9,av1 \

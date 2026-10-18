@@ -97,6 +97,51 @@ pub async fn probe_ffmpeg(ffmpeg: &str) -> Option<(String, bool)> {
     Some((first, srt))
 }
 
+/// สรุปข้อผิดพลาดของ ffmpeg ปลายทาง: บรรทัดสุดท้ายมักเป็นข้อความกว้าง ๆ ("Error opening output files: I/O error")
+/// จึงเลือกบรรทัดที่บอกสาเหตุจริง และเติมคำอธิบายภาษาไทยสำหรับสาเหตุที่พบบ่อย
+pub fn explain_ffmpeg_error(lines: &[String]) -> String {
+    const GENERIC: [&str; 6] = ["Error opening output", "Conversion failed", "Error initializing", "Error writing trailer", "Error submitting", "Terminating thread"];
+    let strip = |l: &str| -> String {
+        // "[tls @ 0x5555] ข้อความ" → "tls: ข้อความ"
+        if let (Some(a), Some(b)) = (l.find('['), l.find(']')) {
+            if a == 0 && b > a {
+                let tag = l[1..b].split(" @").next().unwrap_or("").trim();
+                return format!("{}: {}", tag, l[b + 1..].trim());
+            }
+        }
+        l.to_string()
+    };
+    let specific = lines.iter().rev().find(|l| !GENERIC.iter().any(|g| l.contains(g)) && !l.contains("Last message repeated"));
+    let last = lines.last().map(String::as_str).unwrap_or("");
+    let detail = match specific {
+        Some(s) if s.as_str() != last => format!("{} ({})", strip(s), last.rsplit(": ").next().unwrap_or(last)),
+        Some(s) => strip(s),
+        None => last.to_string(),
+    };
+    let all = lines.join("\n").to_lowercase();
+    let hint = if all.contains("resolve hostname") || all.contains("name or service") || all.contains("no address associated") {
+        "หาเซิร์ฟเวอร์ไม่เจอ (DNS) — ตรวจอินเทอร์เน็ตและที่อยู่ Server"
+    } else if all.contains("mbedtls") || all.contains("tls") && (all.contains("handshake") || all.contains("certificate")) {
+        "เชื่อมต่อแบบเข้ารหัส (RTMPS/TLS) ไม่สำเร็จ"
+    } else if all.contains("connection refused") {
+        "เซิร์ฟเวอร์ปฏิเสธการเชื่อมต่อ — ตรวจที่อยู่และพอร์ต"
+    } else if all.contains("timed out") || all.contains("timeout") {
+        "เชื่อมต่อไม่ทันเวลา — อินเทอร์เน็ตหรือไฟร์วอลล์อาจบล็อกพอร์ต"
+    } else if all.contains("server error") || all.contains("unauthorized") || all.contains("publish") && all.contains("fail") {
+        "เซิร์ฟเวอร์ไม่รับสตรีม — ตรวจ Stream Key (คีย์อาจหมดอายุหรือถูกรีเซ็ต)"
+    } else {
+        ""
+    };
+    // ไม่ให้ Stream Key หลุดไปในข้อความ (ffmpeg พิมพ์ URL ปลายทางเต็ม ๆ)
+    let detail = detail
+        .split(' ')
+        .map(|w| if ["rtmp://", "rtmps://", "srt://"].iter().any(|p| w.starts_with(p)) { mask_url(w.trim_end_matches(':')) } else { w.to_string() })
+        .collect::<Vec<_>>()
+        .join(" ");
+    let out = if hint.is_empty() { detail } else { format!("{hint} · {detail}") };
+    out.chars().take(300).collect()
+}
+
 /// ตัวเข้ารหัสฮาร์ดแวร์ที่ควรลองบนระบบนี้ (เรียงตามลำดับที่อยากใช้)
 pub fn hardware_encoders() -> &'static [&'static str] {
     if cfg!(target_os = "android") {
@@ -695,15 +740,19 @@ impl Session {
                 }
             });
         }
-        let last_err = Arc::new(Mutex::new(String::new()));
+        let recent_err = Arc::new(Mutex::new(Vec::<String>::new()));
         {
             let stderr = child.stderr.take().unwrap();
-            let last_err = last_err.clone();
+            let recent_err = recent_err.clone();
             tokio::spawn(async move {
                 let mut lines = BufReader::new(stderr).lines();
                 while let Ok(Some(line)) = lines.next_line().await {
                     if !line.trim().is_empty() {
-                        *last_err.lock().unwrap() = line.trim().chars().take(200).collect();
+                        let mut r = recent_err.lock().unwrap();
+                        r.push(line.trim().chars().take(300).collect());
+                        if r.len() > 12 {
+                            r.remove(0);
+                        }
                     }
                 }
             });
@@ -739,7 +788,7 @@ impl Session {
                     false
                 } else {
                     d.state = "error";
-                    let err = last_err.lock().unwrap().clone();
+                    let err = explain_ffmpeg_error(&recent_err.lock().unwrap());
                     d.message = if err.is_empty() { format!("การเชื่อมต่อปิดลง ({:?})", status.and_then(|c| c.code())) } else { err };
                     eprintln!("{} ✕ {}: {}", s.tag, d.name, d.message);
                     true
@@ -781,6 +830,20 @@ fn field(line: &str, key: &str) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn explains_ffmpeg_errors() {
+        let l = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let dns = explain_ffmpeg_error(&l(&["[tcp @ 0x55d1] Failed to resolve hostname live-api-s.facebook.com: No address associated with hostname", "[out#0/flv @ 0x1] Error opening output rtmps://x: I/O error", "Error opening output files: I/O error"]));
+        assert!(dns.starts_with("หาเซิร์ฟเวอร์ไม่เจอ (DNS)"), "{dns}");
+        assert!(dns.contains("tcp: Failed to resolve hostname live-api-s.facebook.com"), "{dns}");
+        let tls = explain_ffmpeg_error(&l(&["[tls @ 0x1] mbedtls_ssl_handshake returned -0x7780", "Error opening output files: I/O error"]));
+        assert!(tls.starts_with("เชื่อมต่อแบบเข้ารหัส"), "{tls}");
+        assert_eq!(explain_ffmpeg_error(&l(&["something odd"])), "something odd");
+        let key = explain_ffmpeg_error(&l(&["[rtmp @ 0x1] Server error: rtmps://live-api-s.facebook.com:443/rbtmp/FB-123-SECRET bad"]));
+        assert!(!key.contains("SECRET") && key.contains("***"), "{key}");
+        assert_eq!(explain_ffmpeg_error(&[]), "");
+    }
 
     #[tokio::test]
     async fn pick_encoder_falls_back_to_x264() {
