@@ -121,7 +121,7 @@ pub fn explain_ffmpeg_error(lines: &[String]) -> String {
     let all = lines.join("\n").to_lowercase();
     let hint = if all.contains("resolve hostname") || all.contains("name or service") || all.contains("no address associated") {
         "หาเซิร์ฟเวอร์ไม่เจอ (DNS) — ตรวจอินเทอร์เน็ตและที่อยู่ Server"
-    } else if all.contains("mbedtls") || all.contains("tls") && (all.contains("handshake") || all.contains("certificate")) {
+    } else if all.contains("mbedtls") || all.contains("ssl routines") || all.contains("tls") && (all.contains("handshake") || all.contains("certificate")) {
         "เชื่อมต่อแบบเข้ารหัส (RTMPS/TLS) ไม่สำเร็จ"
     } else if all.contains("connection refused") {
         "เซิร์ฟเวอร์ปฏิเสธการเชื่อมต่อ — ตรวจที่อยู่และพอร์ต"

@@ -5,7 +5,7 @@
 #   desktop/android/build-ffmpeg.sh x86_64     OUTDIR    (สำหรับ emulator)
 #   desktop/android/build-ffmpeg.sh host       OUTDIR    คอมไพล์ให้เครื่องนี้ (Linux) ด้วยชุดคอมโพเนนต์เดียวกัน
 #
-# ผลลัพธ์: OUTDIR/ffmpeg — โปรแกรมเดียว ลิงก์ x264 / mbedtls (RTMPS) / libsrt แบบ static
+# ผลลัพธ์: OUTDIR/ffmpeg — โปรแกรมเดียว ลิงก์ x264 / OpenSSL (RTMPS) / libsrt (+ mbedtls) แบบ static
 # Android: ใช้ตัวเข้ารหัสฮาร์ดแวร์ของเครื่อง (h264_mediacodec ผ่าน NDK) ได้ และมี libx264 สำรอง
 # ไลเซนส์: ffmpeg + x264 = GPL — ซอร์สของทุกส่วนดาวน์โหลดได้จากเวอร์ชันที่ระบุด้านล่าง
 set -euo pipefail
@@ -18,7 +18,8 @@ JOBS=${JOBS:-$(nproc)}
 
 FFMPEG_TAG=n7.1.1
 X264_REF=31e19f9   # x264 stable (0.164.3108)
-MBEDTLS_VER=3.6.2
+MBEDTLS_VER=3.6.2   # ใช้กับ libsrt เท่านั้น
+OPENSSL_TAG=openssl-3.5.9
 SRT_TAG=v1.5.4
 
 mkdir -p "$WORK/src"
@@ -34,6 +35,7 @@ fetch() {
     git -C "$SRC/x264" checkout -q "$X264_REF"
   fi
   [ -d "$SRC/srt" ] || git clone -q --depth 1 --branch "$SRT_TAG" https://github.com/Haivision/srt.git "$SRC/srt"
+  [ -d "$SRC/openssl" ] || git clone -q --depth 1 --branch "$OPENSSL_TAG" https://github.com/openssl/openssl.git "$SRC/openssl"
   if [ ! -d "$SRC/mbedtls" ]; then
     curl -fsSL "https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-$MBEDTLS_VER/mbedtls-$MBEDTLS_VER.tar.bz2" | tar -xj -C "$SRC"
     mv "$SRC/mbedtls-$MBEDTLS_VER" "$SRC/mbedtls"
@@ -66,13 +68,22 @@ esac
 export PKG_CONFIG_PATH=$PREFIX/lib/pkgconfig PKG_CONFIG_LIBDIR=$PREFIX/lib/pkgconfig
 
 echo "== mbedtls $MBEDTLS_VER ($ABI)"
-# ปิด TLS 1.3: ไคลเอนต์ TLS 1.3 ของ mbedtls 3.6 จับมือกับเซิร์ฟเวอร์ RTMPS ของ Facebook ไม่ผ่าน
-# (mbedtls_ssl_handshake returned -0x7080) — ใช้ TLS 1.2 ซึ่ง Facebook / YouTube รองรับ
-rm -rf "$BUILD/mbedtls-src" && cp -r "$SRC/mbedtls" "$BUILD/mbedtls-src"
-python3 "$BUILD/mbedtls-src/scripts/config.py" -f "$BUILD/mbedtls-src/include/mbedtls/mbedtls_config.h" unset MBEDTLS_SSL_PROTO_TLS1_3
-cmake -S "$BUILD/mbedtls-src" -B "$BUILD/mbedtls" "${CMAKE_ARGS[@]}" -DENABLE_TESTING=OFF -DENABLE_PROGRAMS=OFF -DMBEDTLS_FATAL_WARNINGS=OFF -DUSE_SHARED_MBEDTLS_LIBRARY=OFF -DUSE_STATIC_MBEDTLS_LIBRARY=ON >/dev/null
+cmake -S "$SRC/mbedtls" -B "$BUILD/mbedtls" "${CMAKE_ARGS[@]}" -DENABLE_TESTING=OFF -DENABLE_PROGRAMS=OFF -DMBEDTLS_FATAL_WARNINGS=OFF -DUSE_SHARED_MBEDTLS_LIBRARY=OFF -DUSE_STATIC_MBEDTLS_LIBRARY=ON >/dev/null
 cmake --build "$BUILD/mbedtls" -j "$JOBS" >"$BUILD/mbedtls.log" 2>&1 || { tail -30 "$BUILD/mbedtls.log"; exit 1; }
 cmake --install "$BUILD/mbedtls" >/dev/null
+
+# RTMPS ของ ffmpeg ใช้ OpenSSL: ไคลเอนต์ TLS ของ mbedtls จับมือกับเซิร์ฟเวอร์ RTMPS ของ Facebook ไม่ผ่าน
+# (TLS 1.3: mbedtls_ssl_handshake returned -0x7080 · TLS 1.2: เซิร์ฟเวอร์ตัดการเชื่อมต่อ)
+echo "== $OPENSSL_TAG ($ABI)"
+rm -rf "$BUILD/openssl" && cp -r "$SRC/openssl" "$BUILD/openssl"
+OSSL_ARGS=(no-shared no-tests no-docs no-apps no-module no-engine no-legacy --prefix="$PREFIX" --libdir=lib)
+if [ "$ABI" = host ]; then
+  (cd "$BUILD/openssl" && ./Configure "${OSSL_ARGS[@]}" >/dev/null && make -j "$JOBS" build_libs >"$BUILD/openssl.log" 2>&1 && make install_dev >/dev/null) || { tail -30 "$BUILD/openssl.log"; exit 1; }
+else
+  [ "$ABI" = arm64-v8a ] && OSSL_TARGET=android-arm64 || OSSL_TARGET=android-x86_64
+  (cd "$BUILD/openssl" && export ANDROID_NDK_ROOT="$NDK" PATH="$TC/bin:$PATH" && unset CC CXX &&
+    ./Configure "$OSSL_TARGET" -D__ANDROID_API__="$API" "${OSSL_ARGS[@]}" >/dev/null && make -j "$JOBS" build_libs >"$BUILD/openssl.log" 2>&1 && make install_dev >/dev/null) || { tail -30 "$BUILD/openssl.log"; exit 1; }
+fi
 
 echo "== srt $SRT_TAG ($ABI)"
 cmake -S "$SRC/srt" -B "$BUILD/srt" "${CMAKE_ARGS[@]}" -DENABLE_APPS=OFF -DENABLE_SHARED=OFF -DENABLE_STATIC=ON -DENABLE_CXX11=ON \
@@ -97,7 +108,7 @@ rm -rf "$BUILD/ffmpeg" && mkdir -p "$BUILD/ffmpeg"
   --extra-cflags="-I$PREFIX/include" --extra-ldflags="-L$PREFIX/lib" \
   --disable-doc --disable-ffplay --disable-ffprobe --disable-debug --disable-shared --enable-static --enable-pic \
   --enable-gpl --enable-version3 --disable-everything --disable-autodetect --enable-pthreads \
-  --enable-libx264 --enable-libsrt --enable-mbedtls \
+  --enable-libx264 --enable-libsrt --enable-openssl \
   --enable-protocol=file,pipe,tcp,udp,tls,rtmp,rtmps,libsrt \
   --enable-demuxer=matroska,mov,mpegts,flv,aac,h264 \
   --enable-indev=lavfi --enable-avdevice --enable-avfilter --enable-swscale --enable-swresample \

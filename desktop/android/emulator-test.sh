@@ -64,12 +64,20 @@ echo "Android: สตรีมผ่าน Gateway ในแอปสำเร�
 # RTMPS ไปเซิร์ฟเวอร์จริงของ Facebook ด้วย ffmpeg ตัวเดียวกับในแอป (คีย์ปลอม): ต้องผ่าน DNS และ TLS
 # แล้วไปติดที่ Facebook ปฏิเสธคีย์ — ถ้าติดที่ DNS หรือ TLS แปลว่าการสตรีมไป Facebook/YouTube จากมือถือจะใช้ไม่ได้
 if [ -n "$FFMPEG" ]; then
+  FB=rtmps://live-api-s.facebook.com:443/rbtmp/webmix-ci-invalid-key
+  # TLS ผ่านแล้ว = ไม่มีข้อผิดพลาดจากชั้น tls และเปิดการเชื่อมต่อ tls ได้ (หลังจากนั้นค่อยติดที่คีย์)
+  tls_failed() { grep -qiE "resolve hostname|name or service|\[tls @[^]]*\] .*(error|returned|reset|fail|alert)|Cannot open connection tls" "$1"; }
+  # เทียบกับ ffmpeg ของเครื่อง CI (OpenSSL/GnuTLS ของ Ubuntu) — ถ้าตัวนี้ก็ไม่ผ่าน แปลว่าเครือข่ายของ CI ไปไม่ถึง Facebook
+  timeout 30 ffmpeg -hide_banner -loglevel verbose -re -f lavfi -i color=c=blue:s=640x360:r=30 -t 6 -c:v libx264 -preset ultrafast -g 60 -f flv "$FB" > "$OUT/rtmps-host.txt" 2>&1 || true
   adb push "$FFMPEG" /data/local/tmp/webmix-ffmpeg >/dev/null
   adb shell chmod 755 /data/local/tmp/webmix-ffmpeg
   adb shell /data/local/tmp/webmix-ffmpeg -hide_banner -loglevel verbose -re -f lavfi -i color=c=blue:s=640x360:r=30 -t 6 \
-    -c:v libx264 -preset ultrafast -g 60 -f flv rtmps://live-api-s.facebook.com:443/rbtmp/webmix-ci-invalid-key > "$OUT/rtmps.txt" 2>&1 || true
-  grep -iE "tls|rtmp|resolve|error|server|connect" "$OUT/rtmps.txt" | grep -v "^ *Stream" | tail -25
-  if grep -qiE "resolve hostname|name or service" "$OUT/rtmps.txt"; then echo "RTMPS: หาชื่อเซิร์ฟเวอร์ไม่ได้ (DNS)"; exit 1; fi
-  if grep -qiE "mbedtls_ssl_handshake returned|tls.*handshake.*fail" "$OUT/rtmps.txt"; then echo "RTMPS: TLS ไม่สำเร็จ"; exit 1; fi
+    -c:v libx264 -preset ultrafast -g 60 -f flv "$FB" > "$OUT/rtmps.txt" 2>&1 || true
+  echo "--- ffmpeg ของเครื่อง CI"; grep -iE "tls|rtmp|resolve|error|connect" "$OUT/rtmps-host.txt" | grep -v "^ *Stream" | tail -8
+  echo "--- ffmpeg ในแอป (Android)"; grep -iE "tls|rtmp|resolve|error|connect" "$OUT/rtmps.txt" | grep -v "^ *Stream" | tail -15
+  if tls_failed "$OUT/rtmps.txt"; then
+    if tls_failed "$OUT/rtmps-host.txt"; then echo "::warning::RTMPS: เครื่อง CI ก็ต่อ Facebook ไม่ได้ — ข้ามการตรวจนี้"; exit 0; fi
+    echo "RTMPS: ffmpeg ในแอปต่อ Facebook ไม่สำเร็จ (DNS/TLS) ขณะที่ ffmpeg ของเครื่อง CI ต่อได้"; exit 1
+  fi
   echo "RTMPS: ผ่าน DNS + TLS ไปถึงเซิร์ฟเวอร์ Facebook แล้ว (คีย์ปลอมถูกปฏิเสธตามคาด)"
 fi
