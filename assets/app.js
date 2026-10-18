@@ -341,7 +341,8 @@
     title: { headline: 'BREAKING NEWS', subtitle: 'รายงานสดจากสตูดิโอ WebMix Pro', color: '#ef4444' },
     pip: { position: 'br', size: 0.32 },
     key: { color: 'green', tolerance: 60 },
-    srtInputs: [], titlePresets: []
+    srtInputs: [], titlePresets: [],
+    renderer: 'auto'
   };
   const saved = store.get('settings', {}) || {};
   const settings = {
@@ -354,6 +355,7 @@
   if (!FRAME_RATES.includes(+settings.fps)) settings.fps = defaults.fps;
   if (!['mix', 'dip', 'wipe'].includes(settings.transition)) settings.transition = 'mix';
   if (![500, 1000, 2000].includes(+settings.duration)) settings.duration = 1000;
+  if (!['auto', 'gpu', 'cpu'].includes(settings.renderer)) settings.renderer = 'auto';
   settings.titlePresets = (Array.isArray(settings.titlePresets) ? settings.titlePresets : [])
     .filter(t => t && typeof t === 'object').slice(0, 24)
     .map(t => ({ headline: String(t.headline || '').slice(0, 80), subtitle: String(t.subtitle || '').slice(0, 120), color: TITLE_COLORS.includes(t.color) ? t.color : TITLE_COLORS[0] }));
@@ -625,12 +627,18 @@
       ctx.fillStyle = 'rgba(255,255,255,.9)';
       ctx.fillRect(x - w / 640, 0, w / 320, h);
     } else {
+      // วาดภาพ B (รวมพื้นดำ/ขอบดำของมัน) แยกก่อน แล้วผสมทั้งภาพทีเดียว — ถ้าวาดตรงด้วย globalAlpha
+      // พื้นดำของ B จะถูกผสมด้วย ทำให้ภาพกลางทรานซิชันมืดลงผิดปกติ
+      if (mixCanvas.width !== w || mixCanvas.height !== h) { mixCanvas.width = w; mixCanvas.height = h; }
+      drawSource(mixCtx, B, w, h);
       drawSource(ctx, A, w, h);
       ctx.globalAlpha = p;
-      drawSource(ctx, B, w, h);
+      ctx.drawImage(mixCanvas, 0, 0);
       ctx.globalAlpha = 1;
     }
   }
+  const mixCanvas = document.createElement('canvas');
+  const mixCtx = mixCanvas.getContext('2d');
 
   // คีย์ฉากเขียวด้วย GPU (WebGL) ที่ความละเอียดสูงสุด 1080p จึงคมพอสำหรับงาน 4K และไม่กิน CPU
   const keyer = (() => {
@@ -992,6 +1000,305 @@
     ctx.restore();
   }
 
+
+  /* ------------------------------------------------------- GPU compositor (WebGL)
+     วาด Program/Preview ด้วยการ์ดจอ: วิดีโอส่งเป็น texture ตรง ๆ, คีย์ฉากเขียว/ครอป/ความทึบทำใน shader ครั้งเดียว
+     จึงลื่นกว่า Canvas 2D มากที่ 4K และเมื่อซ้อน Overlay หลายชั้น — ภาพที่ได้คัดลอกไปที่ canvas เดิม
+     (บันทึก/สตรีม/หน้าต่าง Output/ภาพนิ่งทำงานเหมือนเดิม) ถ้าเครื่องไม่มี WebGL หรือ GPU ล่ม ใช้ Canvas 2D แทนอัตโนมัติ */
+  const gpu = (() => {
+    const canvas = document.createElement('canvas');
+    let gl = null;
+    try { gl = canvas.getContext('webgl', { alpha: false, antialias: false, premultipliedAlpha: false, preserveDrawingBuffer: false, powerPreference: 'high-performance' }); } catch (e) {}
+    if (!gl) return null;
+    const dbg = gl.getExtension('WEBGL_debug_renderer_info');
+    const rendererName = String(dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER));
+    const compile = (type, src) => {
+      const sh = gl.createShader(type);
+      gl.shaderSource(sh, src);
+      gl.compileShader(sh);
+      if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(sh));
+      return sh;
+    };
+    let prog;
+    try {
+      prog = gl.createProgram();
+      gl.attachShader(prog, compile(gl.VERTEX_SHADER, `
+        attribute vec2 a;uniform vec4 rect;uniform vec4 uv;uniform vec2 res;varying vec2 v;
+        void main(){vec2 p=rect.xy+a*rect.zw;vec2 c=p/res*2.0-1.0;gl_Position=vec4(c.x,-c.y,0.0,1.0);v=mix(uv.xy,uv.zw,a);}`));
+      gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, `precision mediump float;
+        uniform sampler2D tex;uniform float alpha;uniform float key;uniform float hard;uniform float soft;uniform float solid;uniform vec4 color;varying vec2 v;
+        void main(){
+          if(solid>0.5){gl_FragColor=vec4(color.rgb,color.a*alpha);return;}
+          vec4 c=texture2D(tex,v);
+          if(key>0.5){
+            float blue=key>1.5?1.0:0.0;
+            float k=mix(c.g,c.b,blue);
+            float o=mix(max(c.r,c.b),max(c.r,c.g),blue);
+            float d=k-o;
+            if(d>0.0){c.a*=1.0-smoothstep(soft,hard,d);if(blue>0.5){c.b=o;}else{c.g=o;}}
+          }
+          gl_FragColor=vec4(c.rgb,c.a*alpha);
+        }`));
+      gl.linkProgram(prog);
+      if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) return null;
+    } catch (e) { console.warn('GPU compositor unavailable', e); return null; }
+    gl.useProgram(prog);
+    const buf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0, 0, 1, 0, 0, 1, 1, 1]), gl.STATIC_DRAW);
+    const aLoc = gl.getAttribLocation(prog, 'a');
+    gl.enableVertexAttribArray(aLoc);
+    gl.vertexAttribPointer(aLoc, 2, gl.FLOAT, false, 0, 0);
+    const U = {};
+    for (const n of ['rect', 'uv', 'res', 'tex', 'alpha', 'key', 'hard', 'soft', 'solid', 'color']) U[n] = gl.getUniformLocation(prog, n);
+    gl.uniform1i(U.tex, 0);
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.NONE);
+
+    const textures = new Map(); // key → { tex, w, h, stamp, frame }
+    let lost = false;
+    canvas.addEventListener('webglcontextlost', e => { e.preventDefault(); lost = true; });
+    let vpW = 1, vpH = 1;
+
+    return {
+      canvas, rendererName,
+      software: /swiftshader|llvmpipe|softpipe|software|basic render/i.test(rendererName),
+      get ok() { return !lost && !gl.isContextLost(); },
+      ensureSize(w, h) { if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; } },
+      // เริ่มวาดลงพื้นที่ w×h มุมซ้ายบนของ canvas
+      begin(w, h) {
+        vpW = w; vpH = h;
+        gl.viewport(0, canvas.height - h, w, h);
+        gl.uniform2f(U.res, w, h);
+        gl.disable(gl.SCISSOR_TEST);
+        gl.clearColor(0, 0, 0, 1);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+      },
+      entry(key) {
+        let e = textures.get(key);
+        if (!e) {
+          const tex = gl.createTexture();
+          gl.bindTexture(gl.TEXTURE_2D, tex);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+          e = { tex, w: 0, h: 0, stamp: null, frame: -1 };
+          textures.set(key, e);
+        }
+        return e;
+      },
+      upload(e, src, w, h) {
+        gl.bindTexture(gl.TEXTURE_2D, e.tex);
+        try { gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, src); } catch (err) { return false; }
+        e.w = w; e.h = h;
+        return true;
+      },
+      // วาด texture ลงสี่เหลี่ยม r โดยใช้ส่วน uv ของภาพ
+      quad(e, r, uv, alpha = 1, key = null) {
+        if (r.w <= 0 || r.h <= 0 || alpha <= 0) return;
+        gl.bindTexture(gl.TEXTURE_2D, e.tex);
+        gl.uniform1f(U.solid, 0);
+        gl.uniform4f(U.rect, r.x, r.y, r.w, r.h);
+        gl.uniform4f(U.uv, uv[0], uv[1], uv[2], uv[3]);
+        gl.uniform1f(U.alpha, alpha);
+        gl.uniform1f(U.key, key ? (key.color === 'blue' ? 2 : 1) : 0);
+        if (key) { gl.uniform1f(U.hard, key.tolerance / 255); gl.uniform1f(U.soft, key.tolerance * 0.5 / 255); }
+        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      },
+      solid(r, rgba, alpha = 1) {
+        if (r.w <= 0 || r.h <= 0 || alpha <= 0) return;
+        gl.uniform1f(U.solid, 1);
+        gl.uniform4f(U.rect, r.x, r.y, r.w, r.h);
+        gl.uniform4f(U.color, rgba[0], rgba[1], rgba[2], rgba[3]);
+        gl.uniform1f(U.alpha, alpha);
+        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      },
+      drop(id) {
+        for (const [k, e] of textures) if (k.endsWith(':' + id)) { gl.deleteTexture(e.tex); textures.delete(k); }
+      }
+    };
+  })();
+
+  // ใช้ GPU หรือ Canvas 2D: auto = GPU ถ้ามีการ์ดจอจริง (ไม่ใช่ GPU จำลองด้วยซอฟต์แวร์)
+  const renderer = {
+    active: 'cpu',
+    resolve() {
+      const want = settings.renderer;
+      this.active = !gpu || !gpu.ok || want === 'cpu' ? 'cpu' : want === 'gpu' ? 'gpu' : gpu.software ? 'cpu' : 'gpu';
+      return this.active;
+    },
+    label() { return this.active === 'gpu' ? 'GPU' : 'CPU'; }
+  };
+
+  const intersect = (a, b) => {
+    const x = Math.max(a.x, b.x), y = Math.max(a.y, b.y);
+    return { x, y, w: Math.min(a.x + a.w, b.x + b.w) - x, h: Math.min(a.y + a.h, b.y + b.h) - y };
+  };
+  const fitRect = (sw, sh, box) => {
+    const k = Math.min(box.w / sw, box.h / sh), w = sw * k, h = sh * k;
+    return { x: box.x + (box.w - w) / 2, y: box.y + (box.h - h) / 2, w, h };
+  };
+
+  // แหล่งภาพที่วาดด้วย 2D (Bars, Slate, นาฬิกา, Title, NO SIGNAL) วาดใหม่เฉพาะเมื่อเนื้อหาเปลี่ยน แล้วส่งขึ้น GPU
+  const genCanvases = new Map();
+  function genTexture(key, stamp, w, h, draw) {
+    const e = gpu.entry(key);
+    if (e.stamp === stamp && e.w === w && e.h === h) return e;
+    let c = genCanvases.get(key);
+    if (!c) { c = document.createElement('canvas'); genCanvases.set(key, c); }
+    if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
+    const ctx = c.getContext('2d');
+    ctx.clearRect(0, 0, w, h);
+    draw(ctx, w, h);
+    gpu.upload(e, c, w, h);
+    e.stamp = stamp;
+    return e;
+  }
+
+  // texture ของ Input: คืน { e, full } (full = ภาพเต็มเฟรม 16:9) หรือ null ถ้าไม่มีอะไรให้วาด
+  function inputTexture(inp, transparent) {
+    const sec = Math.floor(Date.now() / 1000);
+    const GW = Math.min(W, 1920), GH = Math.round(GW * 9 / 16);
+    const noSignal = () => transparent ? null
+      : { e: genTexture('ns:' + inp.id, `${inp.name}|${inp.srtState}|${inp.missing}|${inp.status}`, GW, GH, (c, w, h) => drawNoSignal(c, w, h, inp)), full: true };
+    switch (inp.type) {
+      case 'black': return transparent ? { solid: [0, 0, 0, 1] } : { solid: [0, 0, 0, 1] };
+      case 'bars': return { e: genTexture('g:' + inp.id, 'bars', GW, GH, drawBars), full: true };
+      case 'slate': case 'clock':
+        return { e: genTexture('g:' + inp.id, `${inp.text}|${sec}`, GW, GH, (c, w, h) => drawSource(c, inp, w, h)), full: true };
+      case 'title':
+        return { e: genTexture('g:' + inp.id, JSON.stringify(inp.title), W, H, (c, w, h) => drawTitleInput(c, inp, w, h)), full: true, under: transparent ? null : [0, 0, 0, 1] };
+      case 'image': {
+        if (inp.status !== 'live' || !inp.el.naturalWidth) return noSignal();
+        const e = gpu.entry('i:' + inp.id);
+        if (e.stamp !== inp.el.src) { gpu.upload(e, inp.el, inp.el.naturalWidth, inp.el.naturalHeight); e.stamp = inp.el.src; }
+        return { e };
+      }
+      default: {
+        const v = inp.el;
+        if (!(inp.status === 'live' && v && v.readyState >= 2 && v.videoWidth)) return noSignal();
+        const e = gpu.entry('v:' + inp.id);
+        if (e.frame !== frameNo) { if (!gpu.upload(e, v, v.videoWidth, v.videoHeight)) return noSignal(); e.frame = frameNo; }
+        return { e };
+      }
+    }
+  }
+
+  // วาด Input ให้พอดีกรอบ box โดยแสดงเฉพาะส่วนที่อยู่ใน clip
+  function glDrawInput(inp, box, clip, alpha = 1, opts = {}) {
+    if (!inp) return;
+    const t = inputTexture(inp, !!opts.transparent);
+    if (!t) return;
+    const vis = intersect(box, clip);
+    if (vis.w <= 0 || vis.h <= 0) return;
+    if (t.solid) { gpu.solid(vis, t.solid, alpha); return; }
+    if (t.under) gpu.solid(vis, t.under, alpha);
+    const f = t.full ? box : fitRect(t.e.w, t.e.h, box);
+    const r = intersect(f, clip);
+    if (r.w <= 0 || r.h <= 0) return;
+    gpu.quad(t.e, r, [(r.x - f.x) / f.w, (r.y - f.y) / f.h, (r.x + r.w - f.x) / f.w, (r.y + r.h - f.y) / f.h], alpha, opts.key || null);
+  }
+
+  function glProgramBase(w, h) {
+    const full = { x: 0, y: 0, w, h };
+    const A = byId(state.programId), B = byId(state.previewId);
+    const p = tr.auto ? easeInOut(tr.progress) : tr.progress;
+    if (p <= 0 || !B || A === B) { glDrawInput(A, full, full); return; }
+    if (settings.transition === 'dip') {
+      if (p < 0.5) { glDrawInput(A, full, full); gpu.solid(full, [0, 0, 0, 1], p * 2); }
+      else { glDrawInput(B, full, full); gpu.solid(full, [0, 0, 0, 1], (1 - p) * 2); }
+    } else if (settings.transition === 'wipe') {
+      glDrawInput(A, full, full);
+      glDrawInput(B, full, { x: 0, y: 0, w: w * p, h });
+      gpu.solid({ x: w * p - w / 640, y: 0, w: w / 320, h }, [1, 1, 1, 0.9]);
+    } else {
+      glDrawInput(A, full, full);
+      glDrawInput(B, full, full, p);
+    }
+  }
+
+  // Overlay ตามตำแหน่ง/ครอป/คีย์ของ Input พร้อมเอฟเฟกต์เข้า-ออก (เหมือน drawOverlayChannel)
+  function glOverlayChannel(c, w, h, a) {
+    const inp = byId(c.inputId);
+    if (!inp || a <= 0) return;
+    const L = layoutOf(inp), e = c.effect === 'cut' ? 1 : easeInOut(a);
+    let { box, vis } = layoutRects(L, w, h);
+    let alpha = L.opacity;
+    const move = (dx, dy) => { box = { ...box, x: box.x + dx, y: box.y + dy }; vis = { ...vis, x: vis.x + dx, y: vis.y + dy }; };
+    switch (c.effect) {
+      case 'fade': alpha *= e; break;
+      case 'zoom': {
+        const cx = vis.x + vis.w / 2, cy = vis.y + vis.h / 2, k = 0.5 + 0.5 * e;
+        const sc = r => ({ x: cx + (r.x - cx) * k, y: cy + (r.y - cy) * k, w: r.w * k, h: r.h * k });
+        box = sc(box); vis = sc(vis); alpha *= e;
+        break;
+      }
+      case 'slide-left': move((1 - e) * (w - vis.x), 0); break;
+      case 'slide-right': move(-(1 - e) * (vis.x + vis.w), 0); break;
+      case 'slide-up': move(0, (1 - e) * (h - vis.y)); break;
+      case 'slide-down': move(0, -(1 - e) * (vis.y + vis.h)); break;
+      case 'wipe': vis = { ...vis, w: vis.w * e }; break;
+    }
+    glDrawInput(inp, box, vis, alpha, { transparent: true, key: L.key !== 'none' ? { color: L.key, tolerance: L.tolerance } : null });
+    if (L.border && L.scale < 1) {
+      const t = Math.max(1, 3 * h / 720), col = [1, 1, 1, 0.92];
+      gpu.solid({ x: vis.x - t / 2, y: vis.y - t / 2, w: vis.w + t, h: t }, col, alpha);
+      gpu.solid({ x: vis.x - t / 2, y: vis.y + vis.h - t / 2, w: vis.w + t, h: t }, col, alpha);
+      gpu.solid({ x: vis.x - t / 2, y: vis.y, w: t, h: vis.h }, col, alpha);
+      gpu.solid({ x: vis.x + vis.w - t / 2, y: vis.y, w: t, h: vis.h }, col, alpha);
+    }
+  }
+
+  // TITLE / PIP / KEY แบบเดิม
+  function glClassicOverlays(w, h) {
+    const full = { x: 0, y: 0, w, h };
+    if (overlays.key.on) {
+      const src = byId(overlays.key.sourceId);
+      if (src) glDrawInput(src, full, full, 1, { key: settings.key });
+    }
+    if (overlays.pip.on) {
+      const src = byId(overlays.pip.sourceId);
+      if (src) {
+        const r = pipRect(w, h), s = h / 720, b = 3 * s;
+        gpu.solid({ x: r.x - 6 * s, y: r.y + 2 * s, w: r.w + 12 * s, h: r.h + 12 * s }, [0, 0, 0, 0.35]);
+        gpu.solid(r, [0, 0, 0, 1]);
+        glDrawInput(src, r, r);
+        const col = [1, 1, 1, 0.9];
+        gpu.solid({ x: r.x - b / 2, y: r.y - b / 2, w: r.w + b, h: b }, col);
+        gpu.solid({ x: r.x - b / 2, y: r.y + r.h - b / 2, w: r.w + b, h: b }, col);
+        gpu.solid({ x: r.x - b / 2, y: r.y, w: b, h: r.h }, col);
+        gpu.solid({ x: r.x + r.w - b / 2, y: r.y, w: b, h: r.h }, col);
+      }
+    }
+    if (overlays.title.anim > 0) {
+      const e = genTexture('title:main', `${overlays.title.anim.toFixed(3)}|${JSON.stringify(settings.title)}`, W, H, (c, cw, ch) => drawTitle(c, cw, ch, overlays.title.anim));
+      gpu.quad(e, full, [0, 0, 1, 1]);
+    }
+  }
+
+  function gpuFrame() {
+    gpu.ensureSize(W, H);
+    // Preview ก่อน (พื้นที่เล็ก) แล้วคัดลอกออก จากนั้นวาด Program เต็มขนาด
+    gpu.begin(PW, PH);
+    const pfull = { x: 0, y: 0, w: PW, h: PH };
+    glDrawInput(byId(state.previewId), pfull, pfull);
+    for (const c of ovl) {
+      if (c.anim > 0) glOverlayChannel(c, PW, PH, c.anim);
+      else if (c.staged && byId(c.inputId)) glOverlayChannel(c, PW, PH, 1);
+    }
+    glClassicOverlays(PW, PH);
+    pvwCtx.drawImage(gpu.canvas, 0, 0, PW, PH, 0, 0, PW, PH);
+
+    gpu.begin(W, H);
+    glProgramBase(W, H);
+    for (const c of ovl) if (c.anim > 0) glOverlayChannel(c, W, H, c.anim);
+    glClassicOverlays(W, H);
+    if (ftb.level > 0) gpu.solid({ x: 0, y: 0, w: W, h: H }, [0, 0, 0, 1], ftb.level);
+    pgmCtx.drawImage(gpu.canvas, 0, 0);
+  }
+
   /* ----------------------------------------------------------- render loop */
   const thumbs = new Map();
   let lastFrame = 0, lastThumbs = 0, frameCount = 0, fps = 0, fpsSince = performance.now(), renderMs = 0, frameNo = 0;
@@ -1014,16 +1321,29 @@
       overlays.title.anim = tTarget > overlays.title.anim ? Math.min(1, overlays.title.anim + step) : Math.max(0, overlays.title.anim - step);
     }
 
-    updateKeyFrame();
+    let drawn = false;
+    if (renderer.active === 'gpu') {
+      if (gpu.ok) {
+        try { gpuFrame(); drawn = true; } catch (e) { console.warn('GPU render failed', e); }
+      }
+      if (!drawn) {
+        // GPU ล่ม (เช่นไดรเวอร์รีเซ็ต) — สลับไปวาดด้วย CPU ทันทีโดยภาพไม่ดับ
+        renderer.active = 'cpu';
+        toast('ระบบวาดภาพด้วย GPU หยุดทำงาน — สลับไปใช้ CPU แล้ว', 'warn', 6000);
+        updateStatus();
+      }
+    }
+    if (!drawn) {
+      updateKeyFrame();
+      drawProgramBase(pgmCtx, W, H);
+      drawOverlayChannels(pgmCtx, W, H, false);
+      drawOverlays(pgmCtx, W, H);
+      if (ftb.level > 0) { pgmCtx.fillStyle = `rgba(0,0,0,${ftb.level})`; pgmCtx.fillRect(0, 0, W, H); }
 
-    drawProgramBase(pgmCtx, W, H);
-    drawOverlayChannels(pgmCtx, W, H, false);
-    drawOverlays(pgmCtx, W, H);
-    if (ftb.level > 0) { pgmCtx.fillStyle = `rgba(0,0,0,${ftb.level})`; pgmCtx.fillRect(0, 0, W, H); }
-
-    drawSource(pvwCtx, byId(state.previewId), PW, PH);
-    drawOverlayChannels(pvwCtx, PW, PH, true);
-    drawOverlays(pvwCtx, PW, PH);
+      drawSource(pvwCtx, byId(state.previewId), PW, PH);
+      drawOverlayChannels(pvwCtx, PW, PH, true);
+      drawOverlays(pvwCtx, PW, PH);
+    }
 
     if (now - lastThumbs > 100) {
       lastThumbs = now;
@@ -1321,6 +1641,7 @@
     if (inp.type === 'srt') closeSrtInput(inp);
     if (forget && (inp.type === 'media' || inp.type === 'image')) mediaStore.del(inp.id);
     inp.removed = true;
+    if (gpu) gpu.drop(inp.id);
     audio.removeForInput(inp.id);
     if (inputs.includes(inp)) inputs.splice(inputs.indexOf(inp), 1);
   }
@@ -3205,6 +3526,12 @@
           </div>
           <label class="field"><span>บิตเรตวิดีโอ (kbps) — ใช้ทั้งบันทึกและสตรีม</span>
             <input name="videoKbps" class="input" type="number" min="800" max="${MAX_KBPS}" step="100" value="${settings.videoKbps}" ${live ? 'disabled' : ''}></label>
+          <label class="field"><span>ระบบวาดภาพ</span><select name="renderer" class="select">
+            <option value="auto" ${settings.renderer === 'auto' ? 'selected' : ''}>อัตโนมัติ (แนะนำ) — ตอนนี้ใช้ ${gpu && !gpu.software ? 'การ์ดจอ (GPU)' : 'CPU'}</option>
+            <option value="gpu" ${settings.renderer === 'gpu' ? 'selected' : ''} ${gpu ? '' : 'disabled'}>การ์ดจอ (GPU / WebGL) — ลื่นที่ 4K และ Overlay หลายชั้น</option>
+            <option value="cpu" ${settings.renderer === 'cpu' ? 'selected' : ''}>CPU (Canvas 2D) — ใช้เมื่อการ์ดจอมีปัญหา</option>
+          </select></label>
+          <p class="note">${gpu ? `การ์ดจอที่พบ: ${esc(gpu.rendererName)}${gpu.software ? ' (เป็นการ์ดจอจำลองด้วยซอฟต์แวร์ — โหมดอัตโนมัติจึงใช้ CPU)' : ''}` : 'เบราว์เซอร์นี้ใช้ WebGL ไม่ได้ — วาดภาพด้วย CPU'}</p>
           <div class="field"><span>โฟลเดอร์บันทึกวิดีโอ (REC)</span>
             <div class="link-row"><input class="input rec-folder-name" readonly value="${esc(recFolder ? recFolder.name : canPickFolder ? 'ยังไม่ได้เลือก — ดาวน์โหลดไฟล์เมื่อกดหยุด' : 'เบราว์เซอร์นี้เลือกโฟลเดอร์ไม่ได้ — ดาวน์โหลดไฟล์เมื่อกดหยุด')}">
             ${canPickFolder ? `<button type="button" class="btn rec-folder-pick">เลือกโฟลเดอร์</button>${recFolder ? '<button type="button" class="btn btn-ghost rec-folder-clear">ล้าง</button>' : ''}` : ''}</div></div>
@@ -3325,6 +3652,8 @@
       if (gatewayChanged) wireless.restart();
       if (readDests) settings.destinations = readDests();
       settings.rememberKey = f.rememberKey.checked;
+      if (['auto', 'gpu', 'cpu'].includes(f.renderer.value)) settings.renderer = f.renderer.value;
+      renderer.resolve();
       saveSettings();
       if (before !== `${settings.resolution}|${settings.fps}`) applyResolution();
       updateStatus();
@@ -3382,6 +3711,7 @@
       'SRT: เลือกแพลตฟอร์ม “SRT” แล้วใส่ srt://host:port, Stream ID, รหัสผ่านเข้ารหัส (ถ้ามี) และ Latency — ใช้ส่งเข้า vMix, OBS, Wowza, Haivision หรือ SRT Server ได้ทนเน็ตกระตุกกว่า RTMP',
       'STREAM ส่งภาพไปหลายปลายทางพร้อมกัน (YouTube / Facebook / Twitch / SRT / RTMP อื่น ๆ สูงสุด 6 ช่อง) ผ่าน Stream Gateway — เพิ่มปลายทางที่ปุ่มตั้งค่า (ไอคอนแถบเลื่อน) แท็บการสตรีม',
       'กดปุ่ม STREAM เพื่อเปิดแผงปลายทาง: กด “เริ่ม” ทีละช่องเพื่อไลฟ์เฉพาะช่องนั้น หรือ “เริ่มทั้งหมด” สำหรับทุกช่องที่ติ๊กไว้ — แต่ละช่องหยุดได้อิสระ ช่องที่หลุดจะเชื่อมต่อใหม่เอง',
+      'ระบบวาดภาพ: ตั้งค่า → เอาต์พุต เลือกอัตโนมัติ/GPU/CPU — GPU (การ์ดจอ) ลื่นกว่ามากที่ 4K และ Overlay หลายชั้น ถ้าการ์ดจอล่มระบบสลับไป CPU เองโดยภาพไม่ดับ',
       'ความละเอียดสูงสุด 4K (3840×2160) ตั้งได้ที่ปุ่มตั้งค่า → เอาต์พุต ระบบใส่บิตเรตแนะนำให้ · กล้องเลือก 4K ได้ และการ์ด Input แสดงความละเอียดจริง · มือถือแตะปุ่ม HD/FHD/4K เพื่อเลือกคุณภาพ',
       'ปุ่มกล้องบันทึกภาพนิ่ง PNG · ปุ่มหน้าต่างเปิด Program Output แยกสำหรับต่อจอหรือโปรเจกเตอร์ · ปุ่มเต็มจอบนจอ Program',
       'บันทึกลงดิสก์ระหว่างอัด (ไม่กิน RAM) — Chrome/Edge เลือกโฟลเดอร์บันทึกได้ที่ ตั้งค่า → เอาต์พุต',
@@ -3473,7 +3803,7 @@
   }
 
   function updateStatus() {
-    setStat('#st-engine', `${fps ? fps.toFixed(0) : '--'} fps · ${renderMs.toFixed(1)} ms`, fps && fps < settings.fps * 0.8 ? 'warn' : 'ok');
+    setStat('#st-engine', `${renderer.label()} · ${fps ? fps.toFixed(0) : '--'} fps · ${renderMs.toFixed(1)} ms`, fps && fps < settings.fps * 0.8 ? 'warn' : 'ok');
     setStat('#st-output', `${W}×${H} ${formatTag(H, settings.fps)} · ${settings.videoKbps} kbps`, 'ok');
     if (streamer.state === 'live') {
       const slow = streamer.ws && streamer.ws.bufferedAmount > 2e6;
@@ -4002,6 +4332,7 @@
     initControls();
     ticker.init();
     applyResolution();
+    renderer.resolve();
 
     // เปิดโชว์ที่บันทึกไว้ครั้งก่อน — ถ้าไม่มี เริ่มด้วยแหล่งภาพพื้นฐาน
     const savedShow = store.get('show', null);
@@ -4036,7 +4367,7 @@
     requestAnimationFrame(rafLoop);
 
     // สำหรับดีบัก/ทดสอบอัตโนมัติ
-    window.webmix = { show, ovl, setChannel, toggleInputOverlay, useRecFolder: dir => { recFolder = dir; }, inputs, state, settings, overlays, audio, rec, streamer, wireless, cut, autoTransition, setPreview, tr, ftb };
+    window.webmix = { renderer, gpu, setRenderer: v => { settings.renderer = v; renderer.resolve(); updateStatus(); }, show, ovl, setChannel, toggleInputOverlay, useRecFolder: dir => { recFolder = dir; }, inputs, state, settings, overlays, audio, rec, streamer, wireless, cut, autoTransition, setPreview, tr, ftb };
   }
 
   boot();
