@@ -486,8 +486,8 @@ kbd {
 .card.is-pgm .card-tally { display: block; background: var(--pgm); }
 .card.is-pvw .card-tally { display: block; background: #16a34a; }
 .card-actions {
-  position: absolute; right: 6px; bottom: 6px;
-  display: flex; gap: 4px;
+  position: absolute; right: 6px; bottom: 6px; left: 6px;
+  display: flex; flex-wrap: wrap-reverse; justify-content: flex-end; gap: 4px;
   opacity: 0;
   transition: opacity .12s;
 }
@@ -503,6 +503,7 @@ kbd {
   padding: 0;
 }
 .mini:hover { background: #2a303c; }
+.mini.txt { width: auto; min-width: 26px; padding: 0 5px; font: 700 11px var(--mono); }
 .mini.is-on { background: #234db0; border-color: #5b8cf2; }
 .mini.danger:hover { background: #b91c1c; border-color: #f87171; }
 .mini.warn { color: var(--amber); border-color: rgba(245, 165, 36, .6); }

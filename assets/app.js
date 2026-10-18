@@ -8,7 +8,8 @@
   const { $, $$, clamp, uid, pad2, esc, icon, fmtDuration, fmtBytes, stamp, easeInOut, easeOut, isIOS, FONT, MONO,
     downloadBlob, store, toast, keepScreenOn, b64url, unb64url, peerOptionsFromSig, initCaller,
     fillBlack, drawFit, fitFont, drawBars, drawSlate, drawClock, RELINK_HINT, drawNoSignal, drawTitle, TITLE_STYLES, drawTitleInput,
-    createKeyer, createGpu, idb, canUseOpfs, mediaStore, createMultiview, SHORTCUTS, MANUAL } = window.WebMix;
+    createKeyer, createGpu, idb, canUseOpfs, mediaStore, createMultiview, SHORTCUTS, MANUAL,
+    TIMER_MODES, TIMER_STYLES, timerText, drawTimer, drawScore, TICKER_BAR, drawTickerBar, drawTicker, sheetCsvUrl, parseCsv } = window.WebMix;
   /* ====================================================================== */
   /*  PHONE CAMERA MODE (?call=<studio id>)                                  */
   /* ====================================================================== */
@@ -189,8 +190,22 @@
     wireless: { icon: 'phone', label: 'MOBILE' },
     srt: { icon: 'broadcast', label: 'SRT' },
     title: { icon: 'type', label: 'TITLE' },
-    guest: { icon: 'headphones', label: 'GUEST' }
+    guest: { icon: 'headphones', label: 'GUEST' },
+    timer: { icon: 'clock', label: 'TIMER' },
+    score: { icon: 'grid', label: 'SCORE' },
+    ticker: { icon: 'type', label: 'TICKER' }
   };
+  // กราฟิกที่วาดบนพื้นโปร่งใส (ซ้อนเป็น Overlay ได้ทันที)
+  const GRAPHIC_TYPES = ['title', 'timer', 'score', 'ticker'];
+  const clockOf = inp => inp.type === 'timer' ? inp.timer : inp.type === 'score' && inp.score.clock && inp.score.clock.mode !== 'none' ? inp.score.clock : null;
+  const scoreClockText = inp => { const c = clockOf(inp); return inp.type === 'score' && c ? timerText(c).text : ''; };
+  // วาดกราฟิกลงพื้นที่ w×h (ไม่มีพื้นหลัง)
+  function drawGraphic(ctx, inp, w, h) {
+    if (inp.type === 'title') drawTitleInput(ctx, inp, w, h);
+    else if (inp.type === 'timer') drawTimer(ctx, w, h, inp);
+    else if (inp.type === 'score') drawScore(ctx, w, h, inp, scoreClockText(inp));
+    else if (inp.type === 'ticker') drawTicker(ctx, w, h, inp);
+  }
   const LIVE_TYPES = ['camera', 'screen', 'wireless'];
 
   /* ------------------------------------------------------------- drawing */
@@ -209,7 +224,7 @@
       case 'black': fillBlack(ctx, w, h); break;
       case 'slate': drawSlate(ctx, w, h, inp); break;
       case 'clock': drawClock(ctx, w, h, inp); break;
-      case 'title': fillBlack(ctx, w, h); drawTitleInput(ctx, inp, w, h); break;
+      case 'title': case 'timer': case 'score': case 'ticker': fillBlack(ctx, w, h); drawGraphic(ctx, inp, w, h); break;
       case 'image':
         if (inp.status !== 'live') { drawNoSignal(ctx, w, h, inp); break; }
         fillBlack(ctx, w, h);
@@ -376,7 +391,7 @@
   // วาดแหล่งภาพแบบพื้นหลังโปร่งใส (รูป PNG, วิดีโอที่มี alpha, Title) — ไม่มีสัญญาณก็ไม่วาดอะไรทับ Program
   function drawSourceT(ctx, inp, w, h) {
     switch (inp.type) {
-      case 'title': drawTitleInput(ctx, inp, w, h); return;
+      case 'title': case 'timer': case 'score': case 'ticker': drawGraphic(ctx, inp, w, h); return;
       case 'image': if (inp.status === 'live') drawFit(ctx, inp.el, inp.el.naturalWidth, inp.el.naturalHeight, w, h); return;
       case 'bars': case 'black': case 'slate': case 'clock': drawSource(ctx, inp, w, h); return;
       default: {
@@ -532,6 +547,18 @@
         return { e: genTexture('g:' + inp.id, `${inp.text}|${sec}`, GW, GH, (c, w, h) => drawSource(c, inp, w, h)), full: true };
       case 'title':
         return { e: genTexture('g:' + inp.id, JSON.stringify(inp.title), W, H, (c, w, h) => drawTitleInput(c, inp, w, h)), full: true, under: transparent ? null : [0, 0, 0, 1] };
+      case 'timer': {
+        // วาดใหม่เมื่อตัวเลขเปลี่ยน (ทุกวินาที) หรือช่วงกะพริบตอนหมดเวลา
+        const tt = timerText(inp.timer), stamp = `${tt.text}|${tt.done ? Math.floor(Date.now() / 500) % 2 : ''}|${JSON.stringify(inp.timer)}`;
+        return { e: genTexture('g:' + inp.id, stamp, W, H, (c, w, h) => drawTimer(c, w, h, inp)), full: true, under: transparent ? null : [0, 0, 0, 1] };
+      }
+      case 'score':
+        return { e: genTexture('g:' + inp.id, `${scoreClockText(inp)}|${JSON.stringify(inp.score)}`, W, H, (c, w, h) => drawScore(c, w, h, inp, scoreClockText(inp))), full: true, under: transparent ? null : [0, 0, 0, 1] };
+      case 'ticker': {
+        // ตัววิ่งเลื่อนทุกเฟรม: วาดและส่งขึ้น GPU เฉพาะแถบ ไม่ใช่ทั้งจอ
+        const bh = Math.round(H * TICKER_BAR.h);
+        return { e: genTexture('g:' + inp.id, frameNo, W, bh, (c, w, h) => drawTickerBar(c, w, h, inp)), region: TICKER_BAR, under: transparent ? null : [0, 0, 0, 1] };
+      }
       case 'image': {
         if (inp.status !== 'live' || !inp.el.naturalWidth) return noSignal();
         const e = gpu.entry('i:' + inp.id);
@@ -557,7 +584,7 @@
     if (vis.w <= 0 || vis.h <= 0) return;
     if (t.solid) { gpu.solid(vis, t.solid, alpha); return; }
     if (t.under) gpu.solid(vis, t.under, alpha);
-    const f = t.full ? box : fitRect(t.e.w, t.e.h, box);
+    const f = t.region ? { x: box.x, y: box.y + box.h * t.region.y, w: box.w, h: box.h * t.region.h } : t.full ? box : fitRect(t.e.w, t.e.h, box);
     const r = intersect(f, clip);
     if (r.w <= 0 || r.h <= 0) return;
     gpu.quad(t.e, r, [(r.x - f.x) / f.w, (r.y - f.y) / f.h, (r.x + r.w - f.x) / f.w, (r.y + r.h - f.y) / f.h], alpha, opts.key || null);
@@ -880,7 +907,7 @@
     const card = $(`#inputs-grid .card[data-id="${inp.id}"]`);
     if (card) {
       card.classList.toggle('no-signal', status !== 'live');
-      card.querySelector('.card-sub').textContent = status === 'live' ? TYPE_META[inp.type].label : 'NO SIGNAL';
+      card.querySelector('.card-sub').textContent = cardSub(inp);
     }
   }
 
@@ -921,11 +948,19 @@
               <button class="mini ${inp.el.loop ? 'is-on' : ''}" data-card="loop" title="เล่นวนซ้ำ">${icon('repeat')}</button>` : ''}
             ${canRelink ? `<button class="mini warn" data-card="relink" title="เชื่อมต่อแหล่งภาพนี้ใหม่">${icon('link')}</button>` : ''}
             ${inp.type === 'guest' ? `<button class="mini ${inp.status === 'live' ? '' : 'warn'}" data-card="invite" title="ลิงก์เชิญแขก">${icon('link')}</button>` : ''}
+            ${inp.type === 'score' ? `
+              <button class="mini txt" data-card="sa+" title="${esc(inp.score.teamA)} +1">A+</button><button class="mini txt" data-card="sa-" title="${esc(inp.score.teamA)} −1">A−</button>
+              <button class="mini txt" data-card="sb+" title="${esc(inp.score.teamB)} +1">B+</button><button class="mini txt" data-card="sb-" title="${esc(inp.score.teamB)} −1">B−</button>` : ''}
+            ${clockOf(inp) ? `
+              <button class="mini ${clockOf(inp).running ? 'is-on' : ''}" data-card="tplay" title="เริ่ม / หยุดเวลา">${icon(clockOf(inp).running ? 'pause' : 'play')}</button>
+              <button class="mini" data-card="treset" title="รีเซ็ตเวลา">${icon('restart')}</button>` : ''}
+            ${inp.type === 'title' && inp.data && inp.data.rows && inp.data.rows.length > 1 ? `
+              <button class="mini txt" data-card="dprev" title="แถวก่อนหน้า">‹</button><button class="mini txt" data-card="dnext" title="แถวถัดไป">›</button>` : ''}
             <button class="mini" data-card="rename" title="แก้ไขชื่อ / ข้อความ">${icon('edit')}</button>
             <button class="mini danger" data-card="remove" title="ลบ Input">${icon('x')}</button>
           </div>
         </div>
-        <div class="card-foot">${icon(meta.icon)}<span class="card-name">${esc(inp.name)}</span><span class="card-sub">${inp.status !== 'live' ? 'NO SIGNAL' : inp.name.toUpperCase() === meta.label ? '' : meta.label}</span></div>
+        <div class="card-foot">${icon(meta.icon)}<span class="card-name">${esc(inp.name)}</span><span class="card-sub">${esc(cardSub(inp))}</span></div>
         <div class="card-ovl">${ovl.map((c, k) => `<button type="button" data-card-ovl="${k}" title="ซ้อนเข้า Overlay ${c.n}">${c.n}</button>`).join('')}<button type="button" class="ovl-pos ${inp.layout ? 'is-set' : ''}" data-card="layout" title="ตำแหน่ง / ขนาด / ครอป / คีย์ฉาก">⧉</button></div>`;
       grid.appendChild(card);
       const ctx = card.querySelector('canvas').getContext('2d');
@@ -952,6 +987,9 @@
       else if (act === 'relink') relinkInput(inp);
       else if (act === 'layout') openLayoutDialog(inp);
       else if (act === 'invite') showGuestInvite(inp);
+      else if (act === 'tplay' || act === 'treset') { timerControl(inp, act === 'tplay' ? 'toggle' : 'reset'); }
+      else if (/^s[ab][+-]$/.test(act)) { const k = act[1] === 'a' ? 'scoreA' : 'scoreB'; inp.score[k] = Math.max(0, (+inp.score[k] || 0) + (act[2] === '+' ? 1 : -1)); }
+      else if (act === 'dprev' || act === 'dnext') dataSources.step(inp, act === 'dnext' ? 1 : -1);
       else if (act === 'play') { inp.el.paused ? inp.el.play().catch(() => {}) : inp.el.pause(); }
       else if (act === 'restart') { inp.el.currentTime = 0; inp.el.play().catch(() => {}); }
       else if (act === 'loop') { inp.el.loop = !inp.el.loop; actionBtn.classList.toggle('is-on', inp.el.loop); }
@@ -1035,6 +1073,9 @@
 
   async function renameInput(inp) {
     if (inp.type === 'title') return openTitleDialog(inp);
+    if (inp.type === 'timer') return openTimerDialog(inp);
+    if (inp.type === 'score') return openScoreDialog(inp);
+    if (inp.type === 'ticker') return openTickerDialog(inp);
     const hasText = inp.type === 'slate' || inp.type === 'clock';
     const result = await dialog({
       title: 'แก้ไข Input',
@@ -1487,6 +1528,7 @@
         <label class="field"><span>ข้อความหลัก</span><input name="headline" class="input" maxlength="80" value="${esc(t.headline)}"></label>
         <label class="field"><span>ข้อความรอง</span><input name="subtitle" class="input" maxlength="120" value="${esc(t.subtitle)}"></label>
         <label class="field"><span>สี</span><select name="color" class="select">${TITLE_COLORS.map(c => `<option value="${c}" ${c === t.color ? 'selected' : ''}>${c}</option>`).join('')}</select></label>
+        ${dataFields(inp, 'คอลัมน์ A = ข้อความหลัก, B = ข้อความรอง · แต่ละแถว = ป้ายหนึ่งชุด (กด ‹ › บนการ์ดเพื่อเปลี่ยนแถว)')}
         <p class="note">พื้นหลังโปร่งใส — กดปุ่ม 1–8 ใต้การ์ดเพื่อซ้อนบน Program (แก้ข้อความแล้วบนจอเปลี่ยนทันที)</p>`,
       actions: [{ label: 'ยกเลิก' }, { label: 'บันทึก', primary: true, value: 'save' }]
     });
@@ -1494,9 +1536,205 @@
     const f = result.form;
     inp.name = f.name.value.trim() || inp.name;
     inp.title = { headline: f.headline.value.trim(), subtitle: f.subtitle.value.trim(), color: TITLE_COLORS.includes(f.color.value) ? f.color.value : TITLE_COLORS[0], style: TITLE_STYLES[f.style.value] ? f.style.value : 'lower' };
+    readDataFields(inp, f);
     renderInputs();
     refreshSourceSelects();
   }
+
+  /* ---------------------------------------------------- data graphics */
+  const timerControl = (inp, act) => {
+    const t = clockOf(inp);
+    if (!t) return;
+    const now = Date.now();
+    if (act === 'toggle') {
+      if (t.running) { t.base = (t.base || 0) + now - t.since; t.running = false; }
+      else { t.running = true; t.since = now; }
+    } else if (act === 'reset') { t.base = 0; t.since = now; }
+    renderInputs();
+  };
+  const durText = sec => `${pad2(Math.floor(sec / 60))}:${pad2(sec % 60)}`;
+  const parseDur = (v, d) => { const m = /^(?:(\d+):)?(\d{1,3})(?::(\d{1,2}))?$/.exec(String(v).trim()); if (!m) return d; return m[3] != null ? (+m[1] || 0) * 3600 + +m[2] * 60 + +m[3] : (+m[1] || 0) * 60 + +m[2]; };
+  const colorSelect = (name, cur) => `<select name="${name}" class="select">${TITLE_COLORS.map(c => `<option value="${c}" ${c === cur ? 'selected' : ''}>${c}</option>`).join('')}</select>`;
+  const pickColor = (v, d) => TITLE_COLORS.includes(v) ? v : d;
+
+  function addTimerInput() {
+    const n = inputs.filter(i => i.type === 'timer').length + 1;
+    const inp = addInput({ type: 'timer', name: `TIMER ${n}`, timer: { mode: 'down', duration: 300, target: '19:00', label: 'เริ่มรายการใน', style: 'center', color: '#f5a524', base: 0, running: false, since: 0 } });
+    openTimerDialog(inp);
+  }
+  async function openTimerDialog(inp) {
+    const t = inp.timer;
+    const result = await dialog({
+      title: 'นาฬิกานับถอยหลัง / จับเวลา',
+      body: `
+        <label class="field"><span>ชื่อ Input</span><input name="name" class="input" maxlength="40" value="${esc(inp.name)}"></label>
+        <label class="field"><span>โหมด</span><select name="mode" class="select">${Object.entries(TIMER_MODES).map(([k, v]) => `<option value="${k}" ${k === t.mode ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
+        <div class="field-row">
+          <label class="field"><span>ระยะเวลา (นาที:วินาที)</span><input name="duration" class="input mono" value="${durText(t.duration)}"></label>
+          <label class="field"><span>ถึงเวลา (โหมดถึงเวลา)</span><input name="target" class="input mono" type="time" value="${esc(t.target)}"></label>
+        </div>
+        <label class="field"><span>ข้อความประกอบ</span><input name="label" class="input" maxlength="60" value="${esc(t.label)}"></label>
+        <div class="field-row">
+          <label class="field"><span>รูปแบบ</span><select name="style" class="select">${Object.entries(TIMER_STYLES).map(([k, v]) => `<option value="${k}" ${k === t.style ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
+          <label class="field"><span>สี</span>${colorSelect('color', t.color)}</label>
+        </div>
+        <p class="note">ปุ่ม ▶/⏸ และ ⟲ บนการ์ดใช้เริ่ม หยุด และรีเซ็ต · โหมด “ถึงเวลา” เดินเองตามนาฬิกาเครื่อง · หมดเวลาแล้วตัวเลขกะพริบแดง</p>`,
+      actions: [{ label: 'ยกเลิก' }, { label: 'บันทึก', primary: true, value: 'save' }]
+    });
+    if (result?.value !== 'save') return;
+    const f = result.form;
+    inp.name = f.name.value.trim() || inp.name;
+    Object.assign(t, { mode: TIMER_MODES[f.mode.value] ? f.mode.value : 'down', duration: clamp(parseDur(f.duration.value, t.duration), 1, 86400),
+      target: /^\d{1,2}:\d{2}$/.test(f.target.value) ? f.target.value : t.target, label: f.label.value.trim().slice(0, 60),
+      style: TIMER_STYLES[f.style.value] ? f.style.value : 'center', color: pickColor(f.color.value, t.color) });
+    renderInputs();
+    refreshSourceSelects();
+  }
+
+  function addScoreInput() {
+    const n = inputs.filter(i => i.type === 'score').length + 1;
+    const inp = addInput({ type: 'score', name: n > 1 ? `SCORE ${n}` : 'SCORE', score: { teamA: 'ทีม A', teamB: 'ทีม B', scoreA: 0, scoreB: 0, colorA: '#ef4444', colorB: '#3b82f6', period: 'ครึ่งแรก',
+      clock: { mode: 'none', duration: 2700, base: 0, running: false, since: 0 } } });
+    openScoreDialog(inp);
+  }
+  async function openScoreDialog(inp) {
+    const sc = inp.score;
+    const result = await dialog({
+      title: 'ป้ายคะแนน',
+      body: `
+        <label class="field"><span>ชื่อ Input</span><input name="name" class="input" maxlength="40" value="${esc(inp.name)}"></label>
+        <div class="field-row">
+          <label class="field"><span>ทีม A</span><input name="teamA" class="input" maxlength="24" value="${esc(sc.teamA)}"></label>
+          <label class="field"><span>คะแนน</span><input name="scoreA" class="input mono" type="number" min="0" value="${+sc.scoreA || 0}"></label>
+          <label class="field"><span>สี</span>${colorSelect('colorA', sc.colorA)}</label>
+        </div>
+        <div class="field-row">
+          <label class="field"><span>ทีม B</span><input name="teamB" class="input" maxlength="24" value="${esc(sc.teamB)}"></label>
+          <label class="field"><span>คะแนน</span><input name="scoreB" class="input mono" type="number" min="0" value="${+sc.scoreB || 0}"></label>
+          <label class="field"><span>สี</span>${colorSelect('colorB', sc.colorB)}</label>
+        </div>
+        <div class="field-row">
+          <label class="field"><span>ช่วงเวลา (เช่น ครึ่งแรก, Q2)</span><input name="period" class="input" maxlength="20" value="${esc(sc.period)}"></label>
+          <label class="field"><span>นาฬิกาการแข่งขัน</span><select name="clockMode" class="select">
+            <option value="none" ${sc.clock.mode === 'none' ? 'selected' : ''}>ไม่แสดง</option>
+            <option value="up" ${sc.clock.mode === 'up' ? 'selected' : ''}>นับขึ้น</option>
+            <option value="down" ${sc.clock.mode === 'down' ? 'selected' : ''}>นับถอยหลัง</option></select></label>
+          <label class="field"><span>เวลา (นาที:วินาที)</span><input name="clockDur" class="input mono" value="${durText(sc.clock.duration)}"></label>
+        </div>
+        ${dataFields(inp, 'แถวข้อมูลแรก: A = ทีม A, B = คะแนน A, C = ทีม B, D = คะแนน B, E = ช่วงเวลา')}
+        <p class="note">ปุ่ม A+ A− B+ B− บนการ์ดเปลี่ยนคะแนนทันทีระหว่างไลฟ์ · ▶/⏸ ⟲ ควบคุมนาฬิกาการแข่งขัน</p>`,
+      actions: [{ label: 'ยกเลิก' }, { label: 'บันทึก', primary: true, value: 'save' }]
+    });
+    if (result?.value !== 'save') return;
+    const f = result.form;
+    inp.name = f.name.value.trim() || inp.name;
+    Object.assign(sc, { teamA: f.teamA.value.trim().slice(0, 24), teamB: f.teamB.value.trim().slice(0, 24), scoreA: Math.max(0, +f.scoreA.value || 0), scoreB: Math.max(0, +f.scoreB.value || 0),
+      colorA: pickColor(f.colorA.value, sc.colorA), colorB: pickColor(f.colorB.value, sc.colorB), period: f.period.value.trim().slice(0, 20) });
+    sc.clock.mode = ['none', 'up', 'down'].includes(f.clockMode.value) ? f.clockMode.value : 'none';
+    sc.clock.duration = clamp(parseDur(f.clockDur.value, sc.clock.duration), 1, 86400);
+    readDataFields(inp, f);
+    renderInputs();
+    refreshSourceSelects();
+  }
+
+  function addTickerInput() {
+    const n = inputs.filter(i => i.type === 'ticker').length + 1;
+    const inp = addInput({ type: 'ticker', name: n > 1 ? `TICKER ${n}` : 'TICKER', ticker: { label: 'ข่าวด่วน', items: ['พิมพ์ข้อความข่าวบรรทัดละหนึ่งเรื่อง', 'ตัววิ่งจะเลื่อนต่อกันไปเรื่อย ๆ'], speed: 90, color: '#ef4444' } });
+    openTickerDialog(inp);
+  }
+  async function openTickerDialog(inp) {
+    const tk = inp.ticker;
+    const result = await dialog({
+      title: 'ตัววิ่งข่าว (Ticker)',
+      body: `
+        <label class="field"><span>ชื่อ Input</span><input name="name" class="input" maxlength="40" value="${esc(inp.name)}"></label>
+        <div class="field-row">
+          <label class="field"><span>ป้ายหัว (เว้นว่างได้)</span><input name="label" class="input" maxlength="24" value="${esc(tk.label)}"></label>
+          <label class="field"><span>ความเร็ว</span><select name="speed" class="select">${[[60, 'ช้า'], [90, 'ปกติ'], [130, 'เร็ว'], [180, 'เร็วมาก']].map(([v, l]) => `<option value="${v}" ${+tk.speed === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+          <label class="field"><span>สี</span>${colorSelect('color', tk.color)}</label>
+        </div>
+        <label class="field"><span>ข้อความ (บรรทัดละหนึ่งเรื่อง)</span><textarea name="items" class="input" rows="5">${esc(tk.items.join('\n'))}</textarea></label>
+        ${dataFields(inp, 'คอลัมน์ A ของทุกแถว = ข้อความที่วิ่ง (แทนข้อความด้านบน)')}`,
+      actions: [{ label: 'ยกเลิก' }, { label: 'บันทึก', primary: true, value: 'save' }]
+    });
+    if (result?.value !== 'save') return;
+    const f = result.form;
+    inp.name = f.name.value.trim() || inp.name;
+    Object.assign(tk, { label: f.label.value.trim().slice(0, 24), speed: [60, 90, 130, 180].includes(+f.speed.value) ? +f.speed.value : 90, color: pickColor(f.color.value, tk.color),
+      items: f.items.value.split('\n').map(x => x.trim()).filter(Boolean).slice(0, 100) });
+    readDataFields(inp, f);
+    renderInputs();
+    refreshSourceSelects();
+  }
+
+  // ข้อมูลจาก Google Sheets / CSV: ดึงใหม่ทุก 10 วินาที แก้ในชีตแล้วบนจอเปลี่ยนเอง
+  function dataFields(inp, hint) {
+    const d = inp.data || {};
+    return `
+        <label class="field"><span>ข้อมูลจาก Google Sheets / CSV (ไม่บังคับ)</span><input name="dataUrl" class="input mono" placeholder="https://docs.google.com/spreadsheets/d/…" value="${esc(d.url || '')}"></label>
+        <label class="check"><input type="checkbox" name="dataHeader" ${d.header !== false ? 'checked' : ''}> แถวแรกเป็นหัวตาราง (ไม่นำมาแสดง)</label>
+        <p class="note">${hint} · ชีตต้องแชร์แบบ “ทุกคนที่มีลิงก์ดูได้” · ดึงข้อมูลใหม่ทุก 10 วินาที${d.error ? ` · <b class="warn">ล่าสุด: ${esc(d.error)}</b>` : ''}</p>`;
+  }
+  function readDataFields(inp, f) {
+    const url = f.dataUrl.value.trim();
+    if (!url) { inp.data = null; return; }
+    if (!/^https?:\/\//i.test(url)) { toast('ลิงก์ข้อมูลต้องขึ้นต้นด้วย https://', 'warn'); return; }
+    const prev = inp.data || {};
+    inp.data = { url, header: f.dataHeader.checked, row: prev.url === url ? prev.row || 0 : 0, rows: prev.url === url ? prev.rows || [] : [], error: '', fetchedAt: 0 };
+    dataSources.refresh(inp);
+  }
+  const dataSources = {
+    REFRESH_MS: 10000,
+    async refresh(inp) {
+      const d = inp.data;
+      if (!d || d.loading) return;
+      d.loading = true;
+      d.fetchedAt = Date.now();
+      try {
+        const res = await fetch(sheetCsvUrl(d.url), { cache: 'no-store' });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const text = await res.text();
+        if (/^\s*<(!doctype|html)/i.test(text)) throw new Error('ได้หน้าเว็บแทน CSV — ตรวจว่าแชร์ชีตแบบทุกคนดูได้');
+        let rows = parseCsv(text);
+        if (d.header && rows.length) rows = rows.slice(1);
+        if (inp.data !== d || inp.removed) return;
+        d.rows = rows;
+        if (d.error) { d.error = ''; renderInputs(); }
+        this.apply(inp);
+      } catch (e) {
+        const msg = e.message === 'Failed to fetch' ? 'ดึงข้อมูลไม่ได้ (ตรวจลิงก์และการแชร์ชีต)' : e.message;
+        if (d.error !== msg) { d.error = msg; toast(`${inp.name}: ${msg}`, 'warn', 6000); renderInputs(); }
+      } finally { d.loading = false; }
+    },
+    apply(inp) {
+      const d = inp.data, rows = d.rows || [];
+      if (inp.type === 'ticker') inp.ticker.items = rows.map(r => r[0]).filter(Boolean).slice(0, 100);
+      else if (inp.type === 'score' && rows[0]) {
+        const r = rows[0], num = v => Math.max(0, parseInt(v, 10) || 0);
+        Object.assign(inp.score, { teamA: r[0] ?? inp.score.teamA, scoreA: r[1] != null ? num(r[1]) : inp.score.scoreA, teamB: r[2] ?? inp.score.teamB,
+          scoreB: r[3] != null ? num(r[3]) : inp.score.scoreB, period: r[4] ?? inp.score.period });
+      } else if (inp.type === 'title' && rows.length) {
+        d.row = clamp(d.row || 0, 0, rows.length - 1);
+        const r = rows[d.row];
+        inp.title.headline = r[0] || '';
+        inp.title.subtitle = r[1] || '';
+        const card = $(`#inputs-grid .card[data-id="${inp.id}"] .card-sub`);
+        if (card) card.textContent = cardSub(inp);
+        if (!$(`#inputs-grid .card[data-id="${inp.id}"] [data-card="dnext"]`) && rows.length > 1) renderInputs();
+      }
+    },
+    step(inp, delta) {
+      const d = inp.data;
+      if (!d || !d.rows || !d.rows.length) return;
+      d.row = (d.row + delta + d.rows.length) % d.rows.length;
+      this.apply(inp);
+    },
+    tick() {
+      const now = Date.now();
+      for (const inp of inputs) if (inp.data && inp.data.url && now - (inp.data.fetchedAt || 0) >= this.REFRESH_MS) this.refresh(inp);
+    }
+  };
+  setInterval(() => dataSources.tick(), 1000);
 
   /* ------------------------------------------------------- source selects */
   function refreshSourceSelects() {
@@ -3189,6 +3427,9 @@
       ['type', 'Slate ข้อความ', () => addGenerator('slate')],
       ['clock', 'นาฬิกา', () => addGenerator('clock')],
       ['type', 'Title กราฟิกข้อความ (พื้นโปร่งใส)', addTitleInput],
+      ['clock', 'นาฬิกานับถอยหลัง / จับเวลา', addTimerInput],
+      ['grid', 'ป้ายคะแนน (Scoreboard)', addScoreInput],
+      ['type', 'ตัววิ่งข่าว (Ticker)', addTickerInput],
       ['square', 'Black', () => addGenerator('black')]
     ];
     const menu = document.createElement('div');
@@ -3259,16 +3500,21 @@
     const p = Math.min(w, h);
     return p >= 2160 ? '4K' : p >= 1440 ? '1440p' : p >= 1080 ? '1080p' : p >= 720 ? '720p' : `${w}×${h}`;
   }
+  // ข้อความเล็กใต้ชื่อบนการ์ด: สถานะสัญญาณ, ข้อมูลจากชีต, หรือชนิด + ความละเอียดจริง
+  function cardSub(inp) {
+    if (inp.type === 'srt' && inp.status !== 'live') return `SRT · ${SRT_IN_STATES[inp.srtState] || 'NO SIGNAL'}`;
+    if (inp.status !== 'live') return 'NO SIGNAL';
+    if (inp.data && inp.data.error) return 'DATA ERROR';
+    if (inp.type === 'title' && inp.data && inp.data.rows && inp.data.rows.length) return `${inp.data.row + 1}/${inp.data.rows.length}`;
+    const meta = TYPE_META[inp.type];
+    const label = inp.name.toUpperCase() === meta.label ? '' : meta.label;
+    const w = inp.el?.videoWidth || inp.el?.naturalWidth, h = inp.el?.videoHeight || inp.el?.naturalHeight;
+    return w && h ? `${label}${label ? ' · ' : ''}${resTag(w, h)}` : label;
+  }
   function updateCardResolutions() {
     for (const inp of inputs) {
       const card = $(`#inputs-grid .card[data-id="${inp.id}"] .card-sub`);
-      if (!card) continue;
-      if (inp.type === 'srt' && inp.status !== 'live') { card.textContent = `SRT · ${SRT_IN_STATES[inp.srtState] || 'NO SIGNAL'}`; continue; }
-      if (inp.status !== 'live') continue;
-      const w = inp.el?.videoWidth || inp.el?.naturalWidth, h = inp.el?.videoHeight || inp.el?.naturalHeight;
-      const meta = TYPE_META[inp.type];
-      const label = inp.name.toUpperCase() === meta.label ? '' : meta.label;
-      card.textContent = w && h ? `${label}${label ? ' · ' : ''}${resTag(w, h)}` : label;
+      if (card) card.textContent = cardSub(inp);
     }
   }
 
@@ -3422,7 +3668,7 @@
      - ไฟล์วิดีโอ/รูปเก็บสำเนาไว้ในพื้นที่ของเบราว์เซอร์ (OPFS) จึงไม่ต้องเลือกไฟล์ใหม่
      - บันทึกเป็นไฟล์ .webmix.json เพื่อย้ายเครื่องหรือเก็บหลายรายการ (ไฟล์สื่อไม่ได้รวมอยู่ในไฟล์ ต้องเลือกใหม่บนเครื่องอื่น) */
 
-  const SHOW_TYPES = ['bars', 'black', 'slate', 'clock', 'image', 'media', 'camera', 'screen', 'wireless', 'srt', 'title', 'guest'];
+  const SHOW_TYPES = ['bars', 'black', 'slate', 'clock', 'image', 'media', 'camera', 'screen', 'wireless', 'srt', 'title', 'guest', 'timer', 'score', 'ticker'];
   const show = {
     ready: false, last: '', savedAt: 0,
     get name() { return store.get('showName', '') || 'โชว์ใหม่'; },
@@ -3444,6 +3690,12 @@
           if (i.type === 'wireless') o.peerId = i.peerId;
           if (i.type === 'srt') o.srt = { ...i.srt, passphrase: secrets ? i.srt.passphrase : '' };
           if (i.type === 'title') o.title = { ...i.title };
+          // เวลาที่เดินอยู่บันทึกเป็นเวลาที่ผ่านไปแล้ว (เปิดหน้าใหม่แล้วหยุดรอให้กดเริ่ม)
+          const freeze = t => ({ ...t, base: (t.base || 0) + (t.running && t.since ? Date.now() - t.since : 0), running: false, since: 0 });
+          if (i.type === 'timer') o.timer = freeze(i.timer);
+          if (i.type === 'score') o.score = { ...i.score, clock: freeze(i.score.clock) };
+          if (i.type === 'ticker') o.ticker = { ...i.ticker, items: [...i.ticker.items] };
+          if (i.data) o.data = { url: i.data.url, header: i.data.header, row: i.data.row || 0 };
           if (i.type === 'guest') o.guest = i.guest;
           if (i.layout) o.layout = JSON.parse(JSON.stringify(i.layout));
           return o;
@@ -3484,6 +3736,9 @@
         try { const job = this.restoreInput(raw, base); if (job) loading.push(job); } catch (e) { console.warn('restore input', e); }
         const made = byId(id);
         if (made && raw.layout) made.layout = sanitizeLayout(raw.layout);
+        if (made && GRAPHIC_TYPES.includes(made.type) && raw.data && /^https?:\/\//i.test(raw.data.url || '')) {
+          made.data = { url: String(raw.data.url), header: raw.data.header !== false, row: Math.max(0, +raw.data.row || 0), rows: [], error: '', fetchedAt: 0 };
+        }
       }
       if (Array.isArray(data.overlayChannels)) {
         data.overlayChannels.slice(0, OVL_COUNT).forEach((c, i) => {
@@ -3529,6 +3784,25 @@
         case 'bars': case 'black': case 'slate': case 'clock':
           addInput({ type: raw.type, ...base, text });
           break;
+        case 'timer': {
+          const t = raw.timer || {};
+          addInput({ type: 'timer', ...base, timer: { mode: TIMER_MODES[t.mode] ? t.mode : 'down', duration: clamp(+t.duration || 300, 1, 86400), target: /^\d{1,2}:\d{2}$/.test(t.target || '') ? t.target : '19:00',
+            label: String(t.label || '').slice(0, 60), style: TIMER_STYLES[t.style] ? t.style : 'center', color: TITLE_COLORS.includes(t.color) ? t.color : '#f5a524', base: Math.max(0, +t.base || 0), running: false, since: 0 } });
+          break;
+        }
+        case 'score': {
+          const c = raw.score || {}, ck = c.clock || {};
+          addInput({ type: 'score', ...base, score: { teamA: String(c.teamA ?? 'ทีม A').slice(0, 24), teamB: String(c.teamB ?? 'ทีม B').slice(0, 24), scoreA: Math.max(0, +c.scoreA || 0), scoreB: Math.max(0, +c.scoreB || 0),
+            colorA: TITLE_COLORS.includes(c.colorA) ? c.colorA : '#ef4444', colorB: TITLE_COLORS.includes(c.colorB) ? c.colorB : '#3b82f6', period: String(c.period || '').slice(0, 20),
+            clock: { mode: ['none', 'up', 'down'].includes(ck.mode) ? ck.mode : 'none', duration: clamp(+ck.duration || 2700, 1, 86400), base: Math.max(0, +ck.base || 0), running: false, since: 0 } } });
+          break;
+        }
+        case 'ticker': {
+          const t = raw.ticker || {};
+          addInput({ type: 'ticker', ...base, ticker: { label: String(t.label || '').slice(0, 24), items: (Array.isArray(t.items) ? t.items : []).map(String).slice(0, 100),
+            speed: [60, 90, 130, 180].includes(+t.speed) ? +t.speed : 90, color: TITLE_COLORS.includes(t.color) ? t.color : '#ef4444' } });
+          break;
+        }
         case 'title': {
           const t = raw.title || {};
           addInput({ type: 'title', ...base, title: { headline: String(t.headline || '').slice(0, 80), subtitle: String(t.subtitle || '').slice(0, 120),
@@ -3754,7 +4028,7 @@
     requestAnimationFrame(rafLoop);
 
     // สำหรับดีบัก/ทดสอบอัตโนมัติ
-    window.webmix = { multiview, renderer, gpu, setRenderer: v => { settings.renderer = v; renderer.resolve(); updateStatus(); }, show, ovl, setChannel, toggleInputOverlay, useRecFolder: dir => { recFolder = dir; }, inputs, state, settings, overlays, audio, rec, streamer, wireless, cut, autoTransition, setPreview, tr, ftb };
+    window.webmix = { dataSources, timerControl, multiview, renderer, gpu, setRenderer: v => { settings.renderer = v; renderer.resolve(); updateStatus(); }, show, ovl, setChannel, toggleInputOverlay, useRecFolder: dir => { recFolder = dir; }, inputs, state, settings, overlays, audio, rec, streamer, wireless, cut, autoTransition, setPreview, tr, ftb };
   }
 
   boot();
