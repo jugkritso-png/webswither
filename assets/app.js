@@ -2864,6 +2864,17 @@
   }
 
   function makeRecorder(purpose = 'record') {
+    // WebKitGTK (Linux): MediaRecorder เขียนไฟล์เสีย → เข้ารหัสด้วย WebCodecs แล้วเขียน WebM เอง
+    const wcrec = window.WebMix.wcrec;
+    if (wcrec && wcrec.preferred()) {
+      audio.ensure();
+      return wcrec.recorder({
+        canvas: pgmCanvas, audioNode: audio.post || null, fps: settings.fps,
+        videoBitsPerSecond: settings.videoKbps * 1000, audioBitsPerSecond: 160000,
+        // H.264 เบากว่า VP8 มากที่ความละเอียดสูง · สตรีมใช้ H.264 เสมอ (Gateway ถอดรหัสได้เร็ว)
+        preferAvc: purpose === 'stream' || H >= 1080
+      });
+    }
     const mime = pickMime(purpose);
     if (mime === null) throw new Error('เบราว์เซอร์นี้ไม่รองรับการบันทึกวิดีโอ (MediaRecorder)');
     const opts = { videoBitsPerSecond: settings.videoKbps * 1000, audioBitsPerSecond: 160000 };

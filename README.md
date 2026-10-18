@@ -47,9 +47,9 @@ workflow จะ build ทุกระบบ ทดสอบ แล้วสร�
 ข้อจำกัดที่ควรรู้:
 
 - **macOS:** ตัวติดตั้งยังไม่ได้ลงนาม (unsigned) — ครั้งแรกให้คลิกขวาที่แอป → Open แล้วกด Open อีกครั้ง
-- **Linux:** ยังใช้บันทึกและสตรีมจากแอปไม่ได้ — MediaRecorder ของ WebKitGTK (2.52 + GStreamer 1.24) สร้างไฟล์ MP4 ที่เสีย
-  (ffmpeg ถอดรหัสไม่ได้) และไม่มี WebRTC (กล้องมือถือ/แขกรับเชิญ) — บน Linux ให้ใช้หน้าเว็บ WebMix ใน Chrome แทน
-  ส่วนอื่นของแอป (สลับภาพ กราฟิก กล้อง USB) ใช้ได้
+- **Linux:** MediaRecorder ของ WebKitGTK สร้างไฟล์ MP4 ที่เสีย แอปจึงเข้ารหัสด้วย WebCodecs และเขียนไฟล์ WebM เอง
+  (`assets/js/wcrec.js` — ต้องมี WebKitGTK 2.44 ขึ้นไป) บันทึกและสตรีมได้ตามปกติ · WebKitGTK ไม่มี WebRTC
+  จึง**ใช้กล้องมือถือไร้สายและแขกรับเชิญไม่ได้** — ถ้าต้องใช้ ให้เปิดหน้าเว็บใน Chrome แทน
 - Gateway ในแอปยังไม่รับสัญญาณ SRT เป็น Input และไม่มี TURN สำหรับมือถือเน็ต 4G/5G — ใช้ Gateway บนเซิร์ฟเวอร์ (ช่องด้านล่างในการตั้งค่าเดียวกัน)
 - ลิงก์/QR ของกล้องมือถือและแขกรับเชิญจากแอปชี้ไปที่หน้าเว็บ GitHub Pages ของโปรเจกต์ (มือถือเปิดหน้าภายในแอปไม่ได้)
 - การสตรีมจากแอปใช้อินเทอร์เน็ตขาขึ้นของเครื่องนี้ = บิตเรต × จำนวนปลายทาง
@@ -360,6 +360,7 @@ SRT (Secure Reliable Transport) ทนอินเทอร์เน็ตกร
 | `assets/js/multiview.js` · `assets/js/manual.js` | Multiview · คู่มือและคีย์ลัดในแอป |
 | `assets/webm-seek.js` | ทำให้ไฟล์ WebM ที่บันทึกมีความยาวและเลื่อนหาตำแหน่งได้ |
 | `assets/app.js` | สตูดิโอ: Input, การสลับภาพ, Overlay, เสียง, บันทึก, สตรีม, โชว์ |
+| `assets/js/wcrec.js` | บันทึก/สตรีมด้วย WebCodecs + ตัวเขียน WebM (ใช้แทน MediaRecorder ที่เสียใน WebKitGTK/Linux) |
 | `assets/js/desktop.js` | เชื่อมกับแอปเดสก์ท็อป (Gateway ในแอป, บันทึกลงโฟลเดอร์, ทดสอบตัวเอง) — ในเบราว์เซอร์ไม่ทำอะไร |
 | `server/` | Stream Gateway (`stream-gateway.js`), ผู้ใช้ (`users.js`), การเฝ้าระวัง (`monitor.js`), ชุดติดตั้ง (`deploy/`) |
 | `desktop/gateway/` | Stream Gateway เวอร์ชัน Rust (โปรโตคอลเดียวกับเวอร์ชัน Node) |

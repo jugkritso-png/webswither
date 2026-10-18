@@ -66,15 +66,15 @@ esac
 export PKG_CONFIG_PATH=$PREFIX/lib/pkgconfig PKG_CONFIG_LIBDIR=$PREFIX/lib/pkgconfig
 
 echo "== mbedtls $MBEDTLS_VER ($ABI)"
-cmake -S "$SRC/mbedtls" -B "$BUILD/mbedtls" "${CMAKE_ARGS[@]}" -DENABLE_TESTING=OFF -DENABLE_PROGRAMS=OFF -DUSE_SHARED_MBEDTLS_LIBRARY=OFF -DUSE_STATIC_MBEDTLS_LIBRARY=ON >/dev/null
-cmake --build "$BUILD/mbedtls" -j "$JOBS" >/dev/null
+cmake -S "$SRC/mbedtls" -B "$BUILD/mbedtls" "${CMAKE_ARGS[@]}" -DENABLE_TESTING=OFF -DENABLE_PROGRAMS=OFF -DMBEDTLS_FATAL_WARNINGS=OFF -DUSE_SHARED_MBEDTLS_LIBRARY=OFF -DUSE_STATIC_MBEDTLS_LIBRARY=ON >/dev/null
+cmake --build "$BUILD/mbedtls" -j "$JOBS" >"$BUILD/mbedtls.log" 2>&1 || { tail -30 "$BUILD/mbedtls.log"; exit 1; }
 cmake --install "$BUILD/mbedtls" >/dev/null
 
 echo "== srt $SRT_TAG ($ABI)"
 cmake -S "$SRC/srt" -B "$BUILD/srt" "${CMAKE_ARGS[@]}" -DENABLE_APPS=OFF -DENABLE_SHARED=OFF -DENABLE_STATIC=ON -DENABLE_CXX11=ON \
   -DUSE_ENCLIB=mbedtls -DMBEDTLS_INCLUDE_DIRS="$PREFIX/include" \
   -DMBEDTLS_LIBRARIES="$PREFIX/lib/libmbedtls.a;$PREFIX/lib/libmbedx509.a;$PREFIX/lib/libmbedcrypto.a" >/dev/null
-cmake --build "$BUILD/srt" -j "$JOBS" >/dev/null
+cmake --build "$BUILD/srt" -j "$JOBS" >"$BUILD/srt.log" 2>&1 || { tail -30 "$BUILD/srt.log"; exit 1; }
 cmake --install "$BUILD/srt" >/dev/null
 # srt.pc ของ static build ต้องลิงก์ mbedtls ด้วย
 sed -i "s#^Libs.private:.*#& -L$PREFIX/lib -lmbedtls -lmbedx509 -lmbedcrypto#" "$PREFIX/lib/pkgconfig/srt.pc"

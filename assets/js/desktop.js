@@ -128,11 +128,22 @@
         src.width = 320; src.height = 180;
         const g = src.getContext('2d');
         let n = 0; const tick = setInterval(() => { g.fillStyle = `hsl(${(n++ * 20) % 360} 80% 50%)`; g.fillRect(0, 0, 320, 180); }, 33);
-        const r = new MediaRecorder(src.captureStream(30), { mimeType: mrType });
-        let bytes = 0; r.ondataavailable = e => { bytes += e.data.size; };
+        const useWc = WM.wcrec && WM.wcrec.preferred();
+        const r = useWc
+          ? WM.wcrec.recorder({ canvas: src, audioNode: null, fps: 30, videoBitsPerSecond: 1000000, audioBitsPerSecond: 128000 })
+          : new MediaRecorder(src.captureStream(30), { mimeType: mrType });
+        const parts = []; r.ondataavailable = e => { parts.push(e.data); };
         const stopped = new Promise(res => { r.onstop = res; });
         r.start(500); await wait(2000); r.stop(); await stopped; clearInterval(tick);
-        add('record-sample', bytes > 1000, `${bytes} bytes ใน 2 วินาที`, false);
+        // ไฟล์ต้องเปิดเล่นได้จริง (ไม่ใช่แค่มีข้อมูล) — webview ถอดรหัสและเลื่อนหาตำแหน่ง
+        const blob = new Blob(parts, { type: r.mimeType });
+        const v = document.createElement('video'); v.muted = true; v.src = URL.createObjectURL(blob);
+        const played = await new Promise(res => {
+          const t = setTimeout(() => res(false), 8000);
+          v.onloadeddata = () => { clearTimeout(t); res(v.videoWidth === 320); };
+          v.onerror = () => { clearTimeout(t); res(false); };
+        });
+        add('record-sample', blob.size > 1000 && played, `${blob.size} bytes ใน 2 วินาที · ${r.mimeType}${useWc ? ' (WebCodecs)' : ''} · ${played ? 'เปิดเล่นได้' : 'เปิดเล่นไม่ได้'}`, false);
       } catch (e) { add('record-sample', false, e, false); }
     }
     add('webrtc', typeof RTCPeerConnection === 'function', '', false);
@@ -148,8 +159,9 @@
      (เส้นทางเดียวกับปุ่มสตรีมในหน้า WebMix) */
   async function streamTest(info, add, wait) {
     const types = ['video/webm;codecs=vp8,opus', 'video/webm;codecs=vp9,opus', 'video/webm', 'video/mp4'];
-    const type = typeof MediaRecorder === 'function' ? types.find(t => MediaRecorder.isTypeSupported(t)) : '';
-    if (!type) { add('stream', false, 'ไม่มี MediaRecorder'); return; }
+    const useWc = WM.wcrec && WM.wcrec.preferred();
+    const type = useWc ? 'webcodecs' : typeof MediaRecorder === 'function' ? types.find(t => MediaRecorder.isTypeSupported(t)) : '';
+    if (!type) { add('stream', false, 'ไม่มี MediaRecorder / WebCodecs'); return; }
     const canvas = document.createElement('canvas');
     canvas.width = 1280; canvas.height = 720;
     const g = canvas.getContext('2d');
@@ -158,21 +170,23 @@
       g.fillStyle = `hsl(${(n * 6) % 360} 70% 45%)`; g.fillRect(0, 0, 1280, 720);
       g.fillStyle = '#fff'; g.font = 'bold 96px sans-serif'; g.fillText(`WebMix ${n++}`, 80 + (n * 8) % 600, 380);
     }, 33);
-    const stream = canvas.captureStream(30);
-    let actx = null;
+    const stream = useWc ? null : canvas.captureStream(30);
+    let actx = null, osc = null;
     try {
       actx = new (window.AudioContext || window.webkitAudioContext)();
-      const osc = actx.createOscillator(); const dst = actx.createMediaStreamDestination();
+      osc = actx.createOscillator(); const dst = actx.createMediaStreamDestination();
       osc.connect(dst); osc.start();
-      dst.stream.getAudioTracks().forEach(t => stream.addTrack(t));
+      if (stream) dst.stream.getAudioTracks().forEach(t => stream.addTrack(t));
+      actx.resume().catch(() => {});
     } catch (e) {}
     const url = `${info.gateway.url}&fps=30&vb=2500&res=720`;
     const statuses = [];
-    let live = false, error = '', encoder = null;
+    let live = false, error = '', encoder = null, mimeUsed = type;
     await new Promise(resolve => {
       let rec = null;
       const ws = new WebSocket(url);
       const finish = () => {
+        if (rec) mimeUsed = rec.mimeType + (rec.droppedFrames ? ` · ทิ้ง ${rec.droppedFrames} เฟรม` : '');
         try { rec && rec.state !== 'inactive' && rec.stop(); } catch (e) {}
         try { ws.send(JSON.stringify({ type: 'stop', id: 'selftest' })); } catch (e) {}
         setTimeout(() => { try { ws.close(); } catch (e) {} resolve(); }, 1500);
@@ -180,7 +194,9 @@
       const timer = setTimeout(finish, 40000);
       ws.onopen = () => {
         ws.send(JSON.stringify({ type: 'start', destinations: [{ id: 'selftest', name: 'selftest', url: info.selftestStream }] }));
-        rec = new MediaRecorder(stream, { mimeType: type, videoBitsPerSecond: 2500000 });
+        rec = useWc
+          ? WM.wcrec.recorder({ canvas, audioNode: osc, fps: 30, videoBitsPerSecond: 2500000, audioBitsPerSecond: 128000, preferAvc: true })
+          : new MediaRecorder(stream, { mimeType: type, videoBitsPerSecond: 2500000 });
         rec.ondataavailable = e => { if (e.data.size && ws.readyState === 1) ws.send(e.data); };
         rec.start(1000);
       };
@@ -199,16 +215,17 @@
       ws.onclose = ev => { if (!live && !error) error = `gateway ปิดการเชื่อมต่อ (${ev.code} ${ev.reason || ''})`; };
     });
     clearInterval(tick);
-    stream.getTracks().forEach(t => t.stop());
+    if (stream) stream.getTracks().forEach(t => t.stop());
     if (actx) actx.close().catch(() => {});
     const speed = encoder ? ` · encoder ${encoder.speed}x ${encoder.fps} fps` : '';
-    add('stream', live, live ? `LIVE ผ่าน ${info.encoder} (${type})${speed}` : (error || `ไม่ขึ้น LIVE (${statuses.slice(-5).join(',')})`));
+    add('stream', live, live ? `LIVE ผ่าน ${info.encoder} (${mimeUsed}${useWc ? ' · WebCodecs' : ''})${speed}` : (error || `ไม่ขึ้น LIVE (${statuses.slice(-5).join(',')})`));
   }
 
-  // Linux: MediaRecorder ของ WebKitGTK เขียน MP4 ที่เสีย (ffmpeg ถอดรหัสไม่ได้) — บันทึก/สตรีมจากแอปยังใช้ไม่ได้
+  // Linux: MediaRecorder ของ WebKitGTK เขียน MP4 ที่เสีย — แอปใช้ WebCodecs + ตัวเขียน WebM เอง (wcrec.js) แทน
+  // WebKitGTK รุ่นเก่าที่ไม่มี WebCodecs ยังบันทึก/สตรีมไม่ได้ → แจ้งผู้ใช้
   desktop.ready.then(info => {
-    if (!info || info.os !== 'linux' || info.selftest) return;
-    setTimeout(() => WM.toast && WM.toast('แอปบน Linux ยังบันทึก/สตรีมไม่ได้ (MediaRecorder ของ WebKitGTK สร้างไฟล์เสีย) — ใช้หน้าเว็บ WebMix ใน Chrome สำหรับการบันทึกและไลฟ์', 'warn', 12000), 1500);
+    if (!info || info.os !== 'linux' || info.selftest || (WM.wcrec && WM.wcrec.hasApi())) return;
+    setTimeout(() => WM.toast && WM.toast('WebKitGTK ในเครื่องนี้ไม่มี WebCodecs จึงบันทึก/สตรีมไม่ได้ — อัปเดตระบบ (WebKitGTK 2.44 ขึ้นไป) หรือใช้หน้าเว็บ WebMix ใน Chrome', 'warn', 12000), 1500);
   });
 
   desktop.ready.then(async info => {

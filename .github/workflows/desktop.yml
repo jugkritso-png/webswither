@@ -65,6 +65,8 @@ jobs:
           - name: Linux
             os: ubuntu-22.04
             exe: desktop/target/release/webmix-desktop
+            # Linux: สตรีมจริงไปเครื่องรับ RTMP บนเครื่อง CI ด้วย (ตรวจเส้นทาง WebCodecs + WebM ของ WebKitGTK)
+            stream: rtmp://127.0.0.1:1935/live/selftest
           - name: Windows
             os: windows-latest
             exe: desktop/target/release/webmix-desktop.exe
@@ -92,9 +94,13 @@ jobs:
       - name: Self-test (open the real app)
         shell: bash
         env:
-          WEBMIX_SELFTEST: '1'
+          WEBMIX_SELFTEST: ${{ matrix.stream || '1' }}
           WEBMIX_SELFTEST_OUT: ${{ runner.temp }}/selftest.json
         run: |
+          if [ -n "${{ matrix.stream }}" ]; then
+            ffmpeg -hide_banner -loglevel error -listen 1 -i "${{ matrix.stream }}" -c copy -y "$RUNNER_TEMP/selftest.flv" &
+            sleep 1
+          fi
           if [ "$RUNNER_OS" = Linux ]; then xvfb-run -a "${{ matrix.exe }}" & else "${{ matrix.exe }}" & fi
           for i in $(seq 1 120); do [ -s "$WEBMIX_SELFTEST_OUT" ] && break; sleep 1; done
           sleep 2
@@ -106,6 +112,13 @@ jobs:
             if (r.error) console.log("error:", r.error);
             process.exit(r.ok ? 0 : 1);
           ' "$WEBMIX_SELFTEST_OUT"
+          if [ -n "${{ matrix.stream }}" ]; then
+            sleep 3
+            PROBE=$(ffprobe -v error -show_entries stream=codec_name,width -of compact=p=0 "$RUNNER_TEMP/selftest.flv" || true)
+            echo "RTMP ที่ได้รับ: $PROBE"
+            echo "$PROBE" | grep -q 'codec_name=h264|width=1280' && echo "$PROBE" | grep -q 'codec_name=aac' || { echo "ไม่ได้สตรีม H.264 + AAC"; exit 1; }
+            test -z "$(ffmpeg -v error -i "$RUNNER_TEMP/selftest.flv" -f null - 2>&1)" || { echo "สตรีมที่ได้ถอดรหัสไม่ผ่าน"; exit 1; }
+          fi
       - name: Upload installers
         uses: actions/upload-artifact@v7
         with:
@@ -245,7 +258,7 @@ jobs:
           | Android x86_64 (Chromebook / emulator) | `_android-x86_64.apk` |
 
           การสตรีมบนคอมพิวเตอร์ต้องมี ffmpeg — Windows: `winget install ffmpeg` · macOS: `brew install ffmpeg` (การบันทึกไม่ต้องใช้) · Android มี ffmpeg ในแอปแล้ว
-          Linux: แอปยังบันทึก/สตรีมไม่ได้ (MediaRecorder ของ WebKitGTK สร้างไฟล์เสีย) — ใช้หน้าเว็บใน Chrome แทน
+          Linux: กล้องมือถือและแขกรับเชิญใช้ไม่ได้ (WebKitGTK ไม่มี WebRTC) — ใช้หน้าเว็บใน Chrome ถ้าต้องการ
           รายละเอียดและข้อจำกัด: ดู README หัวข้อ “แอปเดสก์ท็อป”
           NOTES
           sed -i 's/^          //' notes.md
