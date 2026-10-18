@@ -788,6 +788,7 @@ kbd {
 .round .i { width: 24px; height: 24px; }
 .round.lg { width: 70px; height: 70px; }
 .round.is-off { background: #b91c1c; border-color: #f87171; }
+.round.quality { font-size: 13px; font-weight: 800; letter-spacing: .04em; }
 .caller-msg { position: absolute; left: 16px; right: 16px; top: 50%; transform: translateY(-50%); text-align: center; font-size: 14px; color: var(--muted); }
 
 /* ---------- Stream destinations ---------- */

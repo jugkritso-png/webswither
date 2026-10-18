@@ -9,6 +9,8 @@
 //   STREAM_TOKEN  ถ้าตั้งไว้ ไคลเอนต์ต้องส่ง ?token=... มาด้วย (แนะนำให้ตั้งเสมอเมื่อเปิดให้เข้าถึงจากอินเทอร์เน็ต)
 //   FFMPEG_PATH   path ของ ffmpeg (ค่าเริ่มต้น "ffmpeg")
 //   MAX_DESTINATIONS  จำนวนปลายทางสูงสุดต่อการเชื่อมต่อ (ค่าเริ่มต้น 6)
+//   VIDEO_ENCODER libx264 (ค่าเริ่มต้น, ใช้ CPU) | h264_nvenc (การ์ดจอ NVIDIA) | h264_qsv (Intel Quick Sync)
+//   X264_PRESET   preset ของ libx264 — ถ้าไม่ตั้ง จะใช้ veryfast สำหรับ ≤1080p และ superfast สำหรับ 1440p/4K
 //
 // โปรโตคอล (ข้อความ JSON แบบ text frame, วิดีโอเป็น binary frame):
 //   client → { type: 'start', destinations: [{ id, name, url }] }   เริ่มเข้ารหัสและส่งไปทุกปลายทาง
@@ -26,6 +28,21 @@ const PORT = Number(process.env.PORT) || 8080;
 const TOKEN = process.env.STREAM_TOKEN || '';
 const FFMPEG = process.env.FFMPEG_PATH || 'ffmpeg';
 const MAX_DESTINATIONS = Number(process.env.MAX_DESTINATIONS) || 6;
+const VIDEO_ENCODER = process.env.VIDEO_ENCODER || 'libx264';
+const X264_PRESET = process.env.X264_PRESET || '';
+const MAX_KBPS = 51000; // เพดานของ YouTube สำหรับ 4K60
+
+// ตัวเลือกตัวเข้ารหัสวิดีโอ — การ์ดจอช่วยให้ 4K ลื่นบนเซิร์ฟเวอร์ที่ CPU ไม่แรงมาก
+function videoArgs(height) {
+  if (VIDEO_ENCODER === 'h264_nvenc') {
+    return ['-c:v', 'h264_nvenc', '-preset', 'p4', '-tune', 'll', '-rc', 'cbr', '-profile:v', 'high', '-bsf:v', 'dump_extra'];
+  }
+  if (VIDEO_ENCODER === 'h264_qsv') {
+    return ['-c:v', 'h264_qsv', '-preset', 'veryfast', '-profile:v', 'high', '-bsf:v', 'dump_extra'];
+  }
+  const preset = X264_PRESET || (height >= 1440 ? 'superfast' : 'veryfast');
+  return ['-c:v', 'libx264', '-preset', preset, '-tune', 'zerolatency', '-profile:v', 'high'];
+}
 const RTMP_RE = /^rtmps?:\/\/[^\s]+$/i;
 const RETRY_MS = 5000;
 
@@ -46,7 +63,9 @@ wss.on('connection', (ws, req) => {
 
   // ค่าที่ส่งมาจากหน้าตั้งค่า (มีค่าเริ่มต้นและจำกัดช่วงไว้เสมอ)
   const fps = [24, 25, 30, 50, 60].includes(Number(params.get('fps'))) ? Number(params.get('fps')) : 30;
-  const kbps = Math.min(12000, Math.max(500, Number(params.get('vb')) || 4500));
+  const kbps = Math.min(MAX_KBPS, Math.max(500, Number(params.get('vb')) || 4500));
+  const height = Math.min(4320, Math.max(0, Number(params.get('res')) || 0));
+  let encoderStats = null;
 
   const dests = new Map();
   let encoder = null;
@@ -55,24 +74,32 @@ wss.on('connection', (ws, req) => {
   const send = obj => { if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(obj)); };
   const report = () => send({
     type: 'status',
-    destinations: [...dests.values()].map(d => ({ id: d.id, name: d.name, state: d.state, message: d.message, kbps: d.state === 'live' ? d.kbps : 0 }))
+    destinations: [...dests.values()].map(d => ({ id: d.id, name: d.name, state: d.state, message: d.message, kbps: d.state === 'live' ? d.kbps : 0 })),
+    encoder: encoderStats
   });
 
   function startEncoder() {
     if (encoder) return;
-    console.log(`${tag} encoder start ${fps}fps ${kbps}kbps`);
+    console.log(`${tag} encoder start ${height ? height + 'p' : ''}${fps} ${kbps}kbps ${VIDEO_ENCODER}`);
     encoder = spawn(FFMPEG, [
-      '-loglevel', 'warning',
+      '-loglevel', 'warning', '-nostats', '-progress', 'pipe:3', '-stats_period', '2',
       '-i', 'pipe:0',
-      '-c:v', 'libx264', '-preset', 'veryfast', '-tune', 'zerolatency',
+      ...videoArgs(height),
       '-pix_fmt', 'yuv420p', '-r', String(fps), '-g', String(fps * 2), '-keyint_min', String(fps * 2), '-sc_threshold', '0',
       '-b:v', `${kbps}k`, '-maxrate', `${kbps}k`, '-bufsize', `${kbps * 2}k`,
       '-c:a', 'aac', '-ar', '44100', '-b:a', '128k',
       // MPEG-TS ส่ง SPS/PPS ซ้ำทุกคีย์เฟรม ปลายทางที่เริ่มกลางคันจึงต่อสัญญาณได้ทันที
       '-f', 'mpegts', '-mpegts_flags', '+resend_headers', 'pipe:1'
-    ], { stdio: ['pipe', 'pipe', 'pipe'] });
+    ], { stdio: ['pipe', 'pipe', 'pipe', 'pipe'] });
 
     encoder.stdin.on('error', () => {});
+    // ความเร็วการเข้ารหัส (speed=1.0x คือทันเวลาจริง) ส่งกลับไปแสดงในหน้า WebMix
+    encoder.stdio[3].on('data', b => {
+      const text = String(b);
+      const speed = /speed=\s*([\d.]+)x/.exec(text);
+      const efps = /fps=\s*([\d.]+)/.exec(text);
+      if (speed) encoderStats = { speed: Number(speed[1]), fps: efps ? Number(efps[1]) : 0 };
+    });
     encoder.stderr.on('data', d => process.stderr.write(`${tag} encoder: ${d}`));
     encoder.stdout.on('data', chunk => {
       for (const d of dests.values()) {

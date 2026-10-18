@@ -8,6 +8,8 @@ services:
     environment:
       STREAM_TOKEN: ${STREAM_TOKEN:?ต้องตั้ง STREAM_TOKEN ในไฟล์ .env}
       MAX_DESTINATIONS: ${MAX_DESTINATIONS:-6}
+      VIDEO_ENCODER: ${VIDEO_ENCODER:-libx264}
+      X264_PRESET: ${X264_PRESET:-}
     expose:
       - "8080"
     logging:

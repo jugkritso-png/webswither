@@ -109,10 +109,51 @@
       $('#caller-tally').textContent = t === 'pgm' ? 'ON AIR' : 'PREVIEW';
     };
 
+    // คุณภาพที่ส่งเข้าสตูดิโอ — กดปุ่ม HD/FHD/4K บนจอเพื่อสลับ (กล้องที่ไม่รองรับจะได้ค่าสูงสุดที่ทำได้)
+    const QUALITIES = [
+      { label: 'HD', w: 1280, h: 720, bitrate: 2500000 },
+      { label: 'FHD', w: 1920, h: 1080, bitrate: 6000000 },
+      { label: '4K', w: 3840, h: 2160, bitrate: 16000000 }
+    ];
+    let quality = QUALITIES[Math.min(2, Math.max(0, +store.get('caller-quality', 1)))] || QUALITIES[1];
     const getCamera = withAudio => navigator.mediaDevices.getUserMedia({
-      video: { facingMode: facing, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } },
+      video: { facingMode: facing, width: { ideal: quality.w }, height: { ideal: quality.h }, frameRate: { ideal: 30 } },
       audio: withAudio ? { echoCancellation: true, noiseSuppression: true } : false
     });
+    const qualityBtn = $('#caller-quality');
+    const paintQuality = () => {
+      const s = stream?.getVideoTracks()[0]?.getSettings();
+      qualityBtn.textContent = quality.label;
+      qualityBtn.title = s?.width ? `ส่งภาพ ${s.width}×${s.height}` : 'คุณภาพภาพ';
+    };
+    // WebRTC จำกัดบิตเรตต่ำเป็นค่าเริ่มต้น ต้องตั้งเพดานเองเพื่อให้ภาพ 1080p/4K คมจริง
+    async function applyBitrate() {
+      const sender = call?.peerConnection?.getSenders().find(x => x.track && x.track.kind === 'video');
+      if (!sender) return;
+      try {
+        const params = sender.getParameters();
+        if (!params.encodings || !params.encodings.length) params.encodings = [{}];
+        params.encodings[0].maxBitrate = quality.bitrate;
+        params.degradationPreference = 'maintain-resolution';
+        await sender.setParameters(params);
+      } catch (e) {}
+    }
+    async function cycleQuality() {
+      const i = (QUALITIES.indexOf(quality) + 1) % QUALITIES.length;
+      quality = QUALITIES[i];
+      store.set('caller-quality', i);
+      const track = stream?.getVideoTracks()[0];
+      if (track) {
+        try { await track.applyConstraints({ width: { ideal: quality.w }, height: { ideal: quality.h }, frameRate: { ideal: 30 } }); }
+        catch (e) {}
+      }
+      await applyBitrate();
+      paintQuality();
+      const s = track?.getSettings();
+      if (s?.width) showMsgBrief(`ส่งภาพ ${s.width}×${s.height}${s.height < quality.h ? ' (กล้องรองรับสูงสุดเท่านี้)' : ''}`);
+    }
+    let briefTimer = null;
+    const showMsgBrief = text => { showMsg(text); clearTimeout(briefTimer); briefTimer = setTimeout(() => showMsg(''), 2500); };
 
     async function start() {
       if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
@@ -128,6 +169,7 @@
         return;
       }
       video.srcObject = stream;
+      paintQuality();
       keepScreenOn(true);
       if (typeof Peer === 'undefined') {
         setStatus('ออฟไลน์', 'bad');
@@ -152,7 +194,7 @@
       call = c;
       c.peerConnection?.addEventListener('connectionstatechange', () => {
         const st = c.peerConnection.connectionState;
-        if (st === 'connected') { setStatus('เชื่อมต่อแล้ว', 'ok'); showMsg(''); }
+        if (st === 'connected') { setStatus('เชื่อมต่อแล้ว', 'ok'); showMsg(''); applyBitrate(); }
         else if (st === 'failed') c.close();
       });
       c.on('close', () => { if (call === c) scheduleRetry('ขาดการเชื่อมต่อ กำลังลองใหม่…'); });
@@ -212,6 +254,7 @@
       stream.addTrack(track);
       video.srcObject = stream;
       if (sender) await sender.replaceTrack(track);
+      paintQuality();
     }
 
     function toggleMic() {
@@ -229,6 +272,7 @@
       if (!b) return;
       if (b.dataset.caller === 'flip') flip();
       else if (b.dataset.caller === 'mic') toggleMic();
+      else if (b.dataset.caller === 'quality') cycleQuality();
       else if (b.dataset.caller === 'end') stop();
     });
 
@@ -241,12 +285,20 @@
 
   /* --------------------------------------------------------------- settings */
   const PLATFORMS = {
-    youtube: { label: 'YouTube Live', server: 'rtmp://a.rtmp.youtube.com/live2' },
-    facebook: { label: 'Facebook Live', server: 'rtmps://live-api-s.facebook.com:443/rtmp' },
-    twitch: { label: 'Twitch', server: 'rtmp://live.twitch.tv/app' },
+    youtube: { label: 'YouTube Live', server: 'rtmp://a.rtmp.youtube.com/live2', maxHeight: 2160 },
+    facebook: { label: 'Facebook Live', server: 'rtmps://live-api-s.facebook.com:443/rtmp', maxHeight: 1080 },
+    twitch: { label: 'Twitch', server: 'rtmp://live.twitch.tv/app', maxHeight: 1080 },
     custom: { label: 'RTMP อื่น ๆ (กำหนดเอง)', server: '' }
   };
-  const RESOLUTIONS = { '720p': [1280, 720], '1080p': [1920, 1080] };
+  const RESOLUTIONS = { '720p': [1280, 720], '1080p': [1920, 1080], '1440p': [2560, 1440], '2160p': [3840, 2160] };
+  const RES_LABEL = { '720p': '1280 × 720 (HD 720p)', '1080p': '1920 × 1080 (Full HD 1080p)', '1440p': '2560 × 1440 (QHD 1440p)', '2160p': '3840 × 2160 (4K UHD)' };
+  const formatTag = (h, f) => `${h >= 2160 ? '4K' : h + 'p'}${f}`;
+  // บิตเรตแนะนำ (kbps) ตามแนวทางของ YouTube Live
+  function recommendedKbps(res, f) {
+    const base = { '720p': 4500, '1080p': 6000, '1440p': 13000, '2160p': 25000 }[res] || 4500;
+    return f > 30 ? Math.round(base * 1.5) : base;
+  }
+  const MAX_KBPS = 51000;
   const FRAME_RATES = [25, 30, 50, 60];
   const TITLE_COLORS = ['#ef4444', '#f5a524', '#22c55e', '#3b82f6', '#a855f7', '#e5e7eb'];
 
@@ -332,7 +384,7 @@
     PW = Math.min(W, 1280); PH = Math.round(PW * 9 / 16);
     pgmCanvas.width = W; pgmCanvas.height = H;
     pvwCanvas.width = PW; pvwCanvas.height = PH;
-    $('#pgm-format').textContent = `${H}p${settings.fps}`;
+    $('#pgm-format').textContent = formatTag(H, settings.fps);
     output.reset();
     ticker.setRate(settings.fps);
   }
@@ -492,11 +544,91 @@
     }
   }
 
+  // คีย์ฉากเขียวด้วย GPU (WebGL) ที่ความละเอียดสูงสุด 1080p จึงคมพอสำหรับงาน 4K และไม่กิน CPU
+  const keyer = (() => {
+    try {
+      const canvas = document.createElement('canvas');
+      const gl = canvas.getContext('webgl', { premultipliedAlpha: false, preserveDrawingBuffer: true, antialias: false });
+      if (!gl) return null;
+      const compile = (type, src) => {
+        const sh = gl.createShader(type);
+        gl.shaderSource(sh, src);
+        gl.compileShader(sh);
+        if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(sh));
+        return sh;
+      };
+      const prog = gl.createProgram();
+      gl.attachShader(prog, compile(gl.VERTEX_SHADER,
+        'attribute vec2 p;varying vec2 uv;void main(){uv=vec2((p.x+1.0)*0.5,(1.0-p.y)*0.5);gl_Position=vec4(p,0.0,1.0);}'));
+      gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, `precision mediump float;
+        uniform sampler2D tex;uniform float hard;uniform float soft;uniform float blue;varying vec2 uv;
+        void main(){
+          vec4 c=texture2D(tex,uv);
+          float k=mix(c.g,c.b,blue);
+          float o=mix(max(c.r,c.b),max(c.r,c.g),blue);
+          float d=k-o;
+          float a=1.0;
+          if(d>0.0){
+            a=1.0-smoothstep(soft,hard,d);
+            if(blue>0.5){c.b=o;}else{c.g=o;}
+          }
+          gl_FragColor=vec4(c.rgb,a);
+        }`));
+      gl.linkProgram(prog);
+      if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) return null;
+      gl.useProgram(prog);
+      const buf = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+      const loc = gl.getAttribLocation(prog, 'p');
+      gl.enableVertexAttribArray(loc);
+      gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+      const tex = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, tex);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      const u = name => gl.getUniformLocation(prog, name);
+      const uHard = u('hard'), uSoft = u('soft'), uBlue = u('blue');
+      return {
+        canvas,
+        run(src, opts) {
+          if (canvas.width !== src.width || canvas.height !== src.height) {
+            canvas.width = src.width; canvas.height = src.height;
+            gl.viewport(0, 0, src.width, src.height);
+          }
+          gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, src);
+          gl.uniform1f(uHard, opts.tolerance / 255);
+          gl.uniform1f(uSoft, opts.tolerance * 0.5 / 255);
+          gl.uniform1f(uBlue, opts.color === 'blue' ? 1 : 0);
+          gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+          return !gl.isContextLost();
+        }
+      };
+    } catch (e) {
+      console.warn('WebGL keyer unavailable, using CPU keyer', e);
+      return null;
+    }
+  })();
+  const keySrc = document.createElement('canvas');
+  const keySrcCtx = keySrc.getContext('2d');
+
   function updateKeyFrame() {
     overlays.key.ready = false;
     if (!overlays.key.on) return;
     const src = byId(overlays.key.sourceId);
     if (!src) return;
+    if (keyer) {
+      const kw = Math.min(W, 1920), kh = Math.round(kw * 9 / 16);
+      if (keySrc.width !== kw) { keySrc.width = kw; keySrc.height = kh; }
+      drawSource(keySrcCtx, src, kw, kh);
+      if (keyer.run(keySrc, settings.key)) {
+        overlays.key.canvas = keyer.canvas;
+        overlays.key.ready = true;
+        return;
+      }
+    }
     drawSource(keyCtx, src, 640, 360);
     const img = keyCtx.getImageData(0, 0, 640, 360);
     const d = img.data;
@@ -514,6 +646,7 @@
       if (blue) d[i + 2] = other; else d[i + 1] = other;
     }
     keyCtx.putImageData(img, 0, 0);
+    overlays.key.canvas = keyCanvas;
     overlays.key.ready = true;
   }
 
@@ -562,7 +695,7 @@
   }
 
   function drawOverlays(ctx, w, h) {
-    if (overlays.key.on && overlays.key.ready) ctx.drawImage(keyCanvas, 0, 0, w, h);
+    if (overlays.key.on && overlays.key.ready) ctx.drawImage(overlays.key.canvas, 0, 0, w, h);
     if (overlays.pip.on) {
       const src = byId(overlays.pip.sourceId);
       if (src) {
@@ -960,8 +1093,10 @@
           ${cams.map((d, i) => `<option value="${esc(d.deviceId)}">${esc(d.label || 'Camera ' + (i + 1))}</option>`).join('')}
         </select></label>
         <label class="field"><span>ความละเอียด</span><select name="res" class="select">
+          <option value="3840x2160">3840 × 2160 (4K UHD)</option>
+          <option value="2560x1440">2560 × 1440 (QHD)</option>
+          <option value="1920x1080" selected>1920 × 1080 (Full HD)</option>
           <option value="1280x720">1280 × 720 (HD)</option>
-          <option value="1920x1080">1920 × 1080 (Full HD)</option>
           <option value="640x480">640 × 480</option>
         </select></label>
         <label class="field"><span>เสียงของ Input นี้</span><select name="mic" class="select">
@@ -980,7 +1115,9 @@
         audio: f.mic.value ? { deviceId: { exact: f.mic.value }, echoCancellation: false, noiseSuppression: false, autoGainControl: false } : false
       });
       addStreamInput(stream, { type: 'camera', name: camLabel.replace(/\s*\([0-9a-f]{4}:[0-9a-f]{4}\)\s*$/i, '').slice(0, 32) });
-      toast(`เพิ่มกล้อง “${camLabel}” แล้ว`, 'success');
+      const got = stream.getVideoTracks()[0].getSettings();
+      if (got.width && got.height < rh) toast(`เพิ่มกล้องแล้ว — ได้ภาพ ${got.width}×${got.height} เพราะกล้องรองรับสูงสุดเท่านี้`, 'warn', 6000);
+      else toast(`เพิ่มกล้อง “${camLabel}” แล้ว (${got.width || rw}×${got.height || rh})`, 'success');
     } catch (e) {
       toast('เปิดกล้องไม่สำเร็จ: ' + e.message, 'error');
     }
@@ -992,7 +1129,7 @@
       return;
     }
     try {
-      const stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: 30 } }, audio: true });
+      const stream = await navigator.mediaDevices.getDisplayMedia({ video: { width: { ideal: 3840 }, height: { ideal: 2160 }, frameRate: { ideal: 30 } }, audio: true });
       const n = inputs.filter(i => i.type === 'screen').length + 1;
       addStreamInput(stream, { type: 'screen', name: `SCREEN ${n}` });
     } catch (e) {
@@ -1465,14 +1602,21 @@
     }
   };
 
-  function pickMime() {
+  // 1440p/4K: ใช้ H.264 ก่อน เพราะคอมพิวเตอร์ส่วนใหญ่มีชิปเข้ารหัส H.264 ในตัว (VP9 มักเข้ารหัสด้วย CPU จึงหนักมากที่ 4K)
+  // ไฟล์บันทึกใช้ MP4, การสตรีมใช้ WebM (ส่งผ่าน Gateway ได้ทันทีโดยไม่ต้องรอส่วนหัวไฟล์)
+  function pickMime(purpose = 'record') {
     if (!window.MediaRecorder) return null;
-    const list = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm', 'video/mp4;codecs=avc1,mp4a.40.2', 'video/mp4'];
+    const h264 = purpose === 'stream'
+      ? ['video/webm;codecs=h264,opus', 'video/webm;codecs=avc1,opus']
+      : ['video/mp4;codecs=avc1.640033,mp4a.40.2', 'video/mp4;codecs=avc1,mp4a.40.2', 'video/webm;codecs=h264,opus'];
+    const vpx = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'];
+    const rest = ['video/mp4;codecs=avc1,mp4a.40.2', 'video/mp4'];
+    const list = H >= 1440 ? [...h264, ...vpx, ...rest] : [...vpx, ...h264, ...rest];
     return list.find(t => MediaRecorder.isTypeSupported(t)) || '';
   }
 
-  function makeRecorder() {
-    const mime = pickMime();
+  function makeRecorder(purpose = 'record') {
+    const mime = pickMime(purpose);
     if (mime === null) throw new Error('เบราว์เซอร์นี้ไม่รองรับการบันทึกวิดีโอ (MediaRecorder)');
     const opts = { videoBitsPerSecond: settings.videoKbps * 1000, audioBitsPerSecond: 160000 };
     if (mime) opts.mimeType = mime;
@@ -1527,6 +1671,10 @@
   function startDestinations(list) {
     list = list.filter(d => !isRunning(d.id));
     if (!list.length) return;
+    for (const d of list) {
+      const max = PLATFORMS[d.platform]?.maxHeight;
+      if (max && H > max) toast(`${destLabel(d)} รับภาพสูงสุด ${max}p — สตรีม ${formatTag(H, settings.fps)} อาจถูกปฏิเสธหรือถูกย่อภาพ`, 'warn', 7000);
+    }
     const gwErr = gatewayProblem();
     const bad = list.find(d => destProblem(d));
     if (gwErr || bad) {
@@ -1572,14 +1720,14 @@
 
   function connectGateway(initial) {
     let r;
-    try { r = makeRecorder(); } catch (e) {
+    try { r = makeRecorder('stream'); } catch (e) {
       initial.forEach(d => streamer.dests.delete(d.id));
       toast('เริ่มสตรีมไม่ได้: ' + e.message, 'error');
       return;
     }
     const gw = settings.gateway.trim();
     const sep = gw.includes('?') ? '&' : '?';
-    const ws = new WebSocket(`${gw}${sep}fps=${settings.fps}&vb=${settings.videoKbps}`);
+    const ws = new WebSocket(`${gw}${sep}fps=${settings.fps}&vb=${settings.videoKbps}&res=${H}`);
     Object.assign(streamer, { ws, recorder: r, state: 'connecting', sent: 0, kbps: 0, lastBytes: 0, lastAt: performance.now(), queue: [...initial] });
 
     ws.onopen = () => {
@@ -1597,13 +1745,14 @@
       if (typeof ev.data !== 'string') return;
       let msg;
       try { msg = JSON.parse(ev.data); } catch (e) { return; }
+      if (msg.type === 'status' && msg.encoder) onEncoderStats(msg.encoder);
       if (msg.type === 'status' && Array.isArray(msg.destinations)) onDestStatus(msg.destinations);
     };
     ws.onclose = ev => {
       const byUser = ev.code === 1000;
       const wasLive = streamer.active;
       if (r.state !== 'inactive') r.stop();
-      Object.assign(streamer, { active: false, state: 'idle', ws: null, recorder: null, kbps: 0, queue: [] });
+      Object.assign(streamer, { active: false, state: 'idle', ws: null, recorder: null, kbps: 0, queue: [], encoder: null });
       streamer.dests.clear();
       setStreamButton();
       refreshLiveDialog();
@@ -1612,6 +1761,16 @@
       if (byUser) { if (wasLive) toast('หยุดสตรีมแล้ว'); }
       else toast((wasLive ? 'การสตรีมหยุดลง: ' : 'เชื่อมต่อ Stream Gateway ไม่ได้: ') + (ev.reason || 'ตรวจสอบว่า Gateway ทำงานอยู่และ URL ถูกต้อง'), 'error', 7000);
     };
+  }
+
+  // ความเร็วการเข้ารหัสของ Gateway — ต่ำกว่า 1.0x แปลว่าเซิร์ฟเวอร์เข้ารหัสไม่ทัน ภาพจะกระตุก/ดีเลย์
+  let slowEncoderWarned = 0;
+  function onEncoderStats(enc) {
+    streamer.encoder = { speed: +enc.speed || 0, fps: +enc.fps || 0 };
+    if (streamer.encoder.speed && streamer.encoder.speed < 0.9 && Date.now() - slowEncoderWarned > 60000) {
+      slowEncoderWarned = Date.now();
+      toast(`Stream Gateway เข้ารหัสไม่ทัน (${streamer.encoder.speed.toFixed(2)}x) — ลดความละเอียด/เฟรมเรต หรือใช้เซิร์ฟเวอร์ที่แรงขึ้น`, 'warn', 9000);
+    }
   }
 
   function onDestStatus(list) {
@@ -1837,16 +1996,16 @@
           ${live ? '<p class="note warn">กำลังบันทึกหรือสตรีมอยู่ — เปลี่ยนความละเอียดและเฟรมเรตได้หลังหยุดก่อน</p>' : ''}
           <div class="field-row">
             <label class="field"><span>ความละเอียด Program</span><select name="resolution" class="select" ${live ? 'disabled' : ''}>
-              <option value="720p" ${settings.resolution === '720p' ? 'selected' : ''}>1280 × 720 (720p)</option>
-              <option value="1080p" ${settings.resolution === '1080p' ? 'selected' : ''}>1920 × 1080 (1080p)</option>
+              ${Object.keys(RESOLUTIONS).map(k => `<option value="${k}" ${settings.resolution === k ? 'selected' : ''}>${RES_LABEL[k]}</option>`).join('')}
             </select></label>
             <label class="field"><span>เฟรมเรต</span><select name="fps" class="select" ${live ? 'disabled' : ''}>
               ${FRAME_RATES.map(f => `<option value="${f}" ${+settings.fps === f ? 'selected' : ''}>${f} fps</option>`).join('')}
             </select></label>
           </div>
           <label class="field"><span>บิตเรตวิดีโอ (kbps) — ใช้ทั้งบันทึกและสตรีม</span>
-            <input name="videoKbps" class="input" type="number" min="800" max="12000" step="100" value="${settings.videoKbps}" ${live ? 'disabled' : ''}></label>
-          <p class="note">แนะนำ 720p30 ≈ 3000–4500 kbps · 1080p30 ≈ 4500–6000 kbps · 1080p60 ≈ 6000–9000 kbps ความละเอียดสูงใช้ CPU มากขึ้น</p>
+            <input name="videoKbps" class="input" type="number" min="800" max="${MAX_KBPS}" step="100" value="${settings.videoKbps}" ${live ? 'disabled' : ''}></label>
+          <p class="note">ค่าแนะนำจะใส่ให้อัตโนมัติเมื่อเปลี่ยนความละเอียด/เฟรมเรต: 720p ≈ 4500 · 1080p ≈ 6000 · 1440p ≈ 13000 · 4K ≈ 25000 kbps (×1.5 สำหรับ 50/60 fps)</p>
+          <p class="note warn res-4k-note" ${RESOLUTIONS[settings.resolution][1] >= 1440 ? '' : 'hidden'}>ความละเอียด 1440p/4K ต้องใช้คอมพิวเตอร์แรง (แนะนำ CPU 8 คอร์ขึ้นไปหรือมีการ์ดจอแยก) และอินเทอร์เน็ตขาขึ้นอย่างน้อย 1.5 เท่าของบิตเรต · Stream Gateway ควรมี 8 vCPU ขึ้นไป · Facebook และ Twitch รับสูงสุด 1080p ส่วน YouTube รับได้ถึง 4K</p>
         </div>
         <div class="modal-pane" data-mpane="stream">
           <label class="field"><span>Stream Gateway (WebSocket)</span>
@@ -1871,6 +2030,13 @@
         };
         $$('[data-mtab]', modal).forEach(b => b.addEventListener('click', () => showTab(b.dataset.mtab)));
         showTab(tab);
+        const fo = $('form', modal);
+        const suggest = () => {
+          fo.videoKbps.value = recommendedKbps(fo.resolution.value, +fo.fps.value);
+          $('.res-4k-note', modal).hidden = RESOLUTIONS[fo.resolution.value][1] < 1440;
+        };
+        fo.resolution.addEventListener('change', suggest);
+        fo.fps.addEventListener('change', suggest);
         const list = $('.dest-list', modal);
         const addBtn = $('.dest-add', modal);
         const showKeys = $('.dest-showkeys', modal);
@@ -1926,7 +2092,7 @@
       if (!live) {
         settings.resolution = f.resolution.value;
         settings.fps = +f.fps.value;
-        settings.videoKbps = clamp(Math.round(+f.videoKbps.value || 4500), 800, 12000);
+        settings.videoKbps = clamp(Math.round(+f.videoKbps.value || 4500), 800, MAX_KBPS);
       }
       settings.gateway = f.gateway.value.trim();
       if (readDests) settings.destinations = readDests();
@@ -1971,6 +2137,7 @@
     ['บันทึก สตรีม และเอาต์พุต', ['REC บันทึก Program เป็นไฟล์ (WebM หรือ MP4 ตามเบราว์เซอร์) แล้วดาวน์โหลดอัตโนมัติเมื่อกดหยุด',
       'STREAM ส่งภาพไปหลายปลายทางพร้อมกัน (YouTube / Facebook / Twitch / RTMP อื่น ๆ สูงสุด 6 ช่อง) ผ่าน Stream Gateway — เพิ่มปลายทางที่ปุ่มตั้งค่า (ไอคอนแถบเลื่อน) แท็บการสตรีม',
       'กดปุ่ม STREAM เพื่อเปิดแผงปลายทาง: กด “เริ่ม” ทีละช่องเพื่อไลฟ์เฉพาะช่องนั้น หรือ “เริ่มทั้งหมด” สำหรับทุกช่องที่ติ๊กไว้ — แต่ละช่องหยุดได้อิสระ ช่องที่หลุดจะเชื่อมต่อใหม่เอง',
+      'ความละเอียดสูงสุด 4K (3840×2160) ตั้งได้ที่ปุ่มตั้งค่า → เอาต์พุต ระบบใส่บิตเรตแนะนำให้ · กล้องเลือก 4K ได้ และการ์ด Input แสดงความละเอียดจริง · มือถือแตะปุ่ม HD/FHD/4K เพื่อเลือกคุณภาพ',
       'ปุ่มกล้องบันทึกภาพนิ่ง PNG · ปุ่มหน้าต่างเปิด Program Output แยกสำหรับต่อจอหรือโปรเจกเตอร์ · ปุ่มเต็มจอบนจอ Program',
       'ระบบยังทำงานต่อแม้สลับแท็บ และกันหน้าจอดับระหว่างออกอากาศ']]
   ];
@@ -2058,11 +2225,13 @@
 
   function updateStatus() {
     setStat('#st-engine', `${fps ? fps.toFixed(0) : '--'} fps · ${renderMs.toFixed(1)} ms`, fps && fps < settings.fps * 0.8 ? 'warn' : 'ok');
-    setStat('#st-output', `${W}×${H}p${settings.fps} · ${settings.videoKbps} kbps`, 'ok');
+    setStat('#st-output', `${W}×${H} ${formatTag(H, settings.fps)} · ${settings.videoKbps} kbps`, 'ok');
     if (streamer.state === 'live') {
       const slow = streamer.ws && streamer.ws.bufferedAmount > 2e6;
       const { live, active, errors } = destCounts();
-      setStat('#st-stream', `LIVE ${fmtDuration(Date.now() - streamer.start)} · ${streamer.kbps} kbps · ${live}/${active} ปลายทาง${slow ? ' · เน็ตช้า' : ''}`, slow || errors ? 'warn' : 'live');
+      const enc = streamer.encoder && streamer.encoder.speed ? ` · ENC ${streamer.encoder.speed.toFixed(2)}x` : '';
+      const encSlow = streamer.encoder && streamer.encoder.speed && streamer.encoder.speed < 0.95;
+      setStat('#st-stream', `LIVE ${fmtDuration(Date.now() - streamer.start)} · ${streamer.kbps} kbps · ${live}/${active} ปลายทาง${enc}${slow ? ' · เน็ตช้า' : ''}`, slow || errors || encSlow ? 'warn' : 'live');
     } else {
       const n = settings.destinations.filter(d => d.enabled).length;
       setStat('#st-stream', streamer.state === 'connecting' ? 'CONNECTING…' : settings.gateway ? `READY · ${n} ปลายทาง` : 'NOT SET', streamer.state === 'connecting' ? 'warn' : '');
@@ -2082,7 +2251,23 @@
     }
   }
 
+  function resTag(w, h) {
+    const p = Math.min(w, h);
+    return p >= 2160 ? '4K' : p >= 1440 ? '1440p' : p >= 1080 ? '1080p' : p >= 720 ? '720p' : `${w}×${h}`;
+  }
+  function updateCardResolutions() {
+    for (const inp of inputs) {
+      const card = $(`#inputs-grid .card[data-id="${inp.id}"] .card-sub`);
+      if (!card || inp.status !== 'live') continue;
+      const w = inp.el?.videoWidth || inp.el?.naturalWidth, h = inp.el?.videoHeight || inp.el?.naturalHeight;
+      const meta = TYPE_META[inp.type];
+      const label = inp.name.toUpperCase() === meta.label ? '' : meta.label;
+      card.textContent = w && h ? `${label}${label ? ' · ' : ''}${resTag(w, h)}` : label;
+    }
+  }
+
   function tickClock() {
+    updateCardResolutions();
     const now = new Date();
     $('#clock').textContent = `${pad2(now.getHours())}:${pad2(now.getMinutes())}:${pad2(now.getSeconds())}`;
     $('#onair-timer').textContent = onAirSince ? fmtDuration(Date.now() - onAirSince) : '00:00:00';

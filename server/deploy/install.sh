@@ -9,6 +9,8 @@
 #    DOMAIN=live.example.com   ใช้โดเมนของตัวเอง (ต้องชี้ A record มาที่ IP เซิร์ฟเวอร์ก่อน)
 #                              ถ้าไม่ใส่ จะใช้ <IP>.sslip.io ให้อัตโนมัติ — ไม่ต้องมีโดเมน
 #    MAX_DESTINATIONS=6        จำนวนปลายทางสูงสุดต่อการสตรีม
+#    VIDEO_ENCODER=h264_nvenc  ใช้การ์ดจอ NVIDIA เข้ารหัส (ต้องติดตั้ง NVIDIA Container Toolkit เอง)
+#    X264_PRESET=superfast     ปรับความเร็ว/คุณภาพของการเข้ารหัสด้วย CPU
 #    BRANCH=...                branch ของโค้ด (ค่าเริ่มต้น = branch หลักของ repo)
 #
 #  รันซ้ำเมื่อไหร่ก็ได้เพื่ออัปเดตเป็นเวอร์ชันล่าสุด — รหัส (token) และโดเมนเดิมจะถูกเก็บไว้
@@ -20,6 +22,8 @@ BRANCH="${BRANCH:-}"
 INSTALL_DIR="${INSTALL_DIR:-/opt/webmix-gateway}"
 REQ_DOMAIN="${DOMAIN:-}"
 REQ_MAX="${MAX_DESTINATIONS:-}"
+REQ_ENCODER="${VIDEO_ENCODER:-}"
+REQ_PRESET="${X264_PRESET:-}"
 
 say()  { printf '\033[1;33m==>\033[0m %s\n' "$*"; }
 ok()   { printf '\033[1;32m ✓\033[0m %s\n' "$*"; }
@@ -57,11 +61,13 @@ fi
 cd "$INSTALL_DIR/server/deploy"
 
 # ---------------------------------------------------------------- 3. Config
-DOMAIN="" STREAM_TOKEN="" MAX_DESTINATIONS=""
+DOMAIN="" STREAM_TOKEN="" MAX_DESTINATIONS="" VIDEO_ENCODER="" X264_PRESET=""
 # shellcheck disable=SC1091
 [ -f .env ] && . ./.env
 DOMAIN="${REQ_DOMAIN:-$DOMAIN}"
 MAX_DESTINATIONS="${REQ_MAX:-${MAX_DESTINATIONS:-6}}"
+VIDEO_ENCODER="${REQ_ENCODER:-${VIDEO_ENCODER:-libx264}}"
+X264_PRESET="${REQ_PRESET:-$X264_PRESET}"
 
 PUBLIC_IP="$(curl -fsS4 --max-time 10 https://api.ipify.org || curl -fsS4 --max-time 10 https://ifconfig.me || true)"
 if [ -z "$DOMAIN" ]; then
@@ -75,6 +81,8 @@ cat > .env <<EOF
 DOMAIN=$DOMAIN
 STREAM_TOKEN=$STREAM_TOKEN
 MAX_DESTINATIONS=$MAX_DESTINATIONS
+VIDEO_ENCODER=$VIDEO_ENCODER
+X264_PRESET=$X264_PRESET
 EOF
 ok "โดเมน: $DOMAIN"
 
