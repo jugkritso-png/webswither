@@ -59,7 +59,7 @@ case "$ABI" in
     [ "$ABI" = x86_64 ] && X264_ARGS+=(--disable-asm) && FF_ARGS+=(--disable-x86asm)
     FF_ARGS+=(--enable-cross-compile --target-os=android --arch="$ARCH" --cpu="$CPU" --cc="$CC" --cxx="$CXX" --ar="$AR" --ranlib="$RANLIB" --strip="$STRIP" --nm="$NM"
       --sysroot="$TC/sysroot" --enable-jni --enable-mediacodec --enable-encoder=h264_mediacodec
-      --extra-ldflags="-Wl,-z,max-page-size=16384" --extra-libs="-lc++_static -lc++abi")
+      --extra-ldflags="-Wl,-z,max-page-size=16384 -static-libstdc++" --extra-libs="-lc++_static -lc++abi")
     ;;
   *) echo "ABI ไม่รู้จัก: $ABI" >&2; exit 2 ;;
 esac
@@ -78,6 +78,10 @@ cmake --build "$BUILD/srt" -j "$JOBS" >"$BUILD/srt.log" 2>&1 || { tail -30 "$BUI
 cmake --install "$BUILD/srt" >/dev/null
 # srt.pc ของ static build ต้องลิงก์ mbedtls ด้วย
 sed -i "s#^Libs.private:.*#& -L$PREFIX/lib -lmbedtls -lmbedx509 -lmbedcrypto#" "$PREFIX/lib/pkgconfig/srt.pc"
+# Android: ใช้ C++ runtime แบบ static (แอปไม่มี libc++_shared.so ให้ ffmpeg)
+if [ "$ABI" != host ]; then
+  sed -i -E 's/-l(c\+\+|stdc\+\+)( |$)/-lc++_static -lc++abi\2/g' "$PREFIX/lib/pkgconfig/srt.pc"
+fi
 
 echo "== x264 ($ABI)"
 rm -rf "$BUILD/x264" && cp -r "$SRC/x264" "$BUILD/x264"
@@ -103,4 +107,14 @@ rm -rf "$BUILD/ffmpeg" && mkdir -p "$BUILD/ffmpeg"
 make -C "$BUILD/ffmpeg" -j "$JOBS" ffmpeg >"$BUILD/ffmpeg-make.log" 2>&1 || { tail -40 "$BUILD/ffmpeg-make.log"; exit 1; }
 cp "$BUILD/ffmpeg/ffmpeg" "$OUT/ffmpeg"
 "${STRIP:-strip}" "$OUT/ffmpeg"
+# Android: ต้องพึ่งแค่ไลบรารีของระบบ (libc, libm, libdl, liblog, libmediandk, libandroid …)
+if [ "$ABI" != host ]; then
+  NEEDED=$("$TC/bin/llvm-readelf" -d "$OUT/ffmpeg" | sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p' | tr '\n' ' ')
+  echo "NEEDED: $NEEDED"
+  for lib in $NEEDED; do
+    case "$lib" in libc.so|libm.so|libdl.so|liblog.so|libmediandk.so|libandroid.so|libz.so|libEGL.so|libGLESv2.so|libOpenSLES.so|libnativewindow.so) ;;
+      *) echo "ffmpeg ต้องใช้ $lib ซึ่งไม่มีในเครื่อง Android" >&2; exit 1 ;;
+    esac
+  done
+fi
 ls -la "$OUT/ffmpeg"
