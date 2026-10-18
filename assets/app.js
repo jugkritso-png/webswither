@@ -288,6 +288,7 @@
     youtube: { label: 'YouTube Live', server: 'rtmp://a.rtmp.youtube.com/live2', maxHeight: 2160 },
     facebook: { label: 'Facebook Live', server: 'rtmps://live-api-s.facebook.com:443/rtmp', maxHeight: 1080 },
     twitch: { label: 'Twitch', server: 'rtmp://live.twitch.tv/app', maxHeight: 1080 },
+    srt: { label: 'SRT (vMix / OBS / SRT Server)', server: '' },
     custom: { label: 'RTMP อื่น ๆ (กำหนดเอง)', server: '' }
   };
   const RESOLUTIONS = { '720p': [1280, 720], '1080p': [1920, 1080], '1440p': [2560, 1440], '2160p': [3840, 2160] };
@@ -325,8 +326,9 @@
 
   // ปลายทางการสตรีม (ส่งพร้อมกันได้หลายช่อง) — ย้ายค่าแบบปลายทางเดียวของเวอร์ชันก่อนมาด้วย
   const MAX_DESTINATIONS = 6;
+  const SRT_LATENCIES = [120, 200, 500, 1000, 2000, 4000];
   const newDest = (platform = 'youtube', server, key = '') => ({
-    id: uid(), platform, server: server ?? PLATFORMS[platform].server, key, enabled: true
+    id: uid(), platform, server: server ?? PLATFORMS[platform].server, key, passphrase: '', latency: 500, enabled: true
   });
   if (!Array.isArray(settings.destinations)) settings.destinations = [];
   if (!settings.destinations.length && (saved.server || saved.streamKey)) {
@@ -341,29 +343,54 @@
       platform: PLATFORMS[d.platform] ? d.platform : 'custom',
       server: String(d.server || ''),
       key: String(d.key || ''),
+      passphrase: String(d.passphrase || ''),
+      latency: SRT_LATENCIES.includes(+d.latency) ? +d.latency : 500,
       enabled: d.enabled !== false
     }));
   delete settings.platform; delete settings.server; delete settings.streamKey;
 
   function saveSettings() {
     const copy = JSON.parse(JSON.stringify(settings));
-    if (!settings.rememberKey) copy.destinations.forEach(d => { d.key = ''; });
+    if (!settings.rememberKey) copy.destinations.forEach(d => { d.key = ''; d.passphrase = ''; });
     store.set('settings', copy);
   }
 
   const RTMP_RE = /^rtmps?:\/\/\S+$/i;
-  const destUrl = d => {
+  const SRT_RE = /^srt:\/\/[^\s/?#]+:\d+(\?\S*)?$/i;
+  const isSrt = d => d.platform === 'srt';
+  // SRT: ส่ง MPEG-TS แบบ caller ไปที่ srt://host:port พร้อม Stream ID, รหัสเข้ารหัส (AES) และค่า latency
+  function destUrl(d) {
     const server = d.server.trim().replace(/\/+$/, '');
+    if (isSrt(d)) {
+      if (!SRT_RE.test(server)) return server;
+      const u = new URL(server.replace(/^srt:/i, 'http:'));
+      if (d.key.trim()) u.searchParams.set('streamid', d.key.trim());
+      if (d.passphrase) { u.searchParams.set('passphrase', d.passphrase); u.searchParams.set('pbkeylen', '16'); }
+      u.searchParams.set('latency', String(d.latency * 1000)); // ffmpeg ใช้หน่วยไมโครวินาที
+      return 'srt:' + u.toString().slice(5).replace(/\/\?/, '?').replace(/\/$/, '');
+    }
     return d.key.trim() ? `${server}/${d.key.trim()}` : server;
-  };
-  const destMasked = d => d.server.trim().replace(/\/+$/, '') + (d.key.trim() ? '/••••' + d.key.trim().slice(-4) : '');
+  }
+  function destMasked(d) {
+    const server = d.server.trim().replace(/\/+$/, '');
+    if (isSrt(d)) return `${server.replace(/\?.*$/, '')} · ${d.latency} ms${d.key.trim() ? ' · ID ••••' + d.key.trim().slice(-4) : ''}${d.passphrase ? ' · 🔒' : ''}`;
+    return server + (d.key.trim() ? '/••••' + d.key.trim().slice(-4) : '');
+  }
+  const hostOf = d => (/^(?:rtmps?|srt):\/\/([^/:?]+)/i.exec(d.server) || [])[1];
+  const baseLabel = d => d.platform === 'custom' ? (hostOf(d) || 'RTMP')
+    : isSrt(d) ? `SRT ${hostOf(d) || ''}`.trim() : PLATFORMS[d.platform].label;
   function destLabel(d) {
     if (!d) return '';
-    const base = d.platform !== 'custom' ? PLATFORMS[d.platform].label : ((/^rtmps?:\/\/([^/:]+)/i.exec(d.server) || [])[1] || 'RTMP');
-    const same = settings.destinations.filter(x => (x.platform !== 'custom' ? PLATFORMS[x.platform].label : ((/^rtmps?:\/\/([^/:]+)/i.exec(x.server) || [])[1] || 'RTMP')) === base);
+    const base = baseLabel(d);
+    const same = settings.destinations.filter(x => baseLabel(x) === base);
     return same.length > 1 ? `${base} #${same.indexOf(d) + 1}` : base;
   }
   function destProblem(d) {
+    if (isSrt(d)) {
+      if (!SRT_RE.test(d.server.trim())) return 'SRT ต้องอยู่ในรูปแบบ srt://host:port';
+      if (d.passphrase && (d.passphrase.length < 10 || d.passphrase.length > 64)) return 'รหัสผ่าน SRT ต้องยาว 10–64 ตัวอักษร';
+      return '';
+    }
     if (!RTMP_RE.test(destUrl(d))) return 'RTMP Server ต้องขึ้นต้นด้วย rtmp:// หรือ rtmps://';
     if (!d.key.trim() && d.platform !== 'custom') return 'ยังไม่ได้ใส่ Stream Key';
     return '';
@@ -2018,8 +2045,8 @@
             <button type="button" class="btn btn-sm dest-add">${icon('plus')}เพิ่มปลายทาง</button>
           </div>
           <div class="dest-options">
-            <label class="check"><input type="checkbox" class="dest-showkeys"> แสดง Stream Key</label>
-            <label class="check"><input type="checkbox" name="rememberKey" ${settings.rememberKey ? 'checked' : ''}> จำ Stream Key ไว้ในเบราว์เซอร์เครื่องนี้</label>
+            <label class="check"><input type="checkbox" class="dest-showkeys"> แสดง Stream Key / รหัสผ่าน</label>
+            <label class="check"><input type="checkbox" name="rememberKey" ${settings.rememberKey ? 'checked' : ''}> จำ Stream Key และรหัสผ่าน SRT ไว้ในเบราว์เซอร์เครื่องนี้</label>
           </div>
         </div>`,
       actions: [{ label: 'ยกเลิก' }, { label: 'บันทึก', primary: true, value: 'save' }],
@@ -2046,9 +2073,15 @@
             <select class="select" data-f="platform" aria-label="แพลตฟอร์ม">
               ${Object.entries(PLATFORMS).map(([k, p]) => `<option value="${k}" ${d.platform === k ? 'selected' : ''}>${p.label}</option>`).join('')}
             </select>
-            <input class="input mono" data-f="server" value="${esc(d.server)}" placeholder="rtmp://..." aria-label="RTMP Server">
-            <input class="input mono" data-f="key" type="${showKeys.checked ? 'text' : 'password'}" autocomplete="off" value="${esc(d.key)}" placeholder="Stream Key" aria-label="Stream Key">
+            <input class="input mono" data-f="server" value="${esc(d.server)}" placeholder="${isSrt(d) ? 'srt://host:9000' : 'rtmp://...'}" aria-label="Server URL">
+            <input class="input mono" data-f="key" type="${showKeys.checked ? 'text' : 'password'}" autocomplete="off" value="${esc(d.key)}" placeholder="${isSrt(d) ? 'Stream ID (ถ้ามี)' : 'Stream Key'}" aria-label="Stream Key / Stream ID">
             <button type="button" class="btn btn-ghost btn-icon dest-remove" title="ลบปลายทาง">${icon('x')}</button>
+            <div class="dest-srt" ${isSrt(d) ? '' : 'hidden'}>
+              <input class="input mono" data-f="passphrase" type="${showKeys.checked ? 'text' : 'password'}" autocomplete="off" value="${esc(d.passphrase)}" placeholder="รหัสผ่านเข้ารหัส SRT (10–64 ตัว, ถ้ามี)" aria-label="SRT passphrase">
+              <select class="select" data-f="latency" aria-label="SRT latency" title="SRT latency — ยิ่งสูงยิ่งทนเน็ตกระตุก แต่ดีเลย์มากขึ้น">
+                ${SRT_LATENCIES.map(ms => `<option value="${ms}" ${d.latency === ms ? 'selected' : ''}>Latency ${ms} ms</option>`).join('')}
+              </select>
+            </div>
           </div>`;
         const syncAdd = () => { addBtn.disabled = list.children.length >= MAX_DESTINATIONS; };
         list.innerHTML = settings.destinations.map(rowHtml).join('');
@@ -2069,20 +2102,26 @@
           const row = e.target.closest('.dest-row');
           if (e.target.dataset.f === 'platform') {
             const p = PLATFORMS[e.target.value];
+            const srt = e.target.value === 'srt';
             const server = row.querySelector('[data-f=server]');
             if (p.server) server.value = p.server; else { server.value = ''; server.focus(); }
+            server.placeholder = srt ? 'srt://host:9000' : 'rtmp://...';
+            row.querySelector('[data-f=key]').placeholder = srt ? 'Stream ID (ถ้ามี)' : 'Stream Key';
+            row.querySelector('.dest-srt').hidden = !srt;
           }
           if (e.target.dataset.f === 'enabled') row.classList.toggle('is-disabled', !e.target.checked);
         });
         showKeys.addEventListener('change', () => {
-          $$('[data-f=key]', list).forEach(i => { i.type = showKeys.checked ? 'text' : 'password'; });
+          $$('[data-f=key], [data-f=passphrase]', list).forEach(i => { i.type = showKeys.checked ? 'text' : 'password'; });
         });
         readDests = () => $$('.dest-row', list).map(row => ({
           id: row.dataset.id,
           enabled: row.querySelector('[data-f=enabled]').checked,
           platform: row.querySelector('[data-f=platform]').value,
           server: row.querySelector('[data-f=server]').value.trim(),
-          key: row.querySelector('[data-f=key]').value.trim()
+          key: row.querySelector('[data-f=key]').value.trim(),
+          passphrase: row.querySelector('[data-f=passphrase]').value,
+          latency: +row.querySelector('[data-f=latency]').value || 500
         }));
       }
     }).then(result => {
@@ -2135,7 +2174,8 @@
       'AFV (Audio Follow Video) เปิดเสียงของช่องนั้นเฉพาะตอนที่ภาพของมันอยู่ใน Program',
       'MON ฟังเสียง Master ผ่านลำโพง/หูฟังของเครื่องนี้ (ปิดไว้เป็นค่าเริ่มต้นเพื่อกันเสียงหอน)']],
     ['บันทึก สตรีม และเอาต์พุต', ['REC บันทึก Program เป็นไฟล์ (WebM หรือ MP4 ตามเบราว์เซอร์) แล้วดาวน์โหลดอัตโนมัติเมื่อกดหยุด',
-      'STREAM ส่งภาพไปหลายปลายทางพร้อมกัน (YouTube / Facebook / Twitch / RTMP อื่น ๆ สูงสุด 6 ช่อง) ผ่าน Stream Gateway — เพิ่มปลายทางที่ปุ่มตั้งค่า (ไอคอนแถบเลื่อน) แท็บการสตรีม',
+      'SRT: เลือกแพลตฟอร์ม “SRT” แล้วใส่ srt://host:port, Stream ID, รหัสผ่านเข้ารหัส (ถ้ามี) และ Latency — ใช้ส่งเข้า vMix, OBS, Wowza, Haivision หรือ SRT Server ได้ทนเน็ตกระตุกกว่า RTMP',
+      'STREAM ส่งภาพไปหลายปลายทางพร้อมกัน (YouTube / Facebook / Twitch / SRT / RTMP อื่น ๆ สูงสุด 6 ช่อง) ผ่าน Stream Gateway — เพิ่มปลายทางที่ปุ่มตั้งค่า (ไอคอนแถบเลื่อน) แท็บการสตรีม',
       'กดปุ่ม STREAM เพื่อเปิดแผงปลายทาง: กด “เริ่ม” ทีละช่องเพื่อไลฟ์เฉพาะช่องนั้น หรือ “เริ่มทั้งหมด” สำหรับทุกช่องที่ติ๊กไว้ — แต่ละช่องหยุดได้อิสระ ช่องที่หลุดจะเชื่อมต่อใหม่เอง',
       'ความละเอียดสูงสุด 4K (3840×2160) ตั้งได้ที่ปุ่มตั้งค่า → เอาต์พุต ระบบใส่บิตเรตแนะนำให้ · กล้องเลือก 4K ได้ และการ์ด Input แสดงความละเอียดจริง · มือถือแตะปุ่ม HD/FHD/4K เพื่อเลือกคุณภาพ',
       'ปุ่มกล้องบันทึกภาพนิ่ง PNG · ปุ่มหน้าต่างเปิด Program Output แยกสำหรับต่อจอหรือโปรเจกเตอร์ · ปุ่มเต็มจอบนจอ Program',

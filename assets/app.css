@@ -804,6 +804,7 @@ kbd {
   background: var(--panel-2);
 }
 .dest-row.is-disabled { opacity: .55; }
+.dest-srt { grid-column: 2 / -1; display: grid; grid-template-columns: minmax(0, 1fr) 170px; gap: 8px; }
 .dest-enable { display: grid; place-items: center; width: 28px; cursor: pointer; }
 .dest-enable input { width: 18px; height: 18px; accent-color: var(--pvw); cursor: pointer; }
 .dest-add { align-self: flex-start; }
@@ -887,6 +888,7 @@ kbd {
   .dest-row { grid-template-columns: auto minmax(0, 1fr) auto; }
   .dest-row [data-f=server], .dest-row [data-f=key] { grid-column: 1 / -1; }
   .dest-row .dest-remove { grid-row: 1; grid-column: 3; }
+  .dest-srt { grid-column: 1 / -1; grid-template-columns: 1fr; }
   .dest-live-row { flex-wrap: wrap; }
   .dest-state { order: 3; width: 100%; padding-left: 22px; }
 }

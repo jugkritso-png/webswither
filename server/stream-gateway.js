@@ -1,6 +1,6 @@
 // WebMix Stream Gateway — Multistream
 // รับวิดีโอ (WebM/MP4 จาก MediaRecorder) ผ่าน WebSocket เข้ารหัสด้วย FFmpeg เพียงครั้งเดียว
-// แล้วกระจายสัญญาณไปหลายปลายทาง RTMP/RTMPS พร้อมกัน (YouTube, Facebook, Twitch ฯลฯ)
+// แล้วกระจายสัญญาณไปหลายปลายทาง RTMP/RTMPS และ SRT พร้อมกัน (YouTube, Facebook, Twitch, vMix, OBS, SRT server ฯลฯ)
 // แต่ละปลายทางเริ่ม/หยุด/เชื่อมต่อใหม่ได้อิสระ — ปลายทางหนึ่งหลุดไม่กระทบปลายทางอื่น
 //
 // ใช้งาน:  cd server && npm install && npm start
@@ -18,11 +18,12 @@
 //   client → { type: 'stop', id }                                    หยุดเฉพาะปลายทางนั้น
 //   server → { type: 'status', destinations: [{ id, name, state, message, kbps }] }
 //            state: connecting | live | error | stopped
+//   url: rtmp://… rtmps://… หรือ srt://host:port?streamid=…&passphrase=…&latency=… (SRT ส่งเป็น MPEG-TS)
 //   (ยังรองรับแบบเดิม ?rtmp=URL สำหรับปลายทางเดียว)
 
 const http = require('http');
 const { WebSocketServer } = require('ws');
-const { spawn } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 
 const PORT = Number(process.env.PORT) || 8080;
 const TOKEN = process.env.STREAM_TOKEN || '';
@@ -44,9 +45,32 @@ function videoArgs(height) {
   return ['-c:v', 'libx264', '-preset', preset, '-tune', 'zerolatency', '-profile:v', 'high'];
 }
 const RTMP_RE = /^rtmps?:\/\/[^\s]+$/i;
+const SRT_RE = /^srt:\/\/[^\s/?#]+:\d+(\?[^\s]*)?$/i;
+const OUTPUT_RE = url => RTMP_RE.test(url) || SRT_RE.test(url);
+const SRT_SUPPORTED = (() => {
+  try { return /^\s*srt\s*$/m.test(spawnSync(FFMPEG, ['-hide_banner', '-protocols'], { encoding: 'utf8' }).stdout || ''); }
+  catch (e) { return false; }
+})();
+
+// SRT ส่ง MPEG-TS เป็นแพ็กเก็ตละ 1316 ไบต์ (7 × 188) ตามมาตรฐาน — ใส่ให้ถ้าผู้ใช้ไม่ได้กำหนด
+// passphrase ส่งเป็นตัวเลือกของ ffmpeg แยกจาก URL เพราะ ffmpeg ไม่ถอดรหัส %xx ของ passphrase ใน URL
+// (รหัสที่มี @ & = เว้นวรรค ฯลฯ จะได้ตรงกับฝั่งรับเสมอ) ส่วน streamid ffmpeg ถอดรหัสจาก URL ให้เองอยู่แล้ว
+function outputArgs(url) {
+  if (SRT_RE.test(url)) {
+    const u = new URL(url);
+    const opts = [];
+    const passphrase = u.searchParams.get('passphrase');
+    u.searchParams.delete('passphrase');
+    if (passphrase) opts.push('-passphrase', passphrase);
+    if (!u.searchParams.has('pkt_size')) u.searchParams.set('pkt_size', '1316');
+    if (!u.searchParams.has('mode')) u.searchParams.set('mode', 'caller');
+    return ['-f', 'mpegts', '-mpegts_flags', '+resend_headers', ...opts, `srt://${u.host}?${u.searchParams.toString()}`];
+  }
+  return ['-f', 'flv', url];
+}
 const RETRY_MS = 5000;
 
-const maskUrl = url => url.replace(/[^/]+$/, '***');
+const maskUrl = url => (/^srt:/i.test(url) ? url.replace(/\?.*$/, '?***') : url.replace(/[^/]+$/, '***'));
 
 // หน้าเช็กสถานะ: เปิด https://โดเมน/ ในเบราว์เซอร์แล้วต้องเห็นข้อความ OK
 const server = http.createServer((req, res) => {
@@ -126,7 +150,7 @@ wss.on('connection', (ws, req) => {
       // ต้องอ่านนานกว่า 1 ช่วงคีย์เฟรม (2 วินาที) ปลายทางที่เริ่มกลางไลฟ์จึงเจอ SPS/PPS เสมอ
       '-probesize', '5000000', '-analyzeduration', '3000000',
       '-f', 'mpegts', '-i', 'pipe:0',
-      '-c', 'copy', '-f', 'flv', d.url
+      '-c', 'copy', ...outputArgs(d.url)
     ], { stdio: ['pipe', 'pipe', 'pipe'] });
     d.proc = proc;
     console.log(`${tag} → ${d.name} ${maskUrl(d.url)}`);
@@ -169,8 +193,12 @@ wss.on('connection', (ws, req) => {
     const id = String(raw.id || '').slice(0, 40);
     const url = String(raw.url || '');
     if (!id) return;
-    if (!RTMP_RE.test(url)) {
-      send({ type: 'status', destinations: [{ id, name: String(raw.name || ''), state: 'error', message: 'URL ต้องขึ้นต้นด้วย rtmp:// หรือ rtmps://', kbps: 0 }] });
+    if (!OUTPUT_RE(url)) {
+      send({ type: 'status', destinations: [{ id, name: String(raw.name || ''), state: 'error', message: 'URL ต้องเป็น rtmp://, rtmps:// หรือ srt://host:port', kbps: 0 }] });
+      return;
+    }
+    if (SRT_RE.test(url) && !SRT_SUPPORTED) {
+      send({ type: 'status', destinations: [{ id, name: String(raw.name || ''), state: 'error', message: 'ffmpeg ในเซิร์ฟเวอร์นี้ไม่รองรับ SRT (ต้องคอมไพล์พร้อม libsrt)', kbps: 0 }] });
       return;
     }
     let d = dests.get(id);
@@ -260,4 +288,4 @@ wss.on('connection', (ws, req) => {
   });
 });
 
-console.log(`WebMix Stream Gateway (multistream) listening on ws://0.0.0.0:${PORT}${TOKEN ? ' (token required)' : ''}`);
+console.log(`WebMix Stream Gateway (multistream) listening on ws://0.0.0.0:${PORT}${TOKEN ? ' (token required)' : ''} · SRT ${SRT_SUPPORTED ? 'enabled' : 'NOT available in this ffmpeg'}`);
