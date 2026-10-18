@@ -55,5 +55,7 @@ PROBE=$(ffprobe -v error -show_entries stream=codec_name,width,height -show_entr
 echo "RTMP ที่ได้รับ: $PROBE"
 echo "$PROBE" | grep -q 'codec_name=h264|width=1280|height=720' || { echo "ไม่ได้วิดีโอ H.264 720p"; exit 1; }
 echo "$PROBE" | grep -q 'codec_name=aac' || { echo "ไม่ได้เสียง AAC"; exit 1; }
-ffmpeg -v error -i "$OUT/android-stream.flv" -f null - 2>&1 | head -5
+FRAMES=$(ffprobe -v error -count_frames -select_streams v -show_entries stream=nb_read_frames -of csv=p=0 "$OUT/android-stream.flv")
+echo "ถอดรหัสได้ $FRAMES เฟรม"
+[ "${FRAMES:-0}" -ge 150 ] || { echo "สตรีมที่ได้สั้นหรือถอดรหัสไม่ได้"; exit 1; }
 echo "Android: สตรีมผ่าน Gateway ในแอปสำเร็จ"

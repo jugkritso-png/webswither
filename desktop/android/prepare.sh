@@ -49,6 +49,22 @@ if 'WRITE_EXTERNAL_STORAGE' not in m:
 for feat in ['android.hardware.camera', 'android.hardware.microphone']:
     if feat + '"' not in m:
         m = m.replace('<application', f'<uses-feature android:name="{feat}" android:required="false" />\n    <application', 1)
+# หน้าเว็บในแอปต่อ Gateway ในเครื่องผ่าน ws://127.0.0.1 — Android บล็อกการเชื่อมต่อแบบไม่เข้ารหัสเป็นค่าเริ่มต้น
+# จึงอนุญาตเฉพาะ localhost (การสตรีมออกอินเทอร์เน็ตทำโดย ffmpeg ไม่ผ่าน WebView)
+xml = app / 'src/main/res/xml'
+xml.mkdir(parents=True, exist_ok=True)
+(xml / 'network_security_config.xml').write_text('''<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">127.0.0.1</domain>
+        <domain includeSubdomains="false">localhost</domain>
+        <domain includeSubdomains="true">tauri.localhost</domain>
+    </domain-config>
+</network-security-config>
+''')
+m = re.sub(r'\s*android:usesCleartextTraffic="[^"]*"', '', m)
+if 'networkSecurityConfig' not in m:
+    m = m.replace('<application', '<application android:networkSecurityConfig="@xml/network_security_config"', 1)
 # Android 10: เขียน Movies/WebMix ตรง ๆ ได้ · แตก native library (ffmpeg) ออกมาตอนติดตั้ง
 for attr in ['android:requestLegacyExternalStorage="true"', 'android:extractNativeLibs="true"']:
     if attr.split('=')[0] not in m:

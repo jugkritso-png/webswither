@@ -66,7 +66,8 @@
     add('ipc', !!info, info ? `${info.os}/${info.arch} v${info.version}` : desktop.error);
     if (!info) return { ok: false, checks };
 
-    add('ffmpeg', !!info.ffmpeg, info.ffmpeg ? info.ffmpeg.version : 'ไม่พบ ffmpeg', false);
+    // Android: ffmpeg มากับแอป ต้องมีเสมอ · เดสก์ท็อป: ผู้ใช้ติดตั้งเอง (ไม่มีก็ใช้ส่วนอื่นได้)
+    add('ffmpeg', !!info.ffmpeg, info.ffmpeg ? info.ffmpeg.version : (info.ffmpegError || 'ไม่พบ ffmpeg'), desktop.mobile);
     add('gateway-start', !!info.gateway, info.gateway ? info.gateway.url.replace(/token=[^&]+/, 'token=…') : info.gatewayError);
     if (info.gateway) {
       const ok = await new Promise(resolve => {

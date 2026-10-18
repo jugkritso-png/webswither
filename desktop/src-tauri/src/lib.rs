@@ -20,7 +20,7 @@ use tokio::sync::{Mutex, OnceCell};
 #[derive(Default)]
 struct AppState {
     gateway: OnceCell<Result<webmix_gateway::Handle, String>>,
-    ffmpeg: OnceCell<Option<(String, String)>>,
+    ffmpeg: OnceCell<Result<(String, String), String>>,
     recordings: Mutex<HashMap<u32, Recording>>,
     next_id: AtomicU32,
 }
@@ -53,6 +53,7 @@ struct DesktopInfo {
     encoder: String,
     gateway_error: Option<String>,
     ffmpeg: Option<FfmpegInfo>,
+    ffmpeg_error: Option<String>,
     rec_dir: String,
     temp_dir: String,
     selftest: bool,
@@ -122,16 +123,36 @@ fn ffmpeg_candidates(app: &AppHandle) -> Vec<String> {
     list
 }
 
-async fn find_ffmpeg(app: &AppHandle) -> Option<(String, String)> {
+/// คืน ffmpeg ที่ใช้ได้ หรือเหตุผลที่หาไม่เจอ (แสดงในการตั้งค่าและผลทดสอบตัวเอง)
+async fn find_ffmpeg(app: &AppHandle) -> Result<(String, String), String> {
+    let mut why = Vec::new();
     for cand in ffmpeg_candidates(app) {
         if cand != "ffmpeg" && !Path::new(&cand).exists() {
             continue;
         }
         if let Some((version, _)) = webmix_gateway::probe_ffmpeg(&cand).await {
-            return Some((cand, version));
+            return Ok((cand, version));
         }
+        let reason = match tokio::process::Command::new(&cand).arg("-version").output().await {
+            Err(e) => format!("เรียกไม่ได้: {e}"),
+            Ok(o) => {
+                let err = String::from_utf8_lossy(&o.stderr);
+                format!("exit {:?}: {}", o.status.code(), err.chars().rev().take(200).collect::<String>().chars().rev().collect::<String>())
+            }
+        };
+        why.push(format!("{cand} — {reason}"));
     }
-    None
+    #[cfg(target_os = "android")]
+    match android::native_lib_dir() {
+        Some(dir) => {
+            let files: Vec<String> = std::fs::read_dir(&dir)
+                .map(|r| r.filter_map(|e| e.ok()).map(|e| e.file_name().to_string_lossy().into_owned()).collect())
+                .unwrap_or_default();
+            why.push(format!("native lib dir {}: {}", dir.display(), files.join(", ")));
+        }
+        None => why.push("ไม่พบโฟลเดอร์ native library ใน /proc/self/maps".into()),
+    }
+    Err(if why.is_empty() { "ไม่พบ ffmpeg".into() } else { why.join(" | ") })
 }
 
 fn default_rec_dir(app: &AppHandle) -> PathBuf {
@@ -149,7 +170,9 @@ fn default_rec_dir(app: &AppHandle) -> PathBuf {
 /// ข้อมูลของแอปเดสก์ท็อป — หน้า WebMix เรียกตอนเปิดเพื่อตั้งค่า Gateway ในเครื่องให้อัตโนมัติ
 #[tauri::command]
 async fn desktop_info(app: AppHandle, state: State<'_, AppState>) -> Result<DesktopInfo, String> {
-    let ffmpeg = state.ffmpeg.get_or_init(|| find_ffmpeg(&app)).await.clone();
+    let found = state.ffmpeg.get_or_init(|| find_ffmpeg(&app)).await.clone();
+    let ffmpeg_error = found.as_ref().err().cloned();
+    let ffmpeg = found.ok();
     let gw = state
         .gateway
         .get_or_init(|| async {
@@ -172,6 +195,7 @@ async fn desktop_info(app: AppHandle, state: State<'_, AppState>) -> Result<Desk
         encoder: gw.as_ref().map(|h| h.encoder.clone()).unwrap_or_default(),
         gateway_error: gw.as_ref().err().cloned(),
         ffmpeg: ffmpeg.map(|(path, version)| FfmpegInfo { path, version }),
+        ffmpeg_error,
         rec_dir: default_rec_dir(&app).to_string_lossy().into(),
         temp_dir: scratch_dir(&app).to_string_lossy().into(),
         selftest: selftest_value().is_some(),
@@ -235,9 +259,21 @@ fn header<'a>(req: &'a Request<'_>, key: &str) -> Result<&'a str, String> {
     req.headers().get(key).and_then(|v| v.to_str().ok()).ok_or_else(|| format!("missing {key}"))
 }
 
-fn body_bytes<'a>(req: &'a Request<'_>) -> Result<&'a [u8], String> {
+/// ข้อมูลไฟล์จากหน้าเว็บ: เดสก์ท็อปส่งเป็น binary ตรง ๆ · Android ส่งผ่าน JSON (อาร์เรย์ตัวเลข หรือ {"0":..,"1":..})
+fn body_bytes<'a>(req: &'a Request<'_>) -> Result<std::borrow::Cow<'a, [u8]>, String> {
+    use serde_json::Value;
+    let byte = |v: &Value| v.as_u64().filter(|n| *n < 256).map(|n| n as u8).ok_or_else(|| "bad byte".to_string());
     match req.body() {
-        InvokeBody::Raw(b) => Ok(b),
+        InvokeBody::Raw(b) => Ok(std::borrow::Cow::Borrowed(b)),
+        InvokeBody::Json(Value::Array(a)) => a.iter().map(byte).collect::<Result<Vec<u8>, _>>().map(std::borrow::Cow::Owned),
+        InvokeBody::Json(Value::Object(o)) => {
+            let mut out = vec![0u8; o.len()];
+            for (k, v) in o {
+                let i: usize = k.parse().map_err(|_| "bad index")?;
+                *out.get_mut(i).ok_or("bad index")? = byte(v)?;
+            }
+            Ok(std::borrow::Cow::Owned(out))
+        }
         _ => Err("expected binary body".into()),
     }
 }
@@ -249,7 +285,7 @@ async fn rec_write(state: State<'_, AppState>, request: Request<'_>) -> Result<u
     let data = body_bytes(&request)?;
     let mut recs = state.recordings.lock().await;
     let rec = recs.get_mut(&id).ok_or("ไม่พบไฟล์บันทึก")?;
-    rec.file.write_all(data).await.map_err(|e| format!("เขียนไฟล์ไม่สำเร็จ: {e}"))?;
+    rec.file.write_all(&data).await.map_err(|e| format!("เขียนไฟล์ไม่สำเร็จ: {e}"))?;
     rec.len += data.len() as u64;
     Ok(rec.len)
 }
@@ -266,7 +302,7 @@ async fn rec_patch(state: State<'_, AppState>, request: Request<'_>) -> Result<(
         return Err("ตำแหน่งเกินขนาดไฟล์".into());
     }
     rec.file.seek(std::io::SeekFrom::Start(pos)).await.map_err(|e| e.to_string())?;
-    rec.file.write_all(data).await.map_err(|e| e.to_string())?;
+    rec.file.write_all(&data).await.map_err(|e| e.to_string())?;
     rec.file.seek(std::io::SeekFrom::End(0)).await.map_err(|e| e.to_string())?;
     Ok(())
 }
