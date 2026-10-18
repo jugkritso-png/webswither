@@ -1,0 +1,11 @@
+{
+  "name": "webmix-desktop",
+  "private": true,
+  "description": "WebMix Pro desktop and Android app (Tauri) — the web UI lives in the repository root",
+  "scripts": {
+    "tauri": "tauri"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.9.0"
+  }
+}

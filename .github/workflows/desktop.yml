@@ -169,15 +169,17 @@ jobs:
         run: |
           WORK=$RUNNER_TEMP/ffbuild desktop/android/build-ffmpeg.sh arm64-v8a desktop/android/ffmpeg-out/arm64-v8a
           WORK=$RUNNER_TEMP/ffbuild desktop/android/build-ffmpeg.sh x86_64 desktop/android/ffmpeg-out/x86_64
+      # Gradle เรียก `npm run tauri ...` กลับมาระหว่าง build จึงต้องติดตั้ง CLI ตาม desktop/package.json
       - name: Android project
         working-directory: desktop
         run: |
-          npx --yes @tauri-apps/cli@2 android init --ci
-          npx --yes @tauri-apps/cli@2 icon src-tauri/icons/icon.png
+          npm ci --no-audit --no-fund
+          npm run tauri -- android init --ci
+          npm run tauri -- icon src-tauri/icons/icon.png
           android/prepare.sh android/ffmpeg-out
       - name: Build APK
         working-directory: desktop
-        run: npx --yes @tauri-apps/cli@2 android build --apk --split-per-abi --target aarch64 --target x86_64
+        run: npm run tauri -- android build --apk --split-per-abi --target aarch64 --target x86_64
       - name: Sign APK
         env:
           KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
