@@ -11,6 +11,7 @@
     W: 1920, H: 1080,
     open() {
       if (this.win && !this.win.closed) { this.win.focus(); return; }
+      if (WM.desktop && WM.desktop.mobile) { toast('แอป Android เปิดหน้าต่าง Multiview แยกไม่ได้', 'warn'); return; }
       const win = window.open('about:blank', 'webmix-multiview', 'width=1280,height=720');
       if (!win) { toast('เบราว์เซอร์บล็อกหน้าต่างใหม่ — อนุญาต Pop-up สำหรับเว็บนี้ก่อน', 'warn'); return; }
       if (!this.canvas) {

@@ -2876,7 +2876,7 @@
      2) พื้นที่เก็บข้อมูลของเบราว์เซอร์บนดิสก์ (OPFS) แล้วดาวน์โหลดเมื่อหยุด
      3) ถ้าเบราว์เซอร์ไม่รองรับทั้งสองแบบ เก็บใน RAM (เตือนเมื่อไฟล์ใหญ่) */
   let recFolder = null;
-  const canPickFolder = !!desktop || typeof window.showDirectoryPicker === 'function';
+  const canPickFolder = desktop ? !desktop.mobile : typeof window.showDirectoryPicker === 'function';
   // แอปเดสก์ท็อป: โฟลเดอร์เป็นที่อยู่จริงบนเครื่อง (ค่าเริ่มต้น วิดีโอ/WebMix) เขียนผ่าน Rust ได้ทุกระบบปฏิบัติการ
   const nativeFolder = path => ({ name: path, native: true });
   async function loadRecFolder() {
@@ -3343,6 +3343,7 @@
   }
 
   function openOutputWindow() {
+    if (desktop && desktop.mobile) { toast('แอป Android เปิดหน้าต่างแยกไม่ได้ — ต่อจอผ่าน HDMI หรือ Cast แล้วกดปุ่มเต็มจอบนจอ Program แทน', 'warn', 6000); return; }
     const win = window.open('about:blank', 'webmix-program-output', 'width=1280,height=720');
     if (!win) { toast('เบราว์เซอร์บล็อกหน้าต่างใหม่ — อนุญาต Pop-up สำหรับเว็บนี้ก่อน', 'warn'); return; }
     win.document.open();
@@ -3434,6 +3435,10 @@
   }
 
   // ส่วนตั้งค่า Gateway ในแอปเดสก์ท็อป: สถานะ Gateway ในตัว + ffmpeg (ตัวเข้ารหัสวิดีโอที่ต้องติดตั้งแยก)
+  const ENCODER_LABEL = {
+    libx264: 'libx264 (ซอฟต์แวร์ ใช้ CPU)', h264_nvenc: 'การ์ดจอ NVIDIA (NVENC)', h264_qsv: 'Intel Quick Sync', h264_amf: 'การ์ดจอ AMD',
+    h264_videotoolbox: 'ชิป Apple (VideoToolbox)', h264_mediacodec: 'ฮาร์ดแวร์ของเครื่อง (MediaCodec)'
+  };
   function desktopGatewayHtml() {
     const info = desktop.info || {};
     const gw = info.gateway;
@@ -3443,7 +3448,8 @@
       <label class="check"><input type="checkbox" name="localGateway" ${settings.localGateway !== false ? 'checked' : ''} ${gw ? '' : 'disabled'}>
         ใช้ Stream Gateway ในแอปนี้ (สตรีมจากเครื่องนี้โดยตรง ไม่ต้องมีเซิร์ฟเวอร์)</label>
       <p class="note">${gw ? `Gateway ในแอปพร้อม · ${esc(gw.url.replace(/\?.*$/, ''))}${gw.srt ? ' · ส่ง SRT ได้' : ''}` : `เปิด Gateway ในแอปไม่ได้: ${esc(info.gatewayError || desktop.error || 'ไม่ทราบสาเหตุ')}`}</p>
-      <p class="note ${ff ? '' : 'warn'}">${ff ? `ffmpeg: ${esc(ff.version)}` : `ไม่พบ ffmpeg — ติดตั้งด้วย ${install} แล้วเปิดแอปใหม่`}</p>
+      <p class="note ${ff ? '' : 'warn'}">${ff ? `ffmpeg: ${esc(ff.version)} · ตัวเข้ารหัส: ${esc(ENCODER_LABEL[info.encoder] || info.encoder || 'libx264')}` : `ไม่พบ ffmpeg — ติดตั้งด้วย ${install} แล้วเปิดแอปใหม่`}</p>
+      ${desktop.mobile ? '<p class="note warn">ระหว่างไลฟ์ให้เปิดแอปค้างไว้บนหน้าจอและเสียบสายชาร์จ — ถ้าสลับไปแอปอื่นหรือปิดจอ Android จะหยุดกล้องและการสตรีม</p>' : ''}
       <p class="note">อินเทอร์เน็ตขาขึ้นของเครื่องนี้ต้องพอสำหรับทุกปลายทางรวมกัน (ffmpeg ส่งแยกทีละปลายทาง) · การรับสัญญาณ SRT (Input) และ TURN สำหรับมือถือยังต้องใช้ Gateway บนเซิร์ฟเวอร์</p>`;
   }
 

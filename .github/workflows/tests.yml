@@ -32,7 +32,9 @@ jobs:
           node --check tests/run.js
           for f in tests/suites/*.js; do node --check "$f"; done
       - name: Install script syntax
-        run: bash -n server/deploy/install.sh
+        run: |
+          bash -n server/deploy/install.sh
+          for f in desktop/android/*.sh; do bash -n "$f"; done
       - name: Docker Compose config
         working-directory: server/deploy
         run: |

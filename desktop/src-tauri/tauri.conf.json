@@ -25,6 +25,7 @@
       "deb": { "depends": ["ffmpeg", "gstreamer1.0-plugins-good", "gstreamer1.0-plugins-bad", "gstreamer1.0-libav"] },
       "rpm": { "depends": ["ffmpeg", "gstreamer1-plugins-good", "gstreamer1-plugins-bad-free"] }
     },
-    "windows": { "webviewInstallMode": { "type": "downloadBootstrapper" } }
+    "windows": { "webviewInstallMode": { "type": "downloadBootstrapper" } },
+    "android": { "minSdkVersion": 24 }
   }
 }

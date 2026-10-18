@@ -42,7 +42,7 @@ pub struct Config {
     pub token: String,
     pub ffmpeg: String,
     pub max_destinations: usize,
-    /// libx264 | h264_nvenc | h264_qsv | h264_videotoolbox | h264_amf
+    /// libx264 | h264_nvenc | h264_qsv | h264_videotoolbox | h264_amf | h264_mediacodec (Android)
     pub video_encoder: String,
     pub x264_preset: String,
 }
@@ -67,6 +67,8 @@ pub struct Handle {
     pub addr: SocketAddr,
     pub token: String,
     pub srt_supported: bool,
+    /// ตัวเข้ารหัสวิดีโอที่ใช้ (libx264 / h264_nvenc / h264_mediacodec …)
+    pub encoder: String,
 }
 
 impl Handle {
@@ -95,6 +97,41 @@ pub async fn probe_ffmpeg(ffmpeg: &str) -> Option<(String, bool)> {
     Some((first, srt))
 }
 
+/// ตัวเข้ารหัสฮาร์ดแวร์ที่ควรลองบนระบบนี้ (เรียงตามลำดับที่อยากใช้)
+pub fn hardware_encoders() -> &'static [&'static str] {
+    if cfg!(target_os = "android") {
+        &["h264_mediacodec"]
+    } else if cfg!(target_os = "macos") {
+        &["h264_videotoolbox"]
+    } else if cfg!(windows) {
+        &["h264_nvenc", "h264_qsv", "h264_amf"]
+    } else {
+        &["h264_nvenc", "h264_qsv"]
+    }
+}
+
+/// ลองเข้ารหัสภาพ 720p 1 วินาทีด้วยตัวเข้ารหัสแต่ละตัว (ใช้อาร์กิวเมนต์ชุดเดียวกับตอนสตรีมจริง)
+/// คืนตัวแรกที่ใช้ได้ — ถ้าไม่มีตัวไหนใช้ได้คืน libx264 (ซอฟต์แวร์ ใช้ได้ทุกเครื่อง)
+pub async fn pick_encoder(ffmpeg: &str, candidates: &[&str]) -> String {
+    const KNOWN: [&str; 5] = ["h264_nvenc", "h264_qsv", "h264_videotoolbox", "h264_amf", "h264_mediacodec"];
+    for enc in candidates.iter().filter(|e| KNOWN.contains(e)) {
+        let cfg = Config { video_encoder: enc.to_string(), ..Default::default() };
+        let mut args: Vec<String> = ["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=black:s=1280x720:r=30", "-frames:v", "30"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        args.extend(video_args(&cfg, 720));
+        args.extend(["-pix_fmt", "yuv420p", "-b:v", "2000k", "-g", "60", "-f", "null", "-"].iter().map(|s| s.to_string()));
+        let run = quiet(Command::new(ffmpeg).args(&args)).stdin(Stdio::null()).output();
+        if let Ok(Ok(out)) = tokio::time::timeout(Duration::from_secs(20), run).await {
+            if out.status.success() {
+                return enc.to_string();
+            }
+        }
+    }
+    "libx264".into()
+}
+
 /// Windows: ไม่ให้ ffmpeg เปิดหน้าต่าง console ขึ้นมา
 fn quiet(cmd: &mut Command) -> &mut Command {
     #[cfg(windows)]
@@ -109,7 +146,7 @@ pub async fn start(cfg: Config) -> std::io::Result<Handle> {
     let listener = TcpListener::bind(SocketAddr::new(cfg.bind, cfg.port)).await?;
     let addr = listener.local_addr()?;
     let srt_supported = probe_ffmpeg(&cfg.ffmpeg).await.map(|(_, s)| s).unwrap_or(false);
-    let handle = Handle { addr, token: cfg.token.clone(), srt_supported };
+    let handle = Handle { addr, token: cfg.token.clone(), srt_supported, encoder: cfg.video_encoder.clone() };
     let cfg = Arc::new(cfg);
     tokio::spawn(async move {
         loop {
@@ -303,6 +340,8 @@ fn video_args(cfg: &Config, height: u32) -> Vec<String> {
         "h264_qsv" => vec!["-c:v", "h264_qsv", "-preset", "veryfast", "-profile:v", "high", "-bsf:v", "dump_extra"],
         "h264_videotoolbox" => vec!["-c:v", "h264_videotoolbox", "-realtime", "1", "-profile:v", "high", "-bsf:v", "dump_extra"],
         "h264_amf" => vec!["-c:v", "h264_amf", "-usage", "lowlatency", "-profile:v", "high", "-bsf:v", "dump_extra"],
+        // Android: ตัวเข้ารหัสฮาร์ดแวร์ของเครื่องผ่าน NDK MediaCodec (ไม่ต้องมี Java VM ในโปรเซส ffmpeg)
+        "h264_mediacodec" => vec!["-c:v", "h264_mediacodec", "-ndk_codec", "1", "-bsf:v", "dump_extra"],
         _ => {
             let preset = if !cfg.x264_preset.is_empty() { cfg.x264_preset.as_str() } else if height >= 1440 { "superfast" } else { "veryfast" };
             return ["-c:v", "libx264", "-preset", preset, "-tune", "zerolatency", "-profile:v", "high"].iter().map(|s| s.to_string()).collect();
@@ -742,6 +781,18 @@ fn field(line: &str, key: &str) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn pick_encoder_falls_back_to_x264() {
+        // ไม่มี ffmpeg หรือตัวเข้ารหัสใช้ไม่ได้ → libx264
+        assert_eq!(pick_encoder("/nonexistent/ffmpeg", &["h264_nvenc"]).await, "libx264");
+        if probe_ffmpeg("ffmpeg").await.is_some() {
+            // ชื่อที่ไม่รู้จักไม่ถูกเลือก (video_args จะตีความเป็น libx264 แต่รายงานผิดชื่อ)
+            assert_eq!(pick_encoder("ffmpeg", &["h264_does_not_exist"]).await, "libx264");
+            // AMF (การ์ดจอ AMD บน Windows) ไม่มีใน ffmpeg ของ Linux → ตกไปที่ libx264
+            assert_eq!(pick_encoder("ffmpeg", &["h264_amf"]).await, "libx264");
+        }
+    }
 
     #[test]
     fn url_checks() {

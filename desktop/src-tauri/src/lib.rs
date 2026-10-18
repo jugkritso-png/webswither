@@ -1,10 +1,11 @@
-//! WebMix Pro — แอปเดสก์ท็อป (Windows / macOS / Linux)
+//! WebMix Pro — แอปเดสก์ท็อป (Windows / macOS / Linux) และ Android
 //!
 //! หน้าตาและการทำงานทั้งหมดใช้หน้า WebMix เดิม (index.html + assets) ส่วน Rust ทำสิ่งที่เบราว์เซอร์ทำเองไม่ได้:
 //! - Stream Gateway ในตัว (webmix-gateway): สตรีมไป YouTube/Facebook/SRT จากเครื่องนี้ได้เลย ไม่ต้องมีเซิร์ฟเวอร์
 //! - บันทึกวิดีโอลงโฟลเดอร์โดยตรง (ทุกระบบปฏิบัติการ) พร้อมเขียนทับตามตำแหน่งสำหรับแก้ส่วนหัว WebM ตอนหยุด
 //! - เลือกโฟลเดอร์ด้วยหน้าต่างของระบบ
-//! - หน้าต่าง Program Output / Multiview เปิดเป็นหน้าต่างจริงของแอป (window.open)
+//! - หน้าต่าง Program Output / Multiview เปิดเป็นหน้าต่างจริงของแอป (window.open) — เฉพาะเดสก์ท็อป
+//! - Android: ffmpeg ที่คอมไพล์มากับแอป (libffmpeg.so) + ตัวเข้ารหัสฮาร์ดแวร์ของเครื่อง, บันทึกลง Movies/WebMix
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -49,11 +50,36 @@ struct DesktopInfo {
     os: &'static str,
     arch: &'static str,
     gateway: Option<GatewayInfo>,
+    encoder: String,
     gateway_error: Option<String>,
     ffmpeg: Option<FfmpegInfo>,
     rec_dir: String,
     temp_dir: String,
     selftest: bool,
+    /// โหมดทดสอบตัวเองแบบสตรีมจริง: ปลายทาง RTMP/SRT ที่จะส่งภาพทดสอบไป
+    selftest_stream: Option<String>,
+}
+
+/// ค่าโหมดทดสอบตัวเอง: เดสก์ท็อปใช้ตัวแปร WEBMIX_SELFTEST, Android ใช้ system property debug.webmix.selftest
+/// (`adb shell setprop debug.webmix.selftest 1` หรือใส่ URL rtmp:// เพื่อทดสอบสตรีมจริงด้วย)
+fn selftest_value() -> Option<String> {
+    #[cfg(target_os = "android")]
+    {
+        android::system_property("debug.webmix.selftest").filter(|v| !v.is_empty() && v != "0")
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        std::env::var("WEBMIX_SELFTEST").ok().filter(|v| !v.is_empty())
+    }
+}
+
+/// โฟลเดอร์ชั่วคราวที่แอปเขียนได้ (Android: cache ของแอป — /data/local/tmp เขียนไม่ได้)
+fn scratch_dir(app: &AppHandle) -> PathBuf {
+    if cfg!(target_os = "android") {
+        app.path().app_cache_dir().unwrap_or_else(|_| std::env::temp_dir())
+    } else {
+        std::env::temp_dir()
+    }
 }
 
 fn random_token() -> String {
@@ -67,6 +93,11 @@ fn random_token() -> String {
 fn ffmpeg_candidates(app: &AppHandle) -> Vec<String> {
     let exe = if cfg!(windows) { "ffmpeg.exe" } else { "ffmpeg" };
     let mut list = Vec::new();
+    // Android: ffmpeg มากับแอปในชื่อ libffmpeg.so (โฟลเดอร์ native library เป็นที่เดียวที่แอปรันโปรแกรมได้)
+    #[cfg(target_os = "android")]
+    if let Some(dir) = android::native_lib_dir() {
+        list.push(dir.join("libffmpeg.so").to_string_lossy().into());
+    }
     if let Ok(p) = std::env::var("WEBMIX_FFMPEG") {
         list.push(p);
     }
@@ -104,6 +135,10 @@ async fn find_ffmpeg(app: &AppHandle) -> Option<(String, String)> {
 }
 
 fn default_rec_dir(app: &AppHandle) -> PathBuf {
+    // Android: โฟลเดอร์ Movies ของเครื่อง (เห็นในแกลเลอรี/ตัวจัดการไฟล์) — ถ้าเขียนไม่ได้ rec_open ใช้โฟลเดอร์ของแอปแทน
+    if cfg!(target_os = "android") {
+        return PathBuf::from("/storage/emulated/0/Movies/WebMix");
+    }
     app.path()
         .video_dir()
         .or_else(|_| app.path().home_dir())
@@ -118,12 +153,14 @@ async fn desktop_info(app: AppHandle, state: State<'_, AppState>) -> Result<Desk
     let gw = state
         .gateway
         .get_or_init(|| async {
-            let cfg = webmix_gateway::Config {
-                token: random_token(),
-                ffmpeg: ffmpeg.as_ref().map(|f| f.0.clone()).unwrap_or_else(|| "ffmpeg".into()),
-                video_encoder: std::env::var("WEBMIX_VIDEO_ENCODER").unwrap_or_else(|_| "libx264".into()),
-                ..Default::default()
+            let ffmpeg_path = ffmpeg.as_ref().map(|f| f.0.clone()).unwrap_or_else(|| "ffmpeg".into());
+            // ตัวเข้ารหัส: กำหนดเองด้วย WEBMIX_VIDEO_ENCODER หรือลองการ์ดจอ/ฮาร์ดแวร์ของเครื่อง (ไม่ได้ใช้ libx264)
+            let video_encoder = match std::env::var("WEBMIX_VIDEO_ENCODER") {
+                Ok(v) if v != "auto" => v,
+                _ if ffmpeg.is_some() => webmix_gateway::pick_encoder(&ffmpeg_path, webmix_gateway::hardware_encoders()).await,
+                _ => "libx264".into(),
             };
+            let cfg = webmix_gateway::Config { token: random_token(), ffmpeg: ffmpeg_path, video_encoder, ..Default::default() };
             webmix_gateway::start(cfg).await.map_err(|e| e.to_string())
         })
         .await;
@@ -132,15 +169,24 @@ async fn desktop_info(app: AppHandle, state: State<'_, AppState>) -> Result<Desk
         os: std::env::consts::OS,
         arch: std::env::consts::ARCH,
         gateway: gw.as_ref().ok().map(|h| GatewayInfo { url: h.url(), srt: h.srt_supported }),
+        encoder: gw.as_ref().map(|h| h.encoder.clone()).unwrap_or_default(),
         gateway_error: gw.as_ref().err().cloned(),
         ffmpeg: ffmpeg.map(|(path, version)| FfmpegInfo { path, version }),
         rec_dir: default_rec_dir(&app).to_string_lossy().into(),
-        temp_dir: std::env::temp_dir().to_string_lossy().into(),
-        selftest: std::env::var("WEBMIX_SELFTEST").is_ok(),
+        temp_dir: scratch_dir(&app).to_string_lossy().into(),
+        selftest: selftest_value().is_some(),
+        selftest_stream: selftest_value().filter(|v| v.starts_with("rtmp://") || v.starts_with("srt://")),
     })
 }
 
-/// เลือกโฟลเดอร์ด้วยหน้าต่างของระบบ
+/// เลือกโฟลเดอร์ด้วยหน้าต่างของระบบ (Android ไม่มี — ใช้ Movies/WebMix)
+#[cfg(mobile)]
+#[tauri::command]
+async fn pick_folder() -> Option<String> {
+    None
+}
+
+#[cfg(desktop)]
 #[tauri::command]
 async fn pick_folder(app: AppHandle) -> Option<String> {
     use tauri_plugin_dialog::DialogExt;
@@ -164,9 +210,22 @@ fn safe_name(name: &str) -> Result<String, String> {
 async fn rec_open(app: AppHandle, state: State<'_, AppState>, name: String, dir: Option<String>) -> Result<serde_json::Value, String> {
     let name = safe_name(&name)?;
     let dir = dir.filter(|d| !d.is_empty()).map(PathBuf::from).unwrap_or_else(|| default_rec_dir(&app));
-    tokio::fs::create_dir_all(&dir).await.map_err(|e| format!("สร้างโฟลเดอร์ {} ไม่ได้: {e}", dir.display()))?;
+    let opened = match tokio::fs::create_dir_all(&dir).await {
+        Ok(()) => tokio::fs::File::create(dir.join(&name)).await.map(|f| (f, dir.clone())),
+        Err(e) => Err(e),
+    };
+    // Android รุ่นที่ไม่ให้เขียนโฟลเดอร์ Movies ตรง ๆ → ใช้ Movies ของแอปเอง (Android/data/<แอป>/files/Movies)
+    #[cfg(target_os = "android")]
+    let opened = match opened {
+        Ok(v) => Ok(v),
+        Err(_) => {
+            let alt = app.path().video_dir().map_err(|e| e.to_string())?.join("WebMix");
+            tokio::fs::create_dir_all(&alt).await.map_err(|e| format!("สร้างโฟลเดอร์ {} ไม่ได้: {e}", alt.display()))?;
+            tokio::fs::File::create(alt.join(&name)).await.map(|f| (f, alt))
+        }
+    };
+    let (file, dir) = opened.map_err(|e| format!("สร้างไฟล์ใน {} ไม่ได้: {e}", dir.display()))?;
     let path = dir.join(&name);
-    let file = tokio::fs::File::create(&path).await.map_err(|e| format!("สร้างไฟล์ไม่ได้: {e}"))?;
     let id = state.next_id.fetch_add(1, Ordering::Relaxed) + 1;
     state.recordings.lock().await.insert(id, Recording { file, path: path.clone(), len: 0 });
     Ok(serde_json::json!({ "id": id, "path": path.to_string_lossy(), "dir": dir.to_string_lossy() }))
@@ -225,6 +284,8 @@ async fn rec_close(state: State<'_, AppState>, id: u32) -> Result<serde_json::Va
 fn selftest_report(app: AppHandle, report: serde_json::Value) {
     let json = serde_json::to_string(&report).unwrap_or_default();
     println!("WEBMIX_SELFTEST {json}");
+    #[cfg(target_os = "android")]
+    android::log("WebMix", &format!("WEBMIX_SELFTEST {json}"));
     // บน Windows แอปไม่มีหน้าต่าง console ให้พิมพ์ — CI อ่านผลจากไฟล์แทน
     if let Ok(out) = std::env::var("WEBMIX_SELFTEST_OUT") {
         let tmp = format!("{out}.part");
@@ -323,9 +384,9 @@ mod webkit_features {
 
 /// ลบไฟล์ทดสอบที่โหมดทดสอบตัวเองสร้างไว้ (เฉพาะไฟล์ webmix-selftest-* ในโฟลเดอร์ชั่วคราว)
 #[tauri::command]
-async fn selftest_cleanup(path: String) -> Result<(), String> {
+async fn selftest_cleanup(app: AppHandle, path: String) -> Result<(), String> {
     let p = PathBuf::from(&path);
-    let in_temp = p.parent() == Some(std::env::temp_dir().as_path());
+    let in_temp = p.parent() == Some(scratch_dir(&app).as_path());
     let named = p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with("webmix-selftest-"));
     if !in_temp || !named {
         return Err("ไม่ใช่ไฟล์ทดสอบ".into());
@@ -333,40 +394,139 @@ async fn selftest_cleanup(path: String) -> Result<(), String> {
     tokio::fs::remove_file(p).await.map_err(|e| e.to_string())
 }
 
+/// ส่วนเฉพาะ Android: system property, log (logcat) และตำแหน่ง native library ของแอป
+#[cfg(target_os = "android")]
+mod android {
+    use std::ffi::{c_char, c_int, CStr, CString};
+    use std::path::PathBuf;
+
+    extern "C" {
+        fn __system_property_get(name: *const c_char, value: *mut c_char) -> c_int;
+    }
+    #[link(name = "log")]
+    extern "C" {
+        fn __android_log_write(prio: c_int, tag: *const c_char, text: *const c_char) -> c_int;
+    }
+
+    pub fn system_property(name: &str) -> Option<String> {
+        let name = CString::new(name).ok()?;
+        let mut buf = [0 as c_char; 92]; // PROP_VALUE_MAX
+        let n = unsafe { __system_property_get(name.as_ptr(), buf.as_mut_ptr()) };
+        (n > 0).then(|| unsafe { CStr::from_ptr(buf.as_ptr()) }.to_string_lossy().into_owned())
+    }
+
+    /// เขียนลง logcat — CI อ่านผลทดสอบตัวเองด้วย `adb logcat -s WebMix`
+    pub fn log(tag: &str, text: &str) {
+        let tag = CString::new(tag).unwrap();
+        // logcat ตัดข้อความยาว — แบ่งเป็นช่วงละ 3000 ไบต์ (ตัดที่ขอบตัวอักษร)
+        let mut rest = text;
+        while !rest.is_empty() {
+            let mut end = rest.len().min(3000);
+            while !rest.is_char_boundary(end) {
+                end -= 1;
+            }
+            if let Ok(msg) = CString::new(&rest[..end]) {
+                unsafe { __android_log_write(4, tag.as_ptr(), msg.as_ptr()) };
+            }
+            rest = &rest[end..];
+        }
+    }
+
+    /// Android ทิ้ง stderr — ส่งข้อความของ Gateway/ffmpeg (eprintln) ไป logcat (tag WebMixGateway) แทน
+    pub fn stderr_to_logcat() {
+        use std::io::BufRead;
+        use std::os::fd::FromRawFd;
+        extern "C" {
+            fn pipe(fds: *mut c_int) -> c_int;
+            fn dup2(old: c_int, new: c_int) -> c_int;
+        }
+        let mut fds = [0 as c_int; 2];
+        unsafe {
+            if pipe(fds.as_mut_ptr()) != 0 || dup2(fds[1], 2) < 0 {
+                return;
+            }
+        }
+        let read = unsafe { std::fs::File::from_raw_fd(fds[0]) };
+        std::thread::spawn(move || {
+            for line in std::io::BufReader::new(read).lines().map_while(Result::ok) {
+                log("WebMixGateway", &line);
+            }
+        });
+    }
+
+    /// ไม่ให้จอดับระหว่างใช้งาน (FLAG_KEEP_SCREEN_ON) — จอดับแล้ว Android หยุดกล้องและการสตรีม
+    pub fn keep_screen_on(window: &tauri::WebviewWindow) {
+        let _ = window.with_webview(|pv| {
+            pv.jni_handle().exec(|env, activity, _webview| {
+                if let Ok(win) = env.call_method(activity, "getWindow", "()Landroid/view/Window;", &[]).and_then(|w| w.l()) {
+                    let _ = env.call_method(&win, "addFlags", "(I)V", &[jni::objects::JValue::Int(128)]);
+                }
+            });
+        });
+    }
+
+    /// โฟลเดอร์ที่ระบบแตกไฟล์ native library ของแอปไว้ (หาจากไลบรารีของแอปเองที่โหลดอยู่ใน /proc/self/maps)
+    pub fn native_lib_dir() -> Option<PathBuf> {
+        let maps = std::fs::read_to_string("/proc/self/maps").ok()?;
+        maps.lines()
+            .filter_map(|l| l.split_whitespace().nth(5))
+            .find(|p| p.ends_with("/libwebmix_desktop_lib.so"))
+            .and_then(|p| PathBuf::from(p).parent().map(PathBuf::from))
+    }
+}
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![desktop_info, pick_folder, rec_open, rec_write, rec_patch, rec_close, selftest_report, selftest_cleanup])
         .setup(|app| {
-            // หน้าต่างหลักสร้างที่นี่ (ไม่ใช่ใน tauri.conf.json) เพื่อรับ window.open ของหน้า WebMix
-            // (หน้าต่าง Program Output / Multiview) แล้วเปิดเป็นหน้าต่างจริงที่ผูกกับหน้าหลัก —
-            // หน้าหลักเขียนเนื้อหาและส่งภาพ (srcObject) เข้าไปได้เหมือนในเบราว์เซอร์
-            let handle = app.handle().clone();
-            let popups = AtomicU32::new(0);
-            let main = WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
-                .title("WebMix Pro")
-                .inner_size(1440.0, 900.0)
-                .min_inner_size(1024.0, 640.0)
-                .center()
-                .on_new_window(move |url, features| {
-                    let n = popups.fetch_add(1, Ordering::Relaxed);
-                    let builder = WebviewWindowBuilder::new(&handle, format!("popup-{n}"), WebviewUrl::External(url.clone()))
-                        .title("WebMix Pro")
-                        .window_features(features)
-                        .on_document_title_changed(|w, title| {
-                            let _ = w.set_title(&title);
-                        });
-                    match builder.build() {
-                        Ok(window) => tauri::webview::NewWindowResponse::Create { window },
-                        Err(_) => tauri::webview::NewWindowResponse::Deny,
-                    }
-                })
-                .build()?;
-            #[cfg(target_os = "linux")]
-            enable_linux_media(&main);
+            #[cfg(mobile)]
+            {
+                let _main = WebviewWindowBuilder::new(app, "main", WebviewUrl::default()).build()?;
+                #[cfg(target_os = "android")]
+                {
+                    android::stderr_to_logcat();
+                    android::keep_screen_on(&_main);
+                }
+            }
+            #[cfg(desktop)]
+            create_desktop_window(app)?;
             Ok(())
         })
         .run(tauri::generate_context!())
         .expect("error while running WebMix Pro");
+}
+
+#[cfg(desktop)]
+fn create_desktop_window(app: &mut tauri::App) -> tauri::Result<()> {
+        // หน้าต่างหลักสร้างที่นี่ (ไม่ใช่ใน tauri.conf.json) เพื่อรับ window.open ของหน้า WebMix
+        // (หน้าต่าง Program Output / Multiview) แล้วเปิดเป็นหน้าต่างจริงที่ผูกกับหน้าหลัก —
+        // หน้าหลักเขียนเนื้อหาและส่งภาพ (srcObject) เข้าไปได้เหมือนในเบราว์เซอร์
+        let handle = app.handle().clone();
+        let popups = AtomicU32::new(0);
+        let main = WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
+            .title("WebMix Pro")
+            .inner_size(1440.0, 900.0)
+            .min_inner_size(1024.0, 640.0)
+            .center()
+            .on_new_window(move |url, features| {
+                let n = popups.fetch_add(1, Ordering::Relaxed);
+                let builder = WebviewWindowBuilder::new(&handle, format!("popup-{n}"), WebviewUrl::External(url.clone()))
+                    .title("WebMix Pro")
+                    .window_features(features)
+                    .on_document_title_changed(|w, title| {
+                        let _ = w.set_title(&title);
+                    });
+                match builder.build() {
+                    Ok(window) => tauri::webview::NewWindowResponse::Create { window },
+                    Err(_) => tauri::webview::NewWindowResponse::Deny,
+                }
+            })
+            .build()?;
+        #[cfg(target_os = "linux")]
+        enable_linux_media(&main);
+        let _ = main;
+        Ok(())
 }

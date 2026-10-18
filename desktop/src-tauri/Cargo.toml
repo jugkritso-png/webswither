@@ -23,3 +23,6 @@ webmix-gateway = { path = "../gateway" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 webkit2gtk = { version = "2", features = ["v2_40"] }
+
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21"

@@ -120,11 +120,91 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  # แอป Android: ffmpeg ที่คอมไพล์เอง (ฝังในแอป) + Gateway ในตัว → ทดสอบบน emulator ว่าสตรีม RTMP ออกมาได้จริง
+  android:
+    name: App · Android
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - name: Rust toolchain
+        run: rustup toolchain install stable --profile minimal --target aarch64-linux-android,x86_64-linux-android && rustup default stable
+      - name: Android NDK
+        run: |
+          echo "NDK_HOME=$ANDROID_NDK_LATEST_HOME" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$ANDROID_NDK_LATEST_HOME" >> "$GITHUB_ENV"
+          echo "NDK_VERSION=$(basename "$ANDROID_NDK_LATEST_HOME")" >> "$GITHUB_ENV"
+      - name: Build tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq nasm ffmpeg
+      - name: Cache ffmpeg for Android
+        id: ffcache
+        uses: actions/cache@v4
+        with:
+          path: desktop/android/ffmpeg-out
+          key: android-ffmpeg-${{ hashFiles('desktop/android/build-ffmpeg.sh') }}-${{ env.NDK_VERSION }}
+      - name: Build ffmpeg for Android (x264 + mbedtls + srt + MediaCodec)
+        if: steps.ffcache.outputs.cache-hit != 'true'
+        run: |
+          WORK=$RUNNER_TEMP/ffbuild desktop/android/build-ffmpeg.sh arm64-v8a desktop/android/ffmpeg-out/arm64-v8a
+          WORK=$RUNNER_TEMP/ffbuild desktop/android/build-ffmpeg.sh x86_64 desktop/android/ffmpeg-out/x86_64
+      - name: Android project
+        working-directory: desktop
+        run: |
+          npx --yes @tauri-apps/cli@2 android init --ci
+          npx --yes @tauri-apps/cli@2 icon src-tauri/icons/icon.png
+          android/prepare.sh android/ffmpeg-out
+      - name: Build APK
+        working-directory: desktop
+        run: npx --yes @tauri-apps/cli@2 android build --apk --split-per-abi --target aarch64 --target x86_64
+      - name: Sign APK
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: desktop/android/sign.sh dist-android
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Self-test on emulator (streams RTMP through the in-app gateway)
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          emulator-options: -no-window -gpu swiftshader_indirect -no-boot-anim -camera-back none -camera-front none
+          disable-animations: true
+          script: bash desktop/android/emulator-test.sh dist-android/WebMix-Pro_*_android-x86_64.apk test-output/android
+      - name: Upload APK
+        uses: actions/upload-artifact@v7
+        with:
+          name: WebMix-Pro-Android
+          path: dist-android/*.apk
+          if-no-files-found: error
+          retention-days: 30
+      - name: Upload test output
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: android-test-output
+          path: test-output/
+          if-no-files-found: ignore
+          retention-days: 7
+
   # ติด tag เวอร์ชัน (เช่น v1.0.0) หรือกด Run workflow แล้วติ๊ก release → สร้าง GitHub Release พร้อมตัวติดตั้งทุกระบบ ให้ดาวน์โหลดได้โดยไม่ต้องล็อกอินและไม่หมดอายุ
   release:
     name: GitHub Release
     if: startsWith(github.ref, 'refs/tags/v') || inputs.release
-    needs: [gateway, app]
+    needs: [gateway, app, android]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -144,7 +224,7 @@ jobs:
         run: |
           gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --pattern 'WebMix-Pro-*' --dir artifacts
           mkdir release
-          find artifacts -type f \( -name '*.msi' -o -name '*.exe' -o -name '*.dmg' -o -name '*.deb' -o -name '*.rpm' -o -name '*.AppImage' \) -print0 |
+          find artifacts -type f \( -name '*.msi' -o -name '*.exe' -o -name '*.dmg' -o -name '*.deb' -o -name '*.rpm' -o -name '*.AppImage' -o -name '*.apk' \) -print0 |
             while IFS= read -r -d '' f; do cp "$f" "release/$(basename "$f" | tr ' ' '-')"; done
           ls -la release
       - name: Create release
@@ -161,8 +241,11 @@ jobs:
           | Ubuntu / Debian | `.deb` (ติดตั้ง ffmpeg และ GStreamer ให้อัตโนมัติ) |
           | Fedora / openSUSE | `.rpm` |
           | Linux อื่น ๆ | `.AppImage` |
+          | Android 7+ (มือถือ/แท็บเล็ต ARM64) | `_android-arm64.apk` — มี Gateway และ ffmpeg ในตัว สตรีมได้โดยไม่ต้องมีเซิร์ฟเวอร์ |
+          | Android x86_64 (Chromebook / emulator) | `_android-x86_64.apk` |
 
-          การสตรีมต้องมี ffmpeg — Windows: `winget install ffmpeg` · macOS: `brew install ffmpeg` (การบันทึกไม่ต้องใช้)
+          การสตรีมบนคอมพิวเตอร์ต้องมี ffmpeg — Windows: `winget install ffmpeg` · macOS: `brew install ffmpeg` (การบันทึกไม่ต้องใช้) · Android มี ffmpeg ในแอปแล้ว
+          Linux: แอปยังบันทึก/สตรีมไม่ได้ (MediaRecorder ของ WebKitGTK สร้างไฟล์เสีย) — ใช้หน้าเว็บใน Chrome แทน
           รายละเอียดและข้อจำกัด: ดู README หัวข้อ “แอปเดสก์ท็อป”
           NOTES
           sed -i 's/^          //' notes.md

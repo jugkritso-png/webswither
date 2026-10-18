@@ -1,7 +1,7 @@
 //! webmix-gateway — รัน Stream Gateway (Rust) แยกเป็นโปรแกรม
 //!
 //!   webmix-gateway [--port 8080] [--bind 0.0.0.0] [--token รหัส] [--ffmpeg /path/ffmpeg]
-//!                  [--encoder libx264|h264_nvenc|h264_qsv|h264_videotoolbox|h264_amf] [--max-destinations 6]
+//!                  [--encoder auto|libx264|h264_nvenc|h264_qsv|h264_videotoolbox|h264_amf|h264_mediacodec] [--max-destinations 6]
 //!
 //! ค่าเหมือนตัวแปรแวดล้อมของเวอร์ชัน Node: PORT, STREAM_TOKEN, FFMPEG_PATH, VIDEO_ENCODER, X264_PRESET, MAX_DESTINATIONS
 
@@ -40,6 +40,11 @@ async fn main() {
     match webmix_gateway::probe_ffmpeg(&cfg.ffmpeg).await {
         Some((version, srt)) => eprintln!("{version} · SRT {}", if srt { "enabled" } else { "NOT available" }),
         None => eprintln!("คำเตือน: เรียก ffmpeg ที่ '{}' ไม่ได้ — การสตรีมจะไม่ทำงาน", cfg.ffmpeg),
+    }
+    // --encoder auto: ลองตัวเข้ารหัสฮาร์ดแวร์ของเครื่องนี้ ใช้ libx264 ถ้าไม่มีตัวไหนใช้ได้
+    if cfg.video_encoder == "auto" {
+        cfg.video_encoder = webmix_gateway::pick_encoder(&cfg.ffmpeg, webmix_gateway::hardware_encoders()).await;
+        eprintln!("video encoder: {}", cfg.video_encoder);
     }
     let handle = webmix_gateway::start(cfg).await.expect("เปิดพอร์ตไม่ได้");
     eprintln!("WebMix Stream Gateway (Rust) listening on ws://{}{}", handle.addr, if handle.token.is_empty() { "" } else { " (token required)" });

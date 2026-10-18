@@ -1,3 +1,5 @@
 dist/
 target/
 src-tauri/gen/
+android/ffmpeg-out/
+.ffmpeg-build/
