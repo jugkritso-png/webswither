@@ -260,6 +260,22 @@ SRT (Secure Reliable Transport) ทนอินเทอร์เน็ตกร
   และระบบจะเชื่อมต่อใหม่ (1 → 2 → 4 → 8 → 10 วินาที) แล้วเริ่มปลายทางที่ไลฟ์อยู่ให้เอง โดยไฟ ON AIR และเวลาออกอากาศยังเดินต่อ
 - ปลายทางที่หลุดเฉพาะช่องจะลองใหม่ทุก 5 วินาที, ไม่มีสัญญาณจาก Gateway เกิน 8 วินาทีถือว่าค้างและเชื่อมต่อใหม่
 
+## โครงสร้างโค้ด
+
+ไม่ต้อง build — เปิด `index.html` ได้ตรง ๆ ไฟล์ JavaScript ทั้งหมดเป็นสคริปต์ธรรมดาที่โหลดตามลำดับและใช้ `window.WebMix` ร่วมกัน
+
+| ไฟล์ | หน้าที่ |
+|---|---|
+| `assets/js/core.js` | ตัวช่วยทั่วไป, localStorage, toast, กันจอดับ, ค่าการเชื่อมต่อ WebRTC |
+| `assets/js/draw.js` | วาดแหล่งภาพที่สร้างเอง (Bars, Slate, นาฬิกา, NO SIGNAL, ป้ายชื่อ, Title) |
+| `assets/js/keyer.js` · `assets/js/gpu.js` | คีย์ฉากเขียวด้วย GPU · ระบบวาดภาพด้วยการ์ดจอ (WebGL) |
+| `assets/js/storage.js` | IndexedDB และ OPFS (ไฟล์ของโชว์) |
+| `assets/js/caller.js` | หน้ากล้องมือถือและหน้าแขกรับเชิญ |
+| `assets/js/multiview.js` · `assets/js/manual.js` | Multiview · คู่มือและคีย์ลัดในแอป |
+| `assets/webm-seek.js` | ทำให้ไฟล์ WebM ที่บันทึกมีความยาวและเลื่อนหาตำแหน่งได้ |
+| `assets/app.js` | สตูดิโอ: Input, การสลับภาพ, Overlay, เสียง, บันทึก, สตรีม, โชว์ |
+| `server/` | Stream Gateway (`stream-gateway.js`), ผู้ใช้ (`users.js`), การเฝ้าระวัง (`monitor.js`), ชุดติดตั้ง (`deploy/`) |
+
 ## การทดสอบอัตโนมัติ
 
 ชุดทดสอบอยู่ในโฟลเดอร์ `tests/` (สตูดิโอ, multistream, กล้องมือถือ, SRT ขาเข้า/ขาออก, 4K, การเชื่อมต่อใหม่, การบันทึก, เสียง, บันทึกโชว์, Gateway หลายผู้ใช้, Overlay)

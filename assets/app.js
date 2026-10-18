@@ -5,101 +5,10 @@
 (() => {
   'use strict';
 
-  /* ------------------------------------------------------------------ utils */
-  const $ = (sel, root = document) => root.querySelector(sel);
-  const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
-  const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
-  const uid = () => Math.random().toString(36).slice(2, 10);
-  const pad2 = n => String(n).padStart(2, '0');
-  const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-  const icon = name => `<svg class="i"><use href="#i-${name}"/></svg>`;
-  const fmtDuration = ms => {
-    const t = Math.max(0, Math.floor(ms / 1000));
-    return `${pad2(Math.floor(t / 3600))}:${pad2(Math.floor((t % 3600) / 60))}:${pad2(t % 60)}`;
-  };
-  const fmtBytes = b => b < 1048576 ? `${Math.round(b / 1024)} KB`
-    : b < 1073741824 ? `${(b / 1048576).toFixed(1)} MB` : `${(b / 1073741824).toFixed(2)} GB`;
-  const stamp = () => {
-    const d = new Date();
-    return `${d.getFullYear()}${pad2(d.getMonth() + 1)}${pad2(d.getDate())}-${pad2(d.getHours())}${pad2(d.getMinutes())}${pad2(d.getSeconds())}`;
-  };
-  const easeInOut = t => t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
-  const easeOut = t => 1 - Math.pow(1 - t, 3);
-  const isIOS = /iP(hone|od|ad)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-
-  const FONT = 'Inter, "IBM Plex Sans Thai", system-ui, sans-serif';
-  const MONO = '"JetBrains Mono", ui-monospace, monospace';
-
-  function downloadBlob(blob, filename) {
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(a.href), 30000);
-  }
-
-  /* ---------------------------------------------------------------- storage */
-  const store = {
-    get(key, fallback) {
-      try { const raw = localStorage.getItem('webmix:' + key); return raw == null ? fallback : JSON.parse(raw); }
-      catch (e) { return fallback; }
-    },
-    set(key, value) { try { localStorage.setItem('webmix:' + key, JSON.stringify(value)); } catch (e) {} },
-    raw(key) { try { return localStorage.getItem(key); } catch (e) { return null; } },
-    setRaw(key, value) { try { localStorage.setItem(key, value); } catch (e) {} }
-  };
-
-  /* ---------------------------------------------------------------- toasts */
-  function toast(message, type = 'info', ms = 4200) {
-    const box = $('#toasts');
-    if (!box) return;
-    const el = document.createElement('div');
-    el.className = `toast ${type}`;
-    el.textContent = message;
-    box.appendChild(el);
-    setTimeout(() => { el.classList.add('is-leaving'); setTimeout(() => el.remove(), 300); }, ms);
-  }
-
-  /* ---------------------------------------------------------- screen wake */
-  let wakeLock = null, wantWakeLock = false;
-  async function keepScreenOn(on) {
-    wantWakeLock = on;
-    try {
-      if (on && !wakeLock && 'wakeLock' in navigator) {
-        wakeLock = await navigator.wakeLock.request('screen');
-        wakeLock.addEventListener('release', () => { wakeLock = null; });
-      } else if (!on && wakeLock) {
-        await wakeLock.release();
-        wakeLock = null;
-      }
-    } catch (e) {}
-  }
-  document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible' && wantWakeLock) keepScreenOn(true);
-  });
-
-  /* ---------------------------------------------------- WebRTC signaling */
-  // ข้อมูลเซิร์ฟเวอร์ที่ฝังในลิงก์/QR กล้องมือถือ (sig): PeerJS ของ Gateway + TURN แบบรหัสชั่วคราว
-  // ไม่มี token ของ Gateway อยู่ในลิงก์ — มีแค่รหัส TURN ที่หมดอายุเอง
-  const b64url = str => btoa(unescape(encodeURIComponent(str))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-  const unb64url = str => decodeURIComponent(escape(atob(str.replace(/-/g, '+').replace(/_/g, '/'))));
-  function peerOptionsFromSig(sig) {
-    const iceServers = [];
-    if (sig && sig.th) {
-      const tp = sig.tp || 3478;
-      iceServers.push({ urls: `stun:${sig.th}:${tp}` });
-      if (sig.u) iceServers.push({ urls: [`turn:${sig.th}:${tp}?transport=udp`, `turn:${sig.th}:${tp}?transport=tcp`], username: sig.u, credential: sig.c });
-    }
-    iceServers.push({ urls: 'stun:stun.l.google.com:19302' });
-    const config = { iceServers };
-    // สำหรับทดสอบ: บังคับให้ส่งผ่าน TURN เท่านั้น (localStorage webmix:forceRelay = true)
-    if (store.get('forceRelay', false)) config.iceTransportPolicy = 'relay';
-    if (!sig || !sig.h) return { config };
-    return { host: sig.h, port: sig.p, path: sig.pa || '/peerjs', secure: !!sig.s, config };
-  }
-
+  const { $, $$, clamp, uid, pad2, esc, icon, fmtDuration, fmtBytes, stamp, easeInOut, easeOut, isIOS, FONT, MONO,
+    downloadBlob, store, toast, keepScreenOn, b64url, unb64url, peerOptionsFromSig, initCaller,
+    fillBlack, drawFit, fitFont, drawBars, drawSlate, drawClock, RELINK_HINT, drawNoSignal, drawTitle, TITLE_STYLES, drawTitleInput,
+    createKeyer, createGpu, idb, canUseOpfs, mediaStore, createMultiview, SHORTCUTS, MANUAL } = window.WebMix;
   /* ====================================================================== */
   /*  PHONE CAMERA MODE (?call=<studio id>)                                  */
   /* ====================================================================== */
@@ -109,245 +18,6 @@
     return;
   }
 
-  function initCaller(targetId) {
-    $('#studio').hidden = true;
-    const root = $('#caller');
-    root.hidden = false;
-    // แขกรับเชิญทางไกล (?guest=<slot>): ส่งกล้อง+ไมค์ และรับภาพรายการพร้อมเสียง (ไม่มีเสียงตัวเองย้อนกลับ)
-    const params = new URLSearchParams(location.search);
-    const guestSlot = (params.get('guest') || '').replace(/[^a-z0-9]/gi, '').slice(0, 16);
-    const guestName = (params.get('n') || '').slice(0, 40);
-    document.title = guestSlot ? 'WebMix — แขกรับเชิญ' : 'WebMix Camera';
-    const returnVideo = $('#guest-return');
-
-    const video = $('#caller-video');
-    const statusEl = $('#caller-status');
-    const msgEl = $('#caller-msg');
-    let facing = guestSlot ? 'user' : 'environment', stream = null, peer = null, call = null, conn = null;
-    let retryTimer = null, stopped = false, micOn = true, camOn = true;
-
-    const setStatus = (text, kind = '') => { statusEl.textContent = text; statusEl.className = `chip ${kind}`; };
-    const showMsg = text => { msgEl.textContent = text; msgEl.hidden = !text; };
-    const setTally = t => {
-      root.classList.toggle('tally-pgm', t === 'pgm');
-      root.classList.toggle('tally-pvw', t === 'pvw');
-      $('#caller-tally').textContent = t === 'pgm' ? 'ON AIR' : 'PREVIEW';
-    };
-
-    // คุณภาพที่ส่งเข้าสตูดิโอ — กดปุ่ม HD/FHD/4K บนจอเพื่อสลับ (กล้องที่ไม่รองรับจะได้ค่าสูงสุดที่ทำได้)
-    const QUALITIES = [
-      { label: 'HD', w: 1280, h: 720, bitrate: 2500000 },
-      { label: 'FHD', w: 1920, h: 1080, bitrate: 6000000 },
-      { label: '4K', w: 3840, h: 2160, bitrate: 16000000 }
-    ];
-    // แขกรับเชิญใช้ HD (คุยผ่านเน็ตบ้าน/มือถือได้ลื่น) — กล้องมือถือของทีมงานเลือกได้ถึง 4K
-    let quality = guestSlot ? QUALITIES[0] : QUALITIES[Math.min(2, Math.max(0, +store.get('caller-quality', 1)))] || QUALITIES[1];
-    const getCamera = withAudio => navigator.mediaDevices.getUserMedia({
-      video: { facingMode: facing, width: { ideal: quality.w }, height: { ideal: quality.h }, frameRate: { ideal: 30 } },
-      audio: withAudio ? { echoCancellation: true, noiseSuppression: true } : false
-    });
-    const qualityBtn = $('#caller-quality');
-    const paintQuality = () => {
-      const s = stream?.getVideoTracks()[0]?.getSettings();
-      qualityBtn.textContent = quality.label;
-      qualityBtn.title = s?.width ? `ส่งภาพ ${s.width}×${s.height}` : 'คุณภาพภาพ';
-    };
-    // WebRTC จำกัดบิตเรตต่ำเป็นค่าเริ่มต้น ต้องตั้งเพดานเองเพื่อให้ภาพ 1080p/4K คมจริง
-    async function applyBitrate() {
-      const sender = call?.peerConnection?.getSenders().find(x => x.track && x.track.kind === 'video');
-      if (!sender) return;
-      try {
-        const params = sender.getParameters();
-        if (!params.encodings || !params.encodings.length) params.encodings = [{}];
-        params.encodings[0].maxBitrate = quality.bitrate;
-        params.degradationPreference = 'maintain-resolution';
-        await sender.setParameters(params);
-      } catch (e) {}
-    }
-    async function cycleQuality() {
-      const i = (QUALITIES.indexOf(quality) + 1) % QUALITIES.length;
-      quality = QUALITIES[i];
-      store.set('caller-quality', i);
-      const track = stream?.getVideoTracks()[0];
-      if (track) {
-        try { await track.applyConstraints({ width: { ideal: quality.w }, height: { ideal: quality.h }, frameRate: { ideal: 30 } }); }
-        catch (e) {}
-      }
-      await applyBitrate();
-      paintQuality();
-      const s = track?.getSettings();
-      if (s?.width) showMsgBrief(`ส่งภาพ ${s.width}×${s.height}${s.height < quality.h ? ' (กล้องรองรับสูงสุดเท่านี้)' : ''}`);
-    }
-    let briefTimer = null;
-    const showMsgBrief = text => { showMsg(text); clearTimeout(briefTimer); briefTimer = setTimeout(() => showMsg(''), 2500); };
-
-    async function start() {
-      if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
-        setStatus('ต้องใช้ HTTPS', 'bad');
-        showMsg('เบราว์เซอร์อนุญาตให้ใช้กล้องเฉพาะหน้าเว็บที่เปิดผ่าน HTTPS เท่านั้น');
-        return;
-      }
-      try {
-        stream = await getCamera(true);
-      } catch (e) {
-        setStatus('เปิดกล้องไม่ได้', 'bad');
-        showMsg('ไม่ได้รับอนุญาตให้ใช้กล้อง/ไมค์: ' + e.message);
-        return;
-      }
-      video.srcObject = stream;
-      paintQuality();
-      keepScreenOn(true);
-      if (typeof Peer === 'undefined') {
-        setStatus('ออฟไลน์', 'bad');
-        showMsg('โหลดระบบเชื่อมต่อ (PeerJS) ไม่สำเร็จ ตรวจสอบอินเทอร์เน็ตแล้วลองใหม่');
-        return;
-      }
-      let sig = null;
-      try { const raw = new URLSearchParams(location.search).get('sig'); if (raw) sig = JSON.parse(unb64url(raw)); } catch (e) {}
-      // ใช้ ID เดิมของเครื่องนี้ทุกครั้ง — สตูดิโอที่โหลดโชว์กลับมาจะจับคู่กล้องนี้เข้ากับ Input เดิมได้
-      let myId = store.raw('webmix-cam-id');
-      if (!myId) { myId = 'webmix-cam-' + uid().slice(0, 8); store.setRaw('webmix-cam-id', myId); }
-      // แขกใช้ ID ตามลิงก์เชิญ สตูดิโอจึงรู้ว่าเป็นแขกคนไหน แม้เปิดจากเครื่องใหม่
-      if (guestSlot) myId = 'webmix-g-' + guestSlot;
-      const connect = id => {
-        peer = id ? new Peer(id, peerOptionsFromSig(sig)) : new Peer(peerOptionsFromSig(sig));
-        peer.on('open', () => { placeCall(); openData(); });
-        peer.on('error', err => {
-          if (stopped) return;
-          // ID ถูกใช้อยู่ (เช่นเปิดซ้อนสองแท็บ) — ใช้ ID ชั่วคราวแทน
-          if (err.type === 'unavailable-id' && guestSlot) { stop('ลิงก์นี้เปิดอยู่ในอีกหน้าต่างหรืออีกเครื่องแล้ว — ปิดหน้านั้นก่อนแล้วรีเฟรช'); }
-          else if (err.type === 'unavailable-id' && id) { peer.destroy(); connect(null); }
-          else if (err.type === 'peer-unavailable') scheduleRetry('รอสตูดิโอออนไลน์…');
-          else setStatus('ผิดพลาด: ' + err.type, 'bad');
-        });
-        peer.on('disconnected', () => { if (!stopped && !peer.destroyed) peer.reconnect(); });
-      };
-      connect(myId);
-    }
-
-    function placeCall() {
-      if (stopped) return;
-      clearTimeout(retryTimer);
-      setStatus('กำลังเชื่อมต่อสตูดิโอ…');
-      const c = peer.call(targetId, stream, guestSlot ? { metadata: { guest: guestSlot } } : undefined);
-      call = c;
-      // แขก: ภาพและเสียงรายการที่สตูดิโอส่งกลับมา
-      if (guestSlot) c.on('stream', remote => { returnVideo.srcObject = remote; returnVideo.hidden = false; returnVideo.play().catch(() => {}); });
-      c.peerConnection?.addEventListener('connectionstatechange', () => {
-        const st = c.peerConnection.connectionState;
-        if (st === 'connected') { setStatus('เชื่อมต่อแล้ว', 'ok'); showMsg(''); applyBitrate(); }
-        else if (st === 'failed') c.close();
-      });
-      c.on('close', () => { if (call === c) scheduleRetry('ขาดการเชื่อมต่อ กำลังลองใหม่…'); });
-    }
-
-    function openData() {
-      if (stopped || !peer || peer.destroyed) return;
-      const d = peer.connect(targetId, { reliable: true });
-      conn = d;
-      d.on('data', msg => {
-        if (!msg || typeof msg !== 'object') return;
-        if (msg.type === 'tally') setTally(msg.tally);
-        if (msg.type === 'removed') stop(guestSlot ? 'สตูดิโอจบการเชื่อมต่อแล้ว ขอบคุณที่ร่วมรายการ' : 'สตูดิโอนำกล้องนี้ออกจากรายการแล้ว');
-      });
-      d.on('close', () => { if (conn === d && !stopped) setTimeout(openData, 3000); });
-    }
-
-    function scheduleRetry(text) {
-      if (stopped) return;
-      setStatus(text);
-      setTally('off');
-      clearTimeout(retryTimer);
-      retryTimer = setTimeout(() => {
-        if (peer && peer.open) { placeCall(); if (!conn || !conn.open) openData(); }
-      }, 3000);
-    }
-
-    function stop(message) {
-      stopped = true;
-      clearTimeout(retryTimer);
-      try { call && call.close(); } catch (e) {}
-      try { peer && peer.destroy(); } catch (e) {}
-      stream && stream.getTracks().forEach(t => t.stop());
-      video.srcObject = null;
-      returnVideo.srcObject = null;
-      returnVideo.hidden = true;
-      keepScreenOn(false);
-      setTally('off');
-      setStatus('หยุดส่งภาพแล้ว', 'bad');
-      showMsg(message || 'หยุดส่งภาพแล้ว — รีเฟรชหน้านี้เพื่อเชื่อมต่อใหม่');
-    }
-
-    // สลับกล้องโดยเปลี่ยนแทร็กในสายเดิม ช่อง Input ที่สตูดิโอจึงไม่เพิ่มขึ้น
-    async function flip() {
-      if (!stream || stopped) return;
-      const prev = facing;
-      facing = facing === 'user' ? 'environment' : 'user';
-      const oldTrack = stream.getVideoTracks()[0];
-      const sender = call?.peerConnection?.getSenders().find(s => s.track && s.track.kind === 'video');
-      // มือถือหลายรุ่นเปิดกล้องสองตัวพร้อมกันไม่ได้ ต้องปิดตัวเดิมก่อน
-      if (oldTrack) { oldTrack.stop(); stream.removeTrack(oldTrack); }
-      let track;
-      try { track = (await getCamera(false)).getVideoTracks()[0]; }
-      catch (e) {
-        facing = prev;
-        try { track = (await getCamera(false)).getVideoTracks()[0]; }
-        catch (e2) { setStatus('สลับกล้องไม่ได้', 'bad'); return; }
-      }
-      stream.addTrack(track);
-      video.srcObject = stream;
-      if (sender) await sender.replaceTrack(track);
-      paintQuality();
-    }
-
-    // แขก: ปิดกล้องชั่วคราว (สตูดิโอเห็นจอดำ เสียงยังส่งอยู่)
-    function toggleCam() {
-      const track = stream?.getVideoTracks()[0];
-      if (!track) return;
-      camOn = !camOn;
-      track.enabled = camOn;
-      root.classList.toggle('cam-off', !camOn);
-      $('#caller-cam').classList.toggle('is-off', !camOn);
-    }
-
-    function toggleMic() {
-      const track = stream?.getAudioTracks()[0];
-      if (!track) return;
-      micOn = !micOn;
-      track.enabled = micOn;
-      const btn = $('#caller-mic');
-      btn.classList.toggle('is-off', !micOn);
-      btn.innerHTML = icon(micOn ? 'mic' : 'mic-off');
-    }
-
-    root.addEventListener('click', e => {
-      const b = e.target.closest('[data-caller]');
-      if (!b) return;
-      if (b.dataset.caller === 'flip') flip();
-      else if (b.dataset.caller === 'mic') toggleMic();
-      else if (b.dataset.caller === 'quality') cycleQuality();
-      else if (b.dataset.caller === 'cam') toggleCam();
-      else if (b.dataset.caller === 'end') stop();
-    });
-
-    if (guestSlot) {
-      // หน้าเข้าร่วม: การกดปุ่มคือการอนุญาตให้เบราว์เซอร์เล่นเสียงรายการ และขอสิทธิ์กล้อง/ไมค์
-      root.classList.add('guest-mode');
-      $('.caller-title').textContent = guestName ? `แขกรับเชิญ · ${guestName}` : 'แขกรับเชิญ';
-      $('#caller-quality').hidden = true;
-      $('#caller-cam').hidden = false;
-      $('#guest-join-name').textContent = guestName;
-      $('#guest-join').hidden = false;
-      setStatus('ยังไม่ได้เข้าร่วม');
-      $('#guest-join-btn').addEventListener('click', () => {
-        $('#guest-join').hidden = true;
-        returnVideo.play().catch(() => {});
-        start();
-      }, { once: true });
-    } else {
-      start();
-    }
-  }
 
   /* ====================================================================== */
   /*  STUDIO                                                                 */
@@ -524,105 +194,12 @@
   const LIVE_TYPES = ['camera', 'screen', 'wireless'];
 
   /* ------------------------------------------------------------- drawing */
-  function fillBlack(ctx, w, h) { ctx.fillStyle = '#000'; ctx.fillRect(0, 0, w, h); }
 
-  function drawFit(ctx, src, sw, sh, w, h) {
-    if (!sw || !sh) return;
-    const s = Math.min(w / sw, h / sh);
-    const dw = sw * s, dh = sh * s;
-    ctx.drawImage(src, (w - dw) / 2, (h - dh) / 2, dw, dh);
-  }
 
-  function fitFont(ctx, text, weight, size, family, maxWidth) {
-    ctx.font = `${weight} ${size}px ${family}`;
-    const m = ctx.measureText(text).width;
-    if (m > maxWidth) ctx.font = `${weight} ${Math.floor(size * maxWidth / m)}px ${family}`;
-  }
 
-  function drawBars(ctx, w, h) {
-    const top = ['#c0c0c0', '#c0c000', '#00c0c0', '#00c000', '#c000c0', '#c00000', '#0000c0'];
-    const mid = ['#0000c0', '#131313', '#c000c0', '#131313', '#00c0c0', '#131313', '#c0c0c0'];
-    const bw = w / 7, h1 = Math.round(h * 0.67), h2 = Math.round(h * 0.08);
-    top.forEach((c, i) => { ctx.fillStyle = c; ctx.fillRect(Math.floor(i * bw), 0, Math.ceil(bw) + 1, h1); });
-    mid.forEach((c, i) => { ctx.fillStyle = c; ctx.fillRect(Math.floor(i * bw), h1, Math.ceil(bw) + 1, h2); });
-    const bottom = [['#00214c', 1.25], ['#ffffff', 1.25], ['#32006a', 1.25], ['#131313', 1.25],
-      ['#090909', 1 / 3], ['#131313', 1 / 3], ['#1d1d1d', 1 / 3], ['#131313', 1]];
-    let x = 0;
-    for (const [c, u] of bottom) {
-      ctx.fillStyle = c;
-      ctx.fillRect(Math.floor(x), h1 + h2, Math.ceil(u * bw) + 1, h - h1 - h2);
-      x += u * bw;
-    }
-  }
 
-  function drawSlate(ctx, w, h, inp) {
-    const g = ctx.createLinearGradient(0, 0, w, h);
-    g.addColorStop(0, '#0b1220'); g.addColorStop(1, '#1b1030');
-    ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
-    const s = h / 720;
-    ctx.strokeStyle = 'rgba(255,255,255,.06)'; ctx.lineWidth = 2 * s;
-    ctx.strokeRect(w * 0.05, h * 0.07, w * 0.9, h * 0.86);
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillStyle = '#f5a524';
-    ctx.font = `800 ${20 * s}px ${FONT}`;
-    ctx.fillText('W E B M I X   P R O', w / 2, h * 0.37);
-    ctx.fillStyle = '#fff';
-    fitFont(ctx, inp.text || ' ', 700, 58 * s, FONT, w * 0.84);
-    ctx.fillText(inp.text || '', w / 2, h * 0.5);
-    ctx.fillStyle = 'rgba(255,255,255,.5)';
-    ctx.font = `500 ${20 * s}px ${MONO}`;
-    ctx.fillText(new Date().toLocaleTimeString('th-TH', { hour12: false }), w / 2, h * 0.63);
-  }
 
-  function drawClock(ctx, w, h, inp) {
-    ctx.fillStyle = '#07080b'; ctx.fillRect(0, 0, w, h);
-    const s = h / 720, now = new Date();
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillStyle = '#8b94a7';
-    fitFont(ctx, inp.text || '', 600, 28 * s, FONT, w * 0.8);
-    ctx.fillText(inp.text || '', w / 2, h * 0.3);
-    ctx.fillStyle = '#fff';
-    ctx.font = `700 ${150 * s}px ${MONO}`;
-    ctx.fillText(`${pad2(now.getHours())}:${pad2(now.getMinutes())}:${pad2(now.getSeconds())}`, w / 2, h * 0.5);
-    ctx.fillStyle = '#f5a524';
-    ctx.font = `500 ${26 * s}px ${FONT}`;
-    ctx.fillText(now.toLocaleDateString('th-TH', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }), w / 2, h * 0.69);
-  }
 
-  const RELINK_HINT = {
-    camera: 'กดปุ่ม 🔗 บนการ์ดเพื่อเชื่อมต่อกล้องอีกครั้ง',
-    screen: 'กดปุ่ม 🔗 บนการ์ดเพื่อแชร์หน้าจออีกครั้ง',
-    media: 'กดปุ่ม 🔗 บนการ์ดเพื่อเลือกไฟล์วิดีโอ',
-    image: 'กดปุ่ม 🔗 บนการ์ดเพื่อเลือกไฟล์รูป',
-    wireless: 'รอมือถือเชื่อมต่อกลับมา',
-    guest: 'รอแขกเปิดลิงก์เชิญ — กดปุ่ม 🔗 บนการ์ดเพื่อดูลิงก์'
-  };
-  function drawNoSignal(ctx, w, h, inp) {
-    ctx.fillStyle = '#0b0c10'; ctx.fillRect(0, 0, w, h);
-    const s = h / 720;
-    ctx.strokeStyle = 'rgba(255,255,255,.035)'; ctx.lineWidth = 18 * s;
-    for (let x = -h; x < w; x += 60 * s) { ctx.beginPath(); ctx.moveTo(x, h); ctx.lineTo(x + h, 0); ctx.stroke(); }
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    const srtWaiting = inp.type === 'srt' && inp.srtState !== 'live';
-    ctx.fillStyle = srtWaiting && inp.srtState !== 'error' ? '#f5a524' : '#f87171';
-    ctx.font = `800 ${44 * s}px ${FONT}`;
-    ctx.fillText(srtWaiting ? (inp.srtState === 'waiting' ? 'WAITING FOR SRT' : inp.srtState === 'connecting' ? 'CONNECTING SRT…' : 'NO SIGNAL') : 'NO SIGNAL', w / 2, h * 0.46);
-    ctx.fillStyle = '#8b94a7';
-    fitFont(ctx, inp.name, 500, 22 * s, FONT, w * 0.8);
-    ctx.fillText(inp.name, w / 2, h * 0.56);
-    const relink = RELINK_HINT[inp.type];
-    if (relink && inp.missing) {
-      ctx.fillStyle = '#f5a524';
-      fitFont(ctx, relink, 500, 18 * s, FONT, w * 0.85);
-      ctx.fillText(relink, w / 2, h * 0.65);
-    }
-    if (inp.type === 'srt') {
-      const hint = inp.srt.mode === 'listener' ? `UDP ${inp.srt.port} · ${inp.srt.latency} ms` : inp.srt.url.replace(/\?.*$/, '');
-      ctx.fillStyle = '#5d6578';
-      fitFont(ctx, hint, 500, 18 * s, MONO, w * 0.8);
-      ctx.fillText(hint, w / 2, h * 0.64);
-    }
-  }
 
   function drawSource(ctx, inp, w, h) {
     if (!inp) { fillBlack(ctx, w, h); return; }
@@ -683,72 +260,7 @@
   const mixCtx = mixCanvas.getContext('2d');
 
   // คีย์ฉากเขียวด้วย GPU (WebGL) ที่ความละเอียดสูงสุด 1080p จึงคมพอสำหรับงาน 4K และไม่กิน CPU
-  const keyer = (() => {
-    try {
-      const canvas = document.createElement('canvas');
-      const gl = canvas.getContext('webgl', { premultipliedAlpha: false, preserveDrawingBuffer: true, antialias: false });
-      if (!gl) return null;
-      const compile = (type, src) => {
-        const sh = gl.createShader(type);
-        gl.shaderSource(sh, src);
-        gl.compileShader(sh);
-        if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(sh));
-        return sh;
-      };
-      const prog = gl.createProgram();
-      gl.attachShader(prog, compile(gl.VERTEX_SHADER,
-        'attribute vec2 p;varying vec2 uv;void main(){uv=vec2((p.x+1.0)*0.5,(1.0-p.y)*0.5);gl_Position=vec4(p,0.0,1.0);}'));
-      gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, `precision mediump float;
-        uniform sampler2D tex;uniform float hard;uniform float soft;uniform float blue;varying vec2 uv;
-        void main(){
-          vec4 c=texture2D(tex,uv);
-          float k=mix(c.g,c.b,blue);
-          float o=mix(max(c.r,c.b),max(c.r,c.g),blue);
-          float d=k-o;
-          float a=1.0;
-          if(d>0.0){
-            a=1.0-smoothstep(soft,hard,d);
-            if(blue>0.5){c.b=o;}else{c.g=o;}
-          }
-          gl_FragColor=vec4(c.rgb,a);
-        }`));
-      gl.linkProgram(prog);
-      if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) return null;
-      gl.useProgram(prog);
-      const buf = gl.createBuffer();
-      gl.bindBuffer(gl.ARRAY_BUFFER, buf);
-      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
-      const loc = gl.getAttribLocation(prog, 'p');
-      gl.enableVertexAttribArray(loc);
-      gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
-      const tex = gl.createTexture();
-      gl.bindTexture(gl.TEXTURE_2D, tex);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-      const u = name => gl.getUniformLocation(prog, name);
-      const uHard = u('hard'), uSoft = u('soft'), uBlue = u('blue');
-      return {
-        canvas,
-        run(src, opts) {
-          if (canvas.width !== src.width || canvas.height !== src.height) {
-            canvas.width = src.width; canvas.height = src.height;
-            gl.viewport(0, 0, src.width, src.height);
-          }
-          gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, src);
-          gl.uniform1f(uHard, opts.tolerance / 255);
-          gl.uniform1f(uSoft, opts.tolerance * 0.5 / 255);
-          gl.uniform1f(uBlue, opts.color === 'blue' ? 1 : 0);
-          gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-          return !gl.isContextLost();
-        }
-      };
-    } catch (e) {
-      console.warn('WebGL keyer unavailable, using CPU keyer', e);
-      return null;
-    }
-  })();
+  const keyer = createKeyer();
   const keySrc = document.createElement('canvas');
   const keySrcCtx = keySrc.getContext('2d');
   const keyOut = document.createElement('canvas');
@@ -800,42 +312,6 @@
     return { x: pos[1] === 'l' ? m : w - pw - m, y: pos[0] === 't' ? m : h - ph - m, w: pw, h: ph };
   }
 
-  function drawTitle(ctx, w, h, a, t = settings.title) {
-    if (!t.headline && !t.subtitle) return;
-    const s = h / 720, e = easeOut(a);
-    const x = w * 0.06, y = h * 0.735;
-    ctx.save();
-    ctx.textBaseline = 'middle';
-    ctx.textAlign = 'left';
-    ctx.font = `800 ${30 * s}px ${FONT}`;
-    const hw = t.headline ? ctx.measureText(t.headline).width + 40 * s : 0;
-    ctx.font = `500 ${23 * s}px ${FONT}`;
-    const sw = t.subtitle ? ctx.measureText(t.subtitle).width + 40 * s : 0;
-    const maxW = w * 0.82;
-    const boxW = Math.min(maxW, Math.max(hw, sw));
-    ctx.globalAlpha = Math.min(1, a * 1.6);
-    ctx.beginPath();
-    ctx.rect(x, y - 4 * s, (boxW + 10 * s) * e, 110 * s);
-    ctx.clip();
-    ctx.fillStyle = t.color;
-    ctx.fillRect(x, y, 7 * s, (t.subtitle ? 96 : 52) * s);
-    if (t.headline) {
-      ctx.fillStyle = t.color;
-      ctx.fillRect(x + 7 * s, y, Math.min(hw, maxW), 52 * s);
-      ctx.fillStyle = t.color === '#e5e7eb' ? '#0b0d12' : '#fff';
-      fitFont(ctx, t.headline, 800, 30 * s, FONT, maxW - 40 * s);
-      ctx.fillText(t.headline, x + 27 * s, y + 27 * s);
-    }
-    if (t.subtitle) {
-      const sy = y + (t.headline ? 52 : 0) * s;
-      ctx.fillStyle = 'rgba(10,13,20,.9)';
-      ctx.fillRect(x + 7 * s, sy, Math.min(sw, maxW), 44 * s);
-      ctx.fillStyle = '#e7eaf0';
-      fitFont(ctx, t.subtitle, 500, 23 * s, FONT, maxW - 40 * s);
-      ctx.fillText(t.subtitle, x + 27 * s, sy + 23 * s);
-    }
-    ctx.restore();
-  }
 
   function drawOverlays(ctx, w, h) {
     if (overlays.key.on && overlays.key.ready) ctx.drawImage(overlays.key.canvas, 0, 0, w, h);
@@ -856,7 +332,7 @@
         ctx.strokeRect(r.x, r.y, r.w, r.h);
       }
     }
-    if (overlays.title.anim > 0) drawTitle(ctx, w, h, overlays.title.anim);
+    if (overlays.title.anim > 0) drawTitle(ctx, w, h, overlays.title.anim, settings.title);
   }
 
 
@@ -999,169 +475,13 @@
     }
   }
 
-  // Title Input: กราฟิกข้อความบนพื้นโปร่งใส ใช้เป็น Overlay ได้ทันที
-  const TITLE_STYLES = { lower: 'ป้ายชื่อล่าง (Lower third)', top: 'แถบหัวข้อด้านบน', live: 'ป้าย LIVE มุมขวาบน', center: 'ข้อความกลางจอ' };
-  function drawTitleInput(ctx, inp, w, h) {
-    const t = inp.title || {};
-    const s = h / 720;
-    const dark = t.color === '#e5e7eb' ? '#0b0d12' : '#fff';
-    ctx.save();
-    ctx.textBaseline = 'middle';
-    if (t.style === 'top') {
-      const bh = (t.subtitle ? 92 : 58) * s;
-      ctx.fillStyle = 'rgba(10,13,20,.88)'; ctx.fillRect(0, 0, w, bh);
-      ctx.fillStyle = t.color || '#ef4444'; ctx.fillRect(0, bh - 5 * s, w, 5 * s);
-      ctx.textAlign = 'left';
-      ctx.fillStyle = '#fff'; fitFont(ctx, t.headline || '', 800, 30 * s, FONT, w * 0.9);
-      ctx.fillText(t.headline || '', w * 0.04, (t.subtitle ? 32 : 28) * s);
-      if (t.subtitle) { ctx.fillStyle = '#c9cfdb'; fitFont(ctx, t.subtitle, 500, 21 * s, FONT, w * 0.9); ctx.fillText(t.subtitle, w * 0.04, 66 * s); }
-    } else if (t.style === 'live') {
-      ctx.textAlign = 'left';
-      ctx.font = `800 ${24 * s}px ${FONT}`;
-      const badge = 'LIVE', bw = ctx.measureText(badge).width + 34 * s;
-      ctx.font = `600 ${20 * s}px ${FONT}`;
-      const text = [t.headline, t.subtitle].filter(Boolean).join(' · ');
-      const tw = text ? Math.min(w * 0.5, ctx.measureText(text).width + 28 * s) : 0;
-      const x = w - w * 0.03 - bw - tw, y = h * 0.05;
-      ctx.fillStyle = t.color || '#ef4444'; ctx.fillRect(x, y, bw, 44 * s);
-      ctx.fillStyle = dark; ctx.beginPath(); ctx.arc(x + 15 * s, y + 22 * s, 6 * s, 0, Math.PI * 2); ctx.fill();
-      ctx.font = `800 ${24 * s}px ${FONT}`; ctx.fillText(badge, x + 27 * s, y + 23 * s);
-      if (text) {
-        ctx.fillStyle = 'rgba(10,13,20,.85)'; ctx.fillRect(x + bw, y, tw, 44 * s);
-        ctx.fillStyle = '#fff'; fitFont(ctx, text, 600, 20 * s, FONT, tw - 28 * s); ctx.fillText(text, x + bw + 14 * s, y + 23 * s);
-      }
-    } else if (t.style === 'center') {
-      ctx.textAlign = 'center';
-      ctx.shadowColor = 'rgba(0,0,0,.7)'; ctx.shadowBlur = 18 * s;
-      ctx.fillStyle = '#fff'; fitFont(ctx, t.headline || '', 800, 72 * s, FONT, w * 0.86);
-      ctx.fillText(t.headline || '', w / 2, h * (t.subtitle ? 0.45 : 0.5));
-      if (t.subtitle) { ctx.fillStyle = t.color || '#f5a524'; fitFont(ctx, t.subtitle, 600, 32 * s, FONT, w * 0.8); ctx.fillText(t.subtitle, w / 2, h * 0.57); }
-    } else {
-      drawTitle(ctx, w, h, 1, { headline: t.headline || '', subtitle: t.subtitle || '', color: t.color || '#ef4444' });
-    }
-    ctx.restore();
-  }
 
 
   /* ------------------------------------------------------- GPU compositor (WebGL)
      วาด Program/Preview ด้วยการ์ดจอ: วิดีโอส่งเป็น texture ตรง ๆ, คีย์ฉากเขียว/ครอป/ความทึบทำใน shader ครั้งเดียว
      จึงลื่นกว่า Canvas 2D มากที่ 4K และเมื่อซ้อน Overlay หลายชั้น — ภาพที่ได้คัดลอกไปที่ canvas เดิม
      (บันทึก/สตรีม/หน้าต่าง Output/ภาพนิ่งทำงานเหมือนเดิม) ถ้าเครื่องไม่มี WebGL หรือ GPU ล่ม ใช้ Canvas 2D แทนอัตโนมัติ */
-  const gpu = (() => {
-    const canvas = document.createElement('canvas');
-    let gl = null;
-    try { gl = canvas.getContext('webgl', { alpha: false, antialias: false, premultipliedAlpha: false, preserveDrawingBuffer: false, powerPreference: 'high-performance' }); } catch (e) {}
-    if (!gl) return null;
-    const dbg = gl.getExtension('WEBGL_debug_renderer_info');
-    const rendererName = String(dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER));
-    const compile = (type, src) => {
-      const sh = gl.createShader(type);
-      gl.shaderSource(sh, src);
-      gl.compileShader(sh);
-      if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(sh));
-      return sh;
-    };
-    let prog;
-    try {
-      prog = gl.createProgram();
-      gl.attachShader(prog, compile(gl.VERTEX_SHADER, `
-        attribute vec2 a;uniform vec4 rect;uniform vec4 uv;uniform vec2 res;varying vec2 v;
-        void main(){vec2 p=rect.xy+a*rect.zw;vec2 c=p/res*2.0-1.0;gl_Position=vec4(c.x,-c.y,0.0,1.0);v=mix(uv.xy,uv.zw,a);}`));
-      gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, `precision mediump float;
-        uniform sampler2D tex;uniform float alpha;uniform float key;uniform float hard;uniform float soft;uniform float solid;uniform vec4 color;varying vec2 v;
-        void main(){
-          if(solid>0.5){gl_FragColor=vec4(color.rgb,color.a*alpha);return;}
-          vec4 c=texture2D(tex,v);
-          if(key>0.5){
-            float blue=key>1.5?1.0:0.0;
-            float k=mix(c.g,c.b,blue);
-            float o=mix(max(c.r,c.b),max(c.r,c.g),blue);
-            float d=k-o;
-            if(d>0.0){c.a*=1.0-smoothstep(soft,hard,d);if(blue>0.5){c.b=o;}else{c.g=o;}}
-          }
-          gl_FragColor=vec4(c.rgb,c.a*alpha);
-        }`));
-      gl.linkProgram(prog);
-      if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) return null;
-    } catch (e) { console.warn('GPU compositor unavailable', e); return null; }
-    gl.useProgram(prog);
-    const buf = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
-    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0, 0, 1, 0, 0, 1, 1, 1]), gl.STATIC_DRAW);
-    const aLoc = gl.getAttribLocation(prog, 'a');
-    gl.enableVertexAttribArray(aLoc);
-    gl.vertexAttribPointer(aLoc, 2, gl.FLOAT, false, 0, 0);
-    const U = {};
-    for (const n of ['rect', 'uv', 'res', 'tex', 'alpha', 'key', 'hard', 'soft', 'solid', 'color']) U[n] = gl.getUniformLocation(prog, n);
-    gl.uniform1i(U.tex, 0);
-    gl.enable(gl.BLEND);
-    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-    gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.NONE);
-
-    const textures = new Map(); // key → { tex, w, h, stamp, frame }
-    let lost = false;
-    canvas.addEventListener('webglcontextlost', e => { e.preventDefault(); lost = true; });
-    let vpW = 1, vpH = 1;
-
-    return {
-      canvas, rendererName,
-      software: /swiftshader|llvmpipe|softpipe|software|basic render/i.test(rendererName),
-      get ok() { return !lost && !gl.isContextLost(); },
-      ensureSize(w, h) { if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; } },
-      // เริ่มวาดลงพื้นที่ w×h มุมซ้ายบนของ canvas
-      begin(w, h) {
-        vpW = w; vpH = h;
-        gl.viewport(0, canvas.height - h, w, h);
-        gl.uniform2f(U.res, w, h);
-        gl.disable(gl.SCISSOR_TEST);
-        gl.clearColor(0, 0, 0, 1);
-        gl.clear(gl.COLOR_BUFFER_BIT);
-      },
-      entry(key) {
-        let e = textures.get(key);
-        if (!e) {
-          const tex = gl.createTexture();
-          gl.bindTexture(gl.TEXTURE_2D, tex);
-          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-          e = { tex, w: 0, h: 0, stamp: null, frame: -1 };
-          textures.set(key, e);
-        }
-        return e;
-      },
-      upload(e, src, w, h) {
-        gl.bindTexture(gl.TEXTURE_2D, e.tex);
-        try { gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, src); } catch (err) { return false; }
-        e.w = w; e.h = h;
-        return true;
-      },
-      // วาด texture ลงสี่เหลี่ยม r โดยใช้ส่วน uv ของภาพ
-      quad(e, r, uv, alpha = 1, key = null) {
-        if (r.w <= 0 || r.h <= 0 || alpha <= 0) return;
-        gl.bindTexture(gl.TEXTURE_2D, e.tex);
-        gl.uniform1f(U.solid, 0);
-        gl.uniform4f(U.rect, r.x, r.y, r.w, r.h);
-        gl.uniform4f(U.uv, uv[0], uv[1], uv[2], uv[3]);
-        gl.uniform1f(U.alpha, alpha);
-        gl.uniform1f(U.key, key ? (key.color === 'blue' ? 2 : 1) : 0);
-        if (key) { gl.uniform1f(U.hard, key.tolerance / 255); gl.uniform1f(U.soft, key.tolerance * 0.5 / 255); }
-        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-      },
-      solid(r, rgba, alpha = 1) {
-        if (r.w <= 0 || r.h <= 0 || alpha <= 0) return;
-        gl.uniform1f(U.solid, 1);
-        gl.uniform4f(U.rect, r.x, r.y, r.w, r.h);
-        gl.uniform4f(U.color, rgba[0], rgba[1], rgba[2], rgba[3]);
-        gl.uniform1f(U.alpha, alpha);
-        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-      },
-      drop(id) {
-        for (const [k, e] of textures) if (k.endsWith(':' + id)) { gl.deleteTexture(e.tex); textures.delete(k); }
-      }
-    };
-  })();
+  const gpu = createGpu();
 
   // ใช้ GPU หรือ Canvas 2D: auto = GPU ถ้ามีการ์ดจอจริง (ไม่ใช่ GPU จำลองด้วยซอฟต์แวร์)
   const renderer = {
@@ -1315,7 +635,7 @@
       }
     }
     if (overlays.title.anim > 0) {
-      const e = genTexture('title:main', `${overlays.title.anim.toFixed(3)}|${JSON.stringify(settings.title)}`, W, H, (c, cw, ch) => drawTitle(c, cw, ch, overlays.title.anim));
+      const e = genTexture('title:main', `${overlays.title.anim.toFixed(3)}|${JSON.stringify(settings.title)}`, W, H, (c, cw, ch) => drawTitle(c, cw, ch, overlays.title.anim, settings.title));
       gpu.quad(e, full, [0, 0, 1, 1]);
     }
   }
@@ -3127,31 +2447,8 @@
      1) โฟลเดอร์ที่เลือกไว้ (Chrome/Edge — File System Access) เขียนไฟล์ลงโฟลเดอร์โดยตรง
      2) พื้นที่เก็บข้อมูลของเบราว์เซอร์บนดิสก์ (OPFS) แล้วดาวน์โหลดเมื่อหยุด
      3) ถ้าเบราว์เซอร์ไม่รองรับทั้งสองแบบ เก็บใน RAM (เตือนเมื่อไฟล์ใหญ่) */
-  const idb = {
-    open() {
-      return new Promise((resolve, reject) => {
-        const req = indexedDB.open('webmix', 1);
-        req.onupgradeneeded = () => req.result.createObjectStore('kv');
-        req.onsuccess = () => resolve(req.result);
-        req.onerror = () => reject(req.error);
-      });
-    },
-    async get(key) {
-      const db = await this.open();
-      return new Promise(res => { const r = db.transaction('kv').objectStore('kv').get(key); r.onsuccess = () => res(r.result); r.onerror = () => res(undefined); });
-    },
-    async set(key, value) {
-      const db = await this.open();
-      return new Promise(res => { const t = db.transaction('kv', 'readwrite'); t.objectStore('kv').put(value, key); t.oncomplete = () => res(); t.onerror = () => res(); });
-    },
-    async del(key) {
-      const db = await this.open();
-      return new Promise(res => { const t = db.transaction('kv', 'readwrite'); t.objectStore('kv').delete(key); t.oncomplete = () => res(); t.onerror = () => res(); });
-    }
-  };
   let recFolder = null;
   const canPickFolder = typeof window.showDirectoryPicker === 'function';
-  const canUseOpfs = !!(navigator.storage && navigator.storage.getDirectory && window.FileSystemFileHandle && 'createWritable' in FileSystemFileHandle.prototype);
   async function loadRecFolder() {
     try { recFolder = (await idb.get('recFolder')) || null; } catch (e) { recFolder = null; }
   }
@@ -3611,117 +2908,11 @@
   }
 
 
-  /* ------------------------------------------------------------ multiview */
-  // จอรวมสำหรับผู้ควบคุม/ทีมงาน: Preview + Program ด้านบน, ทุก Input ด้านล่างพร้อม tally และมิเตอร์เสียง
-  // วาดเฉพาะตอนเปิดหน้าต่าง Multiview ที่ 15 fps แล้วส่งภาพไปหน้าต่างนั้น (ลากไปจอที่สองแล้วดับเบิลคลิกเต็มจอ)
-  const multiview = {
-    canvas: null, ctx: null, win: null, track: null, timer: null,
-    W: 1920, H: 1080,
-    open() {
-      if (this.win && !this.win.closed) { this.win.focus(); return; }
-      const win = window.open('', 'webmix-multiview', 'width=1280,height=720');
-      if (!win) { toast('เบราว์เซอร์บล็อกหน้าต่างใหม่ — อนุญาต Pop-up สำหรับเว็บนี้ก่อน', 'warn'); return; }
-      if (!this.canvas) {
-        this.canvas = document.createElement('canvas');
-        this.canvas.width = this.W; this.canvas.height = this.H;
-        this.ctx = this.canvas.getContext('2d');
-      }
-      this.draw();
-      win.document.open();
-      win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>WebMix — Multiview</title>
-        <style>html,body{margin:0;height:100%;background:#000;overflow:hidden}video{width:100%;height:100%;object-fit:contain;display:block}
-        p{position:fixed;left:0;right:0;bottom:12px;margin:0;text-align:center;font:12px system-ui;color:#666;transition:opacity 1s}</style></head>
-        <body><video autoplay muted playsinline></video><p>ดับเบิลคลิกเพื่อเต็มจอ</p>
-        <script>document.addEventListener('dblclick',()=>{document.fullscreenElement?document.exitFullscreen():document.documentElement.requestFullscreen()});setTimeout(()=>document.querySelector('p').style.opacity=0,3000)<\/script></body></html>`);
-      win.document.close();
-      this.track = this.canvas.captureStream(15).getVideoTracks()[0];
-      const v = win.document.querySelector('video');
-      v.srcObject = new MediaStream([this.track]);
-      v.play().catch(() => {});
-      this.win = win;
-      clearInterval(this.timer);
-      this.timer = setInterval(() => {
-        if (!this.win || this.win.closed) { this.close(); return; }
-        this.draw();
-      }, 1000 / 15);
-    },
-    close() {
-      clearInterval(this.timer);
-      this.timer = null;
-      if (this.track) this.track.stop();
-      this.track = null;
-      this.win = null;
-    },
-    layout(n) {
-      const top = 44, mainH = 540, gridTop = top + mainH + 8, gridH = this.H - gridTop;
-      let cols = 4;
-      for (const c of [4, 5, 6, 8, 10]) {
-        cols = c;
-        const tw = this.W / c, th = tw * 9 / 16;
-        if (Math.ceil(n / c) * th <= gridH) break;
-      }
-      const tw = this.W / cols, th = tw * 9 / 16;
-      return { top, mainH, gridTop, cols, tw, th };
-    },
-    draw() {
-      const ctx = this.ctx, Wm = this.W, Hm = this.H;
-      const L = this.layout(inputs.length);
-      ctx.fillStyle = '#05060a'; ctx.fillRect(0, 0, Wm, Hm);
-      // แถบบน: เวลา, ON AIR, สถานะสตรีม/บันทึก
-      ctx.textBaseline = 'middle';
-      ctx.fillStyle = '#e7eaf0'; ctx.font = `700 26px ${MONO}`; ctx.textAlign = 'left';
-      ctx.fillText(new Date().toLocaleTimeString('th-TH', { hour12: false }), 16, 22);
-      const live = streamer.active || streamer.reconnecting;
-      const chips = [[live ? `● STREAM ${$('#onair-timer').textContent}` : 'STREAM OFF', live ? '#ef4444' : '#5d6578'], [rec.active ? '● REC' : 'REC OFF', rec.active ? '#ef4444' : '#5d6578'],
-        [`${formatTag(H, settings.fps)}`, '#8b94a7']];
-      ctx.textAlign = 'right'; ctx.font = `700 20px ${MONO}`;
-      let x = Wm - 16;
-      for (const [text, color] of chips.reverse()) { ctx.fillStyle = color; ctx.fillText(text, x, 22); x -= ctx.measureText(text).width + 28; }
-      // Preview / Program
-      const box = (src, bx, label, color, name) => {
-        ctx.drawImage(src, bx, L.top, 952, L.mainH - 4);
-        ctx.strokeStyle = color; ctx.lineWidth = 4; ctx.strokeRect(bx + 2, L.top + 2, 948, L.mainH - 8);
-        ctx.fillStyle = 'rgba(0,0,0,.65)'; ctx.fillRect(bx + 4, L.top + L.mainH - 46, 944, 38);
-        ctx.textAlign = 'left'; ctx.font = `800 20px ${FONT}`; ctx.fillStyle = color; ctx.fillText(label, bx + 16, L.top + L.mainH - 27);
-        ctx.fillStyle = '#fff'; ctx.font = `600 20px ${FONT}`; ctx.fillText(name, bx + 140, L.top + L.mainH - 27);
-      };
-      box(pvwCanvas, 4, 'PREVIEW', '#22c55e', byId(state.previewId)?.name || '—');
-      box(pgmCanvas, 964, 'PROGRAM', '#ef4444', byId(state.programId)?.name || '—');
-      // ทุก Input
-      inputs.forEach((inp, i) => {
-        const cx = (i % L.cols) * L.tw, cy = L.gridTop + Math.floor(i / L.cols) * L.th;
-        const pad = 3, tw = L.tw - pad * 2, th = L.th - pad * 2, tx = cx + pad, ty = cy + pad;
-        ctx.save();
-        ctx.translate(tx, ty);
-        ctx.beginPath(); ctx.rect(0, 0, tw, th); ctx.clip();
-        drawSource(ctx, inp, tw, th);
-        ctx.restore();
-        const isPgm = inp.id === state.programId, ov = ovl.findIndex(c => c.on && c.inputId === inp.id), isPvw = inp.id === state.previewId;
-        const color = isPgm || ov >= 0 ? '#ef4444' : isPvw ? '#22c55e' : '#2f3644';
-        ctx.strokeStyle = color; ctx.lineWidth = isPgm || ov >= 0 || isPvw ? 5 : 2;
-        ctx.strokeRect(tx + ctx.lineWidth / 2, ty + ctx.lineWidth / 2, tw - ctx.lineWidth, th - ctx.lineWidth);
-        const lh = Math.max(22, th * 0.15);
-        ctx.fillStyle = 'rgba(0,0,0,.7)'; ctx.fillRect(tx + 5, ty + th - lh - 5, tw - 10, lh);
-        ctx.textAlign = 'left'; ctx.fillStyle = '#fff';
-        fitFont(ctx, `${i + 1}  ${inp.name}`, 600, lh * 0.62, FONT, tw - 90);
-        ctx.fillText(`${i + 1}  ${inp.name}`, tx + 12, ty + th - lh / 2 - 5);
-        const tag = isPgm ? 'PGM' : ov >= 0 ? `OV${ov + 1}` : isPvw ? 'PVW' : inp.status !== 'live' ? 'NO SIGNAL' : '';
-        if (tag) {
-          ctx.font = `800 ${lh * 0.55}px ${MONO}`; ctx.textAlign = 'right';
-          ctx.fillStyle = tag === 'NO SIGNAL' ? '#f87171' : color;
-          ctx.fillText(tag, tx + tw - 12, ty + th - lh / 2 - 5);
-        }
-        // มิเตอร์เสียงของ Input นี้ (แถบแนวตั้งขวามือ)
-        const ch = audio.channels.find(c => c.inputId === inp.id);
-        if (ch) {
-          const mh = th - lh - 20, lvl = meterPct(ch.level);
-          ctx.fillStyle = 'rgba(0,0,0,.6)'; ctx.fillRect(tx + tw - 18, ty + 8, 10, mh);
-          ctx.fillStyle = ch.level > -6 ? '#ef4444' : ch.level > -18 ? '#f5a524' : '#22c55e';
-          ctx.fillRect(tx + tw - 18, ty + 8 + mh * (1 - lvl), 10, mh * lvl);
-        }
-      });
-    }
-  };
+  const multiview = createMultiview({
+    get inputs() { return inputs; }, get state() { return state; }, get ovl() { return ovl; }, get streamer() { return streamer; }, get rec() { return rec; },
+    get audio() { return audio; }, get H() { return H; }, get fps() { return settings.fps; }, pvwCanvas, pgmCanvas, byId, drawSource, meterPct, formatTag,
+    onAirText: () => $('#onair-timer').textContent
+  });
 
   function toggleFullscreen() {
     const mon = $('#pgm-monitor');
@@ -3948,67 +3139,7 @@
   }
 
   /* --------------------------------------------------------------- help */
-  const SHORTCUTS = [
-    ['Space', 'CUT — ตัดภาพ Preview เข้า Program'],
-    ['Enter', 'AUTO — ทรานซิชันอัตโนมัติ'],
-    ['1 – 9', 'เลือก Input เข้า Preview'],
-    ['Shift + 1 – 9', 'ตัด Input นั้นเข้า Program ทันที'],
-    ['F', 'Fade to Black (FTB)'],
-    ['T', 'แสดง / ซ่อนป้ายชื่อ (Title)'],
-    ['P', 'แสดง / ซ่อนภาพซ้อน (PIP)'],
-    ['K', 'เปิด / ปิด Chroma Key'],
-    ['Q W E R', 'เปิด / ปิด Overlay 1 – 4'],
-    ['Shift + Q W E R', 'เปิด / ปิด Overlay 5 – 8'],
-    ['M', 'เปิดหน้าต่าง Multiview'],
-    ['Esc', 'ปิดหน้าต่าง / ออกจากเต็มจอ']
-  ];
-  const MANUAL = [
-    ['ภาพรวม', ['จอ PREVIEW (ขอบเขียว) คือภาพถัดไปที่เตรียมไว้ จอ PROGRAM (ขอบแดง) คือภาพที่ออกอากาศ บันทึก และสตรีมจริง',
-      'แตะ/คลิก Input เพื่อส่งเข้า Preview แล้วกด CUT หรือ AUTO เพื่อสลับเข้า Program — แตะสองครั้งเพื่อตัดเข้า Program ทันที']],
-    ['โชว์ (บันทึก/เปิด)', ['ทุกอย่างบันทึกอัตโนมัติในเบราว์เซอร์: Input (ลำดับ ชื่อ ไฟล์วิดีโอ/รูป กล้อง SRT), Program/Preview, มิกเซอร์เสียงพร้อม FX, กราฟิก — รีเฟรชหรือปิดหน้าแล้วเปิดใหม่ โชว์กลับมาครบ',
-      'กล้องและไมค์เปิดกลับมาเอง · มือถือที่เคยต่อจะเชื่อมกลับเข้าช่องเดิม · แชร์หน้าจอหรือไฟล์ที่หาไม่พบจะมีปุ่ม 🔗 บนการ์ดให้เชื่อมต่อใหม่',
-      'ปุ่มโฟลเดอร์ด้านบน: ตั้งชื่อโชว์, บันทึกเป็นไฟล์ .webmix.json (ย้ายเครื่องหรือเก็บหลายรายการ), เปิดไฟล์โชว์ และเริ่มโชว์ใหม่',
-      'ไฟล์โชว์ไม่รวมตัวไฟล์วิดีโอ/รูป — เปิดบนเครื่องอื่นแล้วกด 🔗 เพื่อเลือกไฟล์ · Stream Key อยู่ในไฟล์เฉพาะเมื่อเลือก “จำ Stream Key” ไว้']],
-    ['ทรานซิชัน', ['CUT ตัดภาพทันที · AUTO เปลี่ยนภาพตามเอฟเฟกต์และเวลาที่เลือก (MIX ผสมภาพ, DIP จางผ่านสีดำ, WIPE กวาดภาพ)',
-      'T-Bar เลื่อนเพื่อทำทรานซิชันด้วยมือ เลื่อนสุดแล้วภาพจะสลับ และครั้งต่อไปให้เลื่อนกลับอีกทาง เหมือนสวิตเชอร์จริง',
-      'FTB จางภาพ Program ทั้งหมดเป็นสีดำ (รวมกราฟิก) กดอีกครั้งเพื่อกลับมา']],
-    ['Input', ['เพิ่ม Input: กล้อง/แคปเจอร์การ์ด (เลือกอุปกรณ์ ความละเอียด และเสียงได้), แชร์หน้าจอ, ไฟล์วิดีโอ, ภาพนิ่ง/โลโก้, Color Bars, Slate ข้อความ, นาฬิกา, Black',
-      'สัญญาณ SRT: เพิ่ม Input → “สัญญาณ SRT” เพื่อรับภาพจาก OBS / vMix / encoder ผ่าน Stream Gateway — โหมดรอรับ (ผู้ส่งเชื่อมต่อเข้ามาที่พอร์ต UDP 9000–9009) หรือดึงจาก SRT Server ระบบแสดงค่าที่ต้องใส่ในโปรแกรมผู้ส่งให้ และเชื่อมต่อกลับเองเมื่อสัญญาณหลุด',
-      'ไฟล์วิดีโอมีปุ่มเล่น/หยุด เล่นใหม่ และเล่นวนซ้ำ · ปุ่มดินสอใช้แก้ชื่อ (และข้อความของ Slate/นาฬิกา) · ปุ่ม ✕ ลบ Input',
-      'ภาพแนวตั้งหรือสัดส่วนอื่นจะถูกย่อให้พอดีจอโดยไม่ยืดภาพ']],
-    ['กล้องมือถือไร้สาย', ['กดปุ่ม “กล้องมือถือ” แล้วสแกน QR ด้วยมือถือ (ต้องเปิดเว็บผ่าน HTTPS)',
-      'บนมือถือสลับกล้องหน้า/หลัง ปิดไมค์ หรือหยุดส่งภาพได้ และจะเห็นกรอบแดง ON AIR เมื่อภาพของเครื่องนั้นออกอากาศ',
-      'ถ้าสัญญาณหลุด มือถือจะเชื่อมต่อกลับเข้าช่องเดิมเอง']],
-    ['Overlay (แบบ vMix)', ['Overlay 1–8 ซ้อนแหล่งภาพใดก็ได้บน Program โดยไม่กระทบการตัดภาพหลัก (เลข 8 อยู่บนสุด) — ใช้กับโลโก้, ป้ายชื่อ, ภาพซ้อนมุมจอ, ผู้บรรยายฉากเขียว, วิดีโอแทรก',
-      'กดปุ่ม 1–8 ใต้การ์ด Input เพื่อซ้อนเข้า Overlay นั้นทันที (กดซ้ำเพื่อเอาออก) · ปุ่ม OVERLAY 1–8 ในแผง TRANSITION หรือคีย์ Q W E R (1–4) และ Shift + Q W E R (5–8)',
-      'แท็บ OVERLAY: เลือก Input ของแต่ละช่อง, เอฟเฟกต์เข้า-ออก (Cut, Fade, Zoom, Slide 4 ทิศ, Wipe) และระยะเวลา · PVW ดูบน Preview ก่อนขึ้นจอ',
-      'ปุ่ม ⧉ บนการ์ด: ตั้งตำแหน่ง ขนาด ครอป ความทึบ ขอบ และคีย์ฉากเขียว/ฟ้าของ Input นั้น (มี preset มุมจอ/ครึ่งจอ) — เห็นผลทันที',
-      'Input “Title กราฟิกข้อความ” มีพื้นโปร่งใส 4 แบบ (ป้ายชื่อล่าง, แถบหัวข้อบน, ป้าย LIVE, ข้อความกลางจอ) · รูป PNG โปร่งใสก็ซ้อนได้ทันที',
-      'ภาพที่อยู่บน Overlay นับว่าออกอากาศ: การ์ดขึ้น OV1–OV8, กล้องมือถือขึ้นกรอบแดง และเสียงที่ตั้ง AFV จะเปิดตาม']],
-    ['แขกรับเชิญทางไกล', ['เพิ่ม Input → “แขกรับเชิญทางไกล” ตั้งชื่อแล้วส่งลิงก์/QR ให้แขก — แขกกดเข้าร่วมจากมือถือหรือคอมพิวเตอร์ได้เลย',
-      'แขกเห็นและได้ยินรายการจากสตูดิโอโดยไม่ได้ยินเสียงตัวเองย้อนกลับ (mix-minus) และเห็นกรอบ ON AIR เมื่อขึ้นจอ',
-      'ปุ่ม 🔗 บนการ์ดแขกเปิดลิงก์เชิญอีกครั้ง · ลบการ์ดเพื่อจบการเชื่อมต่อ · รีเฟรชสตูดิโอแล้วแขกกลับเข้าช่องเดิมเอง']],
-    ['กราฟิก (TITLE / PIP / KEY)', ['TITLE: ป้ายชื่อ Lower Third พิมพ์ข้อความแล้วเปลี่ยนบนจอได้ทันที เลือกสีป้ายได้ กด TAKE เพื่อแสดง (มีแอนิเมชันเข้า-ออก)',
-      'Preset ป้ายชื่อ: กด “+ บันทึกป้ายนี้” เพื่อเก็บชื่อ/ตำแหน่ง/สีไว้หลายชุด แล้วแตะเพื่อสลับ (ถ้าป้ายขึ้นจออยู่จะเปลี่ยนทันที) · × ลบ preset',
-      'PIP: ภาพซ้อนมุมจอ เลือกแหล่งภาพ ตำแหน่ง และขนาด',
-      'KEY: ลบฉากเขียว/ฟ้าของแหล่งภาพที่เลือกแล้ววางทับ Program ปรับความไวด้วย Tolerance']],
-    ['เสียง', ['ทุกช่องมีมิเตอร์ระดับเสียงจริง (dBFS) เฟดเดอร์ (ดับเบิลคลิก = 0 dB) และปุ่ม M ปิดเสียง',
-      'AFV (Audio Follow Video) เปิดเสียงของช่องนั้นเฉพาะตอนที่ภาพของมันอยู่ใน Program',
-      'MON ฟังเสียง Master ผ่านลำโพง/หูฟังของเครื่องนี้ (ปิดไว้เป็นค่าเริ่มต้นเพื่อกันเสียงหอน)',
-      'LIM ลิมิตเตอร์ที่ Master กันเสียงแตกในไฟล์บันทึกและสตรีม (เปิดไว้เป็นค่าเริ่มต้น ไฟแดง = กำลังลดระดับเสียง)',
-      'FX ในแต่ละช่อง: หน่วงเสียงให้ตรงกับภาพ (0–500 ms), EQ ต่ำ/กลาง/สูง และคอมเพรสเซอร์']],
-    ['บันทึก สตรีม และเอาต์พุต', ['REC บันทึก Program เป็นไฟล์ (WebM หรือ MP4 ตามเบราว์เซอร์) แล้วดาวน์โหลดอัตโนมัติเมื่อกดหยุด — ไฟล์ WebM มีความยาวและเลื่อนหาตำแหน่งได้ในโปรแกรมเล่นและโปรแกรมตัดต่อ',
-      'SRT: เลือกแพลตฟอร์ม “SRT” แล้วใส่ srt://host:port, Stream ID, รหัสผ่านเข้ารหัส (ถ้ามี) และ Latency — ใช้ส่งเข้า vMix, OBS, Wowza, Haivision หรือ SRT Server ได้ทนเน็ตกระตุกกว่า RTMP',
-      'STREAM ส่งภาพไปหลายปลายทางพร้อมกัน (YouTube / Facebook / Twitch / SRT / RTMP อื่น ๆ สูงสุด 6 ช่อง) ผ่าน Stream Gateway — เพิ่มปลายทางที่ปุ่มตั้งค่า (ไอคอนแถบเลื่อน) แท็บการสตรีม',
-      'กดปุ่ม STREAM เพื่อเปิดแผงปลายทาง: กด “เริ่ม” ทีละช่องเพื่อไลฟ์เฉพาะช่องนั้น หรือ “เริ่มทั้งหมด” สำหรับทุกช่องที่ติ๊กไว้ — แต่ละช่องหยุดได้อิสระ ช่องที่หลุดจะเชื่อมต่อใหม่เอง',
-      'ระบบวาดภาพ: ตั้งค่า → เอาต์พุต เลือกอัตโนมัติ/GPU/CPU — GPU (การ์ดจอ) ลื่นกว่ามากที่ 4K และ Overlay หลายชั้น ถ้าการ์ดจอล่มระบบสลับไป CPU เองโดยภาพไม่ดับ',
-      'ความละเอียดสูงสุด 4K (3840×2160) ตั้งได้ที่ปุ่มตั้งค่า → เอาต์พุต ระบบใส่บิตเรตแนะนำให้ · กล้องเลือก 4K ได้ และการ์ด Input แสดงความละเอียดจริง · มือถือแตะปุ่ม HD/FHD/4K เพื่อเลือกคุณภาพ',
-      'Multiview (ปุ่มตารางด้านบนหรือคีย์ M): หน้าต่างสำหรับจอที่สอง แสดง Preview/Program และทุก Input พร้อม tally และมิเตอร์เสียง',
-      'ปุ่มกล้องบันทึกภาพนิ่ง PNG · ปุ่มหน้าต่างเปิด Program Output แยกสำหรับต่อจอหรือโปรเจกเตอร์ · ปุ่มเต็มจอบนจอ Program',
-      'บันทึกลงดิสก์ระหว่างอัด (ไม่กิน RAM) — Chrome/Edge เลือกโฟลเดอร์บันทึกได้ที่ ตั้งค่า → เอาต์พุต',
-      'ถ้าการเชื่อมต่อกับ Stream Gateway หลุดระหว่างไลฟ์ ระบบจะเชื่อมต่อใหม่และเริ่มปลายทางเดิมให้เอง',
-      'ระบบยังทำงานต่อแม้สลับแท็บ และกันหน้าจอดับระหว่างออกอากาศ']]
-  ];
+  // ข้อความคู่มือและคีย์ลัดอยู่ใน assets/js/manual.js
 
   function openHelp() {
     dialog({
@@ -4290,51 +3421,6 @@
      - บันทึกอัตโนมัติลงเบราว์เซอร์ทุกครั้งที่มีการเปลี่ยนแปลง → รีเฟรช/ปิดหน้าแล้วเปิดใหม่ โชว์กลับมาครบ
      - ไฟล์วิดีโอ/รูปเก็บสำเนาไว้ในพื้นที่ของเบราว์เซอร์ (OPFS) จึงไม่ต้องเลือกไฟล์ใหม่
      - บันทึกเป็นไฟล์ .webmix.json เพื่อย้ายเครื่องหรือเก็บหลายรายการ (ไฟล์สื่อไม่ได้รวมอยู่ในไฟล์ ต้องเลือกใหม่บนเครื่องอื่น) */
-  const mediaStore = {
-    dir: null,
-    async open() {
-      if (!canUseOpfs) return null;
-      if (!this.dir) {
-        const root = await navigator.storage.getDirectory();
-        this.dir = await root.getDirectoryHandle('webmix-media', { create: true });
-      }
-      return this.dir;
-    },
-    async put(key, file) {
-      let dir;
-      try {
-        dir = await this.open();
-        if (!dir) return false;
-        if (navigator.storage.persist) navigator.storage.persist().catch(() => {});
-        const w = await (await dir.getFileHandle(key, { create: true })).createWritable();
-        await w.write(file);
-        await w.close();
-        return true;
-      } catch (e) {
-        if (dir) await dir.removeEntry(key).catch(() => {});
-        return false;
-      }
-    },
-    async get(key) {
-      try {
-        const dir = await this.open();
-        return dir ? await (await dir.getFileHandle(key)).getFile() : null;
-      } catch (e) { return null; }
-    },
-    async del(key) {
-      try { const dir = await this.open(); if (dir) await dir.removeEntry(key); } catch (e) {}
-    },
-    // ลบไฟล์ที่ไม่มี Input ใช้แล้ว
-    async prune(keep) {
-      try {
-        const dir = await this.open();
-        if (!dir) return;
-        const stale = [];
-        for await (const [name] of dir.entries()) if (!keep.has(name)) stale.push(name);
-        for (const name of stale) await dir.removeEntry(name).catch(() => {});
-      } catch (e) {}
-    }
-  };
 
   const SHOW_TYPES = ['bars', 'black', 'slate', 'clock', 'image', 'media', 'camera', 'screen', 'wireless', 'srt', 'title', 'guest'];
   const show = {

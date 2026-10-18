@@ -25,6 +25,7 @@ jobs:
         run: |
           node --check assets/app.js
           node --check assets/webm-seek.js
+          for f in assets/js/*.js; do node --check "$f"; done
           node --check server/stream-gateway.js
           node --check server/users.js
           node --check server/monitor.js
