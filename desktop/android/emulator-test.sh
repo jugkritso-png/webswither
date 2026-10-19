@@ -69,13 +69,16 @@ echo "ถอดรหัสได้ $FRAMES เฟรม"
 echo "Android: สตรีมผ่าน Gateway ในแอปสำเร็จ"
 
 # ---- ไลฟ์เบื้องหลัง: ระหว่างสตรีม กดปุ่มโฮมแล้วปิดจอ — สตรีมต้องไม่หยุดและภาพต้องไม่ค้าง (LiveService) ----
-BG_PORT=1936
+BG_PORT=$PORT  # พอร์ตเดียวกับรอบแรก (เครื่องรับรอบแรกปิดไปแล้ว)
 adb shell am force-stop "$PKG"
 # ถ้ามีการเชื่อมต่อที่จับมือ RTMP ไม่สำเร็จเข้ามาก่อน (RTMP Handshake C2 Error) ffmpeg จะออก — เปิดรอรับใหม่จนกว่าจะได้ข้อมูล
-( while [ ! -s "$OUT/android-bg.flv" ]; do
-    ffmpeg -hide_banner -loglevel error -listen 1 -i "rtmp://0.0.0.0:$BG_PORT/live/bg" -c copy -y "$OUT/android-bg.flv" || sleep 0.2
+( end=$((SECONDS + 300))
+  while [ ! -s "$OUT/android-bg.flv" ] && [ $SECONDS -lt $end ]; do
+    timeout 240 ffmpeg -hide_banner -loglevel error -listen 1 -i "rtmp://0.0.0.0:$BG_PORT/live/bg" -c copy -y "$OUT/android-bg.flv" || sleep 0.2
   done ) &
 RECV=$!
+# จบสคริปต์ทางไหนก็ตาม ปิดเครื่องรับด้วย (ไม่ให้ขั้นตอนของ CI ค้าง)
+trap 'pkill -f "live/bg" 2>/dev/null; kill $RECV 2>/dev/null' EXIT
 sleep 1
 adb shell setprop debug.webmix.selftest "rtmp://10.0.2.2:$BG_PORT/live/bg"
 adb shell setprop debug.webmix.selftest_hold 45
