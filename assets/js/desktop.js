@@ -28,6 +28,8 @@
     mobile: /Android/i.test(navigator.userAgent),
 
     pickFolder: () => invoke('pick_folder'),
+    // Android: บริการเบื้องหน้า (แจ้งเตือน "กำลังไลฟ์") ให้กล้อง ไมค์ และการสตรีมทำงานต่อตอนปิดจอ/สลับแอป
+    setLive: (active, text) => invoke('set_live', { active: !!active, text: String(text || '') }).catch(() => {}),
 
     // เปิดไฟล์ใหม่ในโฟลเดอร์ แล้วคืนตัวเขียนแบบเดียวกับ FileSystemWritableFileStream
     // write(ข้อมูล) ต่อท้ายไฟล์ · write({ type: 'write', position, data }) เขียนทับตามตำแหน่ง · close()
@@ -160,17 +162,23 @@
      (เส้นทางเดียวกับปุ่มสตรีมในหน้า WebMix) */
   async function streamTest(info, add, wait) {
     const types = ['video/webm;codecs=vp8,opus', 'video/webm;codecs=vp9,opus', 'video/webm', 'video/mp4'];
-    const useWc = WM.wcrec && WM.wcrec.preferred();
+    // มือถือ: เส้นทางเดียวกับแอป — H.264 จาก WebCodecs (ชิปของเครื่อง) ส่งต่อโดย Gateway ไม่เข้ารหัสซ้ำ
+    const vcopy = !!(desktop.mobile && WM.wcrec && await WM.wcrec.avcSupported(1280, 720, 30, 2500000));
+    add('webcodecs-h264', vcopy, vcopy ? 'เข้ารหัส H.264 ด้วยชิปของเครื่องได้' : 'ไม่รองรับ — Gateway เข้ารหัสเอง', false);
+    const useWc = vcopy || (WM.wcrec && WM.wcrec.preferred());
     const type = useWc ? 'webcodecs' : typeof MediaRecorder === 'function' ? types.find(t => MediaRecorder.isTypeSupported(t)) : '';
     if (!type) { add('stream', false, 'ไม่มี MediaRecorder / WebCodecs'); return; }
     const canvas = document.createElement('canvas');
     canvas.width = 1280; canvas.height = 720;
     const g = canvas.getContext('2d');
     let n = 0;
-    const tick = setInterval(() => {
+    // วาดด้วยตัวจับเวลาใน Worker แบบเดียวกับแอป — ตอนปิดจอ setInterval ของหน้าเว็บถูกลดเหลือวินาทีละครั้ง
+    const draw = () => {
       g.fillStyle = `hsl(${(n * 6) % 360} 70% 45%)`; g.fillRect(0, 0, 1280, 720);
       g.fillStyle = '#fff'; g.font = 'bold 96px sans-serif'; g.fillText(`WebMix ${n++}`, 80 + (n * 8) % 600, 380);
-    }, 33);
+    };
+    const stopDraw = WM.wcrec ? WM.wcrec.every(draw, 33) : (id => () => clearInterval(id))(setInterval(draw, 33));
+    const hold = info.selftestHold || 0;
     const stream = useWc ? null : canvas.captureStream(30);
     let actx = null, osc = null;
     try {
@@ -180,7 +188,7 @@
       if (stream) dst.stream.getAudioTracks().forEach(t => stream.addTrack(t));
       actx.resume().catch(() => {});
     } catch (e) {}
-    const url = `${info.gateway.url}&fps=30&vb=2500&res=720`;
+    const url = `${info.gateway.url}&fps=30&vb=2500&res=720${vcopy ? '&vcopy=1' : ''}`;
     const statuses = [];
     let live = false, error = '', encoder = null, mimeUsed = type;
     await new Promise(resolve => {
@@ -196,7 +204,7 @@
       ws.onopen = () => {
         ws.send(JSON.stringify({ type: 'start', destinations: [{ id: 'selftest', name: 'selftest', url: info.selftestStream }] }));
         rec = useWc
-          ? WM.wcrec.recorder({ canvas, audioNode: osc, fps: 30, videoBitsPerSecond: 2500000, audioBitsPerSecond: 128000, preferAvc: true })
+          ? WM.wcrec.recorder({ canvas, audioNode: osc, fps: 30, videoBitsPerSecond: 2500000, audioBitsPerSecond: 128000, preferAvc: true, requireAvc: vcopy, constantBitrate: vcopy })
           : new MediaRecorder(stream, { mimeType: type, videoBitsPerSecond: 2500000 });
         rec.ondataavailable = e => { if (e.data.size && ws.readyState === 1) ws.send(e.data); };
         rec.start(1000);
@@ -209,17 +217,23 @@
         for (const d of m.destinations || []) {
           statuses.push(d.state);
           if (d.state === 'error') error = d.message;
-          // LIVE แล้วส่งต่ออีก 8 วินาทีให้ปลายทางได้ไฟล์ที่ตรวจได้
-          if (d.state === 'live' && !live) { live = true; clearTimeout(timer); setTimeout(finish, 8000); }
+          // LIVE แล้วส่งต่ออีก 8 วินาทีให้ปลายทางได้ไฟล์ที่ตรวจได้ (หรือค้างไว้ตาม selftestHold พร้อมเปิดบริการเบื้องหน้า
+          // เหมือนตอนไลฟ์จริง — CI กดปุ่มโฮมและปิดจอระหว่างนี้)
+          if (d.state === 'live' && !live) {
+            live = true; clearTimeout(timer);
+            if (hold && desktop.mobile) desktop.setLive(true, 'ทดสอบไลฟ์เบื้องหลัง');
+            setTimeout(finish, hold ? hold * 1000 : 8000);
+          }
         }
       };
       ws.onclose = ev => { if (!live && !error) error = `gateway ปิดการเชื่อมต่อ (${ev.code} ${ev.reason || ''})`; };
     });
-    clearInterval(tick);
+    stopDraw();
+    if (hold && desktop.mobile) desktop.setLive(false, '');
     if (stream) stream.getTracks().forEach(t => t.stop());
     if (actx) actx.close().catch(() => {});
     const speed = encoder ? ` · encoder ${encoder.speed}x ${encoder.fps} fps` : '';
-    add('stream', live, live ? `LIVE ผ่าน ${info.encoder} (${mimeUsed}${useWc ? ' · WebCodecs' : ''})${speed}` : (error || `ไม่ขึ้น LIVE (${statuses.slice(-5).join(',')})`));
+    add('stream', live, live ? `LIVE ผ่าน ${vcopy ? 'H.264 จาก WebCodecs (ไม่เข้ารหัสซ้ำ)' : info.encoder} (${mimeUsed}${useWc ? ' · WebCodecs' : ''})${speed}` : (error || `ไม่ขึ้น LIVE (${statuses.slice(-5).join(',')})`));
   }
 
   // Linux: MediaRecorder ของ WebKitGTK เขียน MP4 ที่เสีย — แอปใช้ WebCodecs + ตัวเขียน WebM เอง (wcrec.js) แทน

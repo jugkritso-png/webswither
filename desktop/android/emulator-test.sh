@@ -68,6 +68,51 @@ echo "ถอดรหัสได้ $FRAMES เฟรม"
 [ "${FRAMES:-0}" -ge 150 ] || { echo "สตรีมที่ได้สั้นหรือถอดรหัสไม่ได้"; exit 1; }
 echo "Android: สตรีมผ่าน Gateway ในแอปสำเร็จ"
 
+# ---- ไลฟ์เบื้องหลัง: ระหว่างสตรีม กดปุ่มโฮมแล้วปิดจอ — สตรีมต้องไม่หยุดและภาพต้องไม่ค้าง (LiveService) ----
+BG_PORT=1936
+adb shell am force-stop "$PKG"
+ffmpeg -hide_banner -loglevel error -listen 1 -i "rtmp://0.0.0.0:$BG_PORT/live/bg" -c copy -y "$OUT/android-bg.flv" &
+RECV=$!
+sleep 1
+adb shell setprop debug.webmix.selftest "rtmp://10.0.2.2:$BG_PORT/live/bg"
+adb shell setprop debug.webmix.selftest_hold 45
+adb logcat -c
+adb shell input keyevent KEYCODE_WAKEUP
+adb shell monkey -p "$PKG" -c android.intent.category.LAUNCHER 1 >/dev/null
+for _ in $(seq 1 150); do [ -s "$OUT/android-bg.flv" ] && break; sleep 1; done
+[ -s "$OUT/android-bg.flv" ] || { echo "ไลฟ์เบื้องหลัง: สตรีมไม่เริ่ม"; adb logcat -d -s WebMix:* WebMixGateway:* | tail -40; exit 1; }
+sleep 4
+adb shell input keyevent KEYCODE_HOME
+sleep 3
+adb shell input keyevent KEYCODE_SLEEP
+sleep 3
+echo "--- บริการเบื้องหน้าระหว่างปิดจอ"
+adb shell dumpsys activity services "$PKG" | grep -E "LiveService|isForeground|foregroundServiceType" | head -5 || true
+sleep 22
+adb shell input keyevent KEYCODE_WAKEUP
+for _ in $(seq 1 60); do
+  adb logcat -d -v raw -s WebMix:I | grep -q '^WEBMIX_SELFTEST ' && break
+  sleep 1
+done
+adb shell setprop debug.webmix.selftest 0
+adb shell setprop debug.webmix.selftest_hold 0
+adb logcat -d -v brief | grep -E 'WebMix|LiveService|chromium|AndroidRuntime' | tail -120 > "$OUT/logcat-bg.txt" || true
+sleep 3
+kill "$RECV" 2>/dev/null || true
+wait "$RECV" 2>/dev/null || true
+grep -q "LiveService started" "$OUT/logcat-bg.txt" || { echo "ไลฟ์เบื้องหลัง: LiveService ไม่เริ่ม"; grep -iE "LiveService|set_live|Exception" "$OUT/logcat-bg.txt" | tail -20; exit 1; }
+BG_DUR=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$OUT/android-bg.flv")
+ffprobe -v error -select_streams v -show_entries packet=pts_time -of csv=p=0 "$OUT/android-bg.flv" > "$OUT/android-bg-pts.txt"
+node -e '
+  const t = require("fs").readFileSync(process.argv[1], "utf8").split("\n").map(Number).filter(Number.isFinite).sort((a, b) => a - b);
+  const dur = +process.argv[2];
+  let gap = 0; for (let i = 1; i < t.length; i++) gap = Math.max(gap, t[i] - t[i - 1]);
+  const fps = t.length / dur;
+  console.log(`ไลฟ์เบื้องหลัง: ${dur.toFixed(1)} วินาที · ${t.length} เฟรม (${fps.toFixed(1)} fps) · ช่วงขาดนานสุด ${gap.toFixed(2)} วินาที`);
+  if (dur < 35) { console.log("สตรีมหยุดก่อนเวลา (ปิดจอแล้วสตรีมหลุด)"); process.exit(1); }
+  if (fps < 20 || gap > 1) { console.log("ภาพค้าง/เฟรมหายระหว่างปิดจอ"); process.exit(1); }
+' "$OUT/android-bg-pts.txt" "$BG_DUR"
+
 # RTMPS ไปเซิร์ฟเวอร์จริงของ Facebook ด้วย ffmpeg ตัวเดียวกับในแอป (คีย์ปลอม): ต้องผ่าน DNS และ TLS
 # แล้วไปติดที่ Facebook ปฏิเสธคีย์ — ถ้าติดที่ DNS หรือ TLS แปลว่าการสตรีมไป Facebook/YouTube จากมือถือจะใช้ไม่ได้
 if [ -n "$FFMPEG" ]; then

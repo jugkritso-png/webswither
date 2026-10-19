@@ -21,7 +21,7 @@ for abi in arm64-v8a x86_64; do
   fi
 done
 
-python3 - "$APP" <<'PY'
+python3 - "$APP" "$HERE/LiveService.kt" <<'PY'
 import re, sys, pathlib
 app = pathlib.Path(sys.argv[1])
 
@@ -40,6 +40,13 @@ perms = [
     'android.permission.RECORD_AUDIO',
     'android.permission.MODIFY_AUDIO_SETTINGS',
     'android.permission.WAKE_LOCK',
+    # ไลฟ์เบื้องหลัง (LiveService)
+    'android.permission.FOREGROUND_SERVICE',
+    'android.permission.FOREGROUND_SERVICE_CAMERA',
+    'android.permission.FOREGROUND_SERVICE_MICROPHONE',
+    'android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK',
+    'android.permission.POST_NOTIFICATIONS',
+    'android.permission.ACCESS_WIFI_STATE',
 ]
 for p in perms:
     if f'"{p}"' not in m:
@@ -69,6 +76,39 @@ if 'networkSecurityConfig' not in m:
 for attr in ['android:requestLegacyExternalStorage="true"', 'android:extractNativeLibs="true"']:
     if attr.split('=')[0] not in m:
         m = m.replace('<application', '<application ' + attr, 1)
+# บริการเบื้องหน้าระหว่างไลฟ์/บันทึก
+if 'LiveService' not in m:
+    m = m.replace('</application>', '    <service android:name=".LiveService" android:exported="false"\n'
+                  '            android:foregroundServiceType="camera|microphone|mediaPlayback" />\n    </application>', 1)
 manifest.write_text(m)
 print(m)
+
+# LiveService.kt ไว้ข้าง MainActivity.kt (package เดียวกัน) และให้ MainActivity ไม่หยุด WebView ระหว่างไลฟ์
+main = next((app / 'src/main/java').rglob('MainActivity.kt'))
+src = main.read_text()
+pkg = re.search(r'^package\s+([\w.`]+)', src, re.M).group(1)
+(main.parent / 'LiveService.kt').write_text(pathlib.Path(sys.argv[2]).read_text().replace('__PACKAGE__', pkg))
+if 'LiveService.running' not in src:
+    if not re.search(r'class MainActivity\s*:\s*TauriActivity\(\)\s*\{', src):
+        src = re.sub(r'(class MainActivity\s*:\s*TauriActivity\(\))', r'\1 {\n}', src, count=1)
+    body = (
+        '\n'
+        '  // WryActivity หยุด WebView ตอน onPause (ปิดจอ/สลับแอป) — ระหว่างไลฟ์เปิดกลับทันที ให้หน้าเว็บสตรีมต่อได้\n'
+        '  private var liveWebView: android.webkit.WebView? = null\n'
+        '\n'
+        '  override fun onWebViewCreate(webView: android.webkit.WebView) {\n'
+        '    super.onWebViewCreate(webView)\n'
+        '    liveWebView = webView\n'
+        '  }\n'
+        '\n'
+        '  override fun onPause() {\n'
+        '    super.onPause()\n'
+        '    if (LiveService.running) liveWebView?.onResume()\n'
+        '  }\n'
+        '}\n'
+    )
+    i = src.rstrip().rfind('}')
+    src = src[:i].rstrip() + '\n' + body
+    main.write_text(src)
+print(main.read_text())
 PY

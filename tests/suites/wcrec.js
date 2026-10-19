@@ -73,6 +73,41 @@ const seekFrame = (f, t) => spawnSync('ffmpeg', ['-v', 'error', '-ss', String(t)
   ok('RTMP receiver got H.264 + AAC', /h264/.test(sp) && /aac/.test(sp), sp);
   ok('streamed for several seconds', duration(S + '/wcrec-stream.flv') > 4, `${duration(S + '/wcrec-stream.flv')} s`);
 
+  // ---- H.264 จาก WebCodecs ส่งต่อโดย Gateway ไม่เข้ารหัสซ้ำ (vcopy=1 — เส้นทางของแอป Android) ----
+  const rtmp2 = listenRtmp(1948, 'vc', S + '/wcrec-vcopy.flv');
+  await p.waitForTimeout(800);
+  const vc = await p.evaluate(async () => {
+    const wc = window.WebMix.wcrec;
+    const supported = await wc.avcSupported(1280, 720, 30, 2500000);
+    if (!supported) return { supported };
+    const canvas = document.createElement('canvas'); canvas.width = 1280; canvas.height = 720;
+    const g = canvas.getContext('2d'); let n = 0;
+    const draw = setInterval(() => { g.fillStyle = `hsl(${(n++ * 7) % 360} 70% 45%)`; g.fillRect(0, 0, 1280, 720); }, 33);
+    const actx = new AudioContext(); const osc = actx.createOscillator(); osc.start();
+    const ws = new WebSocket('ws://127.0.0.1:8089/?token=abc&fps=30&vb=2500&res=720&vcopy=1');
+    const rec = wc.recorder({ canvas, audioNode: osc, fps: 30, videoBitsPerSecond: 2500000, audioBitsPerSecond: 128000, requireAvc: true, constantBitrate: true });
+    let live = false;
+    await new Promise(res => {
+      ws.onopen = () => {
+        ws.send(JSON.stringify({ type: 'start', destinations: [{ id: 'v', name: 'v', url: 'rtmp://127.0.0.1:1948/live/vc' }] }));
+        rec.ondataavailable = e => ws.readyState === 1 && ws.send(e.data);
+        rec.start(500);
+      };
+      ws.onmessage = ev => { try { const m = JSON.parse(ev.data); if ((m.destinations || []).some(d => d.state === 'live')) live = true; } catch (e) {} };
+      setTimeout(res, 8000);
+    });
+    rec.stop(); ws.send(JSON.stringify({ type: 'stop', id: 'v' }));
+    await new Promise(r => setTimeout(r, 1500)); ws.close(); clearInterval(draw); actx.close();
+    return { supported, live, mime: rec.mimeType };
+  });
+  if (vc.supported) {
+    rtmp2.kill('SIGINT'); await new Promise(r => setTimeout(r, 1500));
+    const vp = probe(S + '/wcrec-vcopy.flv');
+    ok('H.264 passthrough (vcopy) goes LIVE', vc.live && /h264/.test(vc.mime), JSON.stringify(vc));
+    ok('passthrough stream has H.264 720p + AAC', /codec_name=h264\|width=1280\|height=720/.test(vp) && /aac/.test(vp), vp);
+    ok('passthrough streamed for several seconds', duration(S + '/wcrec-vcopy.flv') > 4, `${duration(S + '/wcrec-vcopy.flv')} s`);
+  } else { rtmp2.kill('SIGINT'); console.log('INFO  WebCodecs H.264 not available in this Chromium — passthrough test skipped'); }
+
   ok('no page errors', errs.length === 0, JSON.stringify(errs));
   console.log(results.join('\n')); await b.close();
 })().catch(e => { console.log(results.join('\n')); console.error('CRASH', e.message); process.exit(1); });

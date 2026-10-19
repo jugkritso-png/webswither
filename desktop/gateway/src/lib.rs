@@ -8,6 +8,9 @@
 //!   client → { "type": "stop", "id": "…" }
 //!   server → { "type": "status", "destinations": [{ "id", "name", "state", "message", "kbps" }], "encoder": { "speed", "fps" } | null }
 //!
+//! พารามิเตอร์ของ URL: fps, vb (kbps), res (ความสูง) · vcopy=1 = วิดีโอที่ส่งมาเป็น H.264 อยู่แล้ว (เช่นจาก WebCodecs
+//! ด้วยชิปของมือถือ) → ใช้ต่อได้เลยไม่เข้ารหัสซ้ำ เข้ารหัสเฉพาะเสียงเป็น AAC
+//!
 //! ใช้ในแอปเดสก์ท็อป (ทำงานในเครื่องเดียวกับหน้า WebMix — ไม่ต้องมีเซิร์ฟเวอร์) และรันแยกเป็นโปรแกรม `webmix-gateway` ได้
 
 use std::collections::HashMap;
@@ -286,6 +289,7 @@ async fn handle_conn(stream: TcpStream, peer: SocketAddr, cfg: Arc<Config>, srt_
     let fps = params.get("fps").and_then(|v| v.parse::<u32>().ok()).filter(|f| [24, 25, 30, 50, 60].contains(f)).unwrap_or(30);
     let kbps = params.get("vb").and_then(|v| v.parse::<u32>().ok()).unwrap_or(4500).clamp(500, MAX_KBPS);
     let height = params.get("res").and_then(|v| v.parse::<u32>().ok()).unwrap_or(0).min(4320);
+    let video_copy = params.get("vcopy").is_some_and(|v| v == "1");
 
     // ข้อความที่จะส่งกลับไปหน้า WebMix (ส่งจาก task เดียวตามลำดับ)
     let (out_tx, mut out_rx) = mpsc::unbounded_channel::<Message>();
@@ -300,7 +304,8 @@ async fn handle_conn(stream: TcpStream, peer: SocketAddr, cfg: Arc<Config>, srt_
         let _ = sink.close().await;
     });
 
-    let session = Session::new(cfg.clone(), srt_supported, fps, kbps, height, out_tx.clone(), format!("[{peer}]"));
+    let mut session = Session::new(cfg.clone(), srt_supported, fps, kbps, height, out_tx.clone(), format!("[{peer}]"));
+    session.video_copy = video_copy;
     eprintln!("{} connected", session.tag);
 
     if let Some(legacy) = params.get("rtmp").cloned() {
@@ -473,6 +478,8 @@ struct Session {
     fps: u32,
     kbps: u32,
     height: u32,
+    /// วิดีโอที่รับมาเป็น H.264 แล้ว — ไม่ต้องเข้ารหัสซ้ำ
+    video_copy: bool,
     out: mpsc::UnboundedSender<Message>,
     tag: String,
     st: Arc<Mutex<State>>,
@@ -487,6 +494,7 @@ impl Session {
             fps,
             kbps,
             height,
+            video_copy: false,
             out,
             tag,
             st: Arc::new(Mutex::new(State { dests: Vec::new(), encoder_tx: None, encoder_started: false, encoder_stats: None, closed: false })),
@@ -539,15 +547,24 @@ impl Session {
         }
         let (fps, kbps) = (self.fps.to_string(), self.kbps);
         let mut args: Vec<String> = ["-hide_banner", "-loglevel", "warning", "-stats", "-stats_period", "2", "-i", "pipe:0"].iter().map(|s| s.to_string()).collect();
-        args.extend(video_args(&self.cfg, self.height));
+        if self.video_copy {
+            args.extend(["-c:v", "copy"].iter().map(|s| s.to_string()));
+        } else {
+            args.extend(video_args(&self.cfg, self.height));
+            for a in [
+                "-pix_fmt", pix_fmt(&self.cfg.video_encoder), "-r", &fps, "-g", &(self.fps * 2).to_string(), "-keyint_min", &(self.fps * 2).to_string(), "-sc_threshold", "0",
+                "-b:v", &format!("{kbps}k"), "-maxrate", &format!("{kbps}k"), "-bufsize", &format!("{}k", kbps * 2),
+            ] {
+                args.push(a.to_string());
+            }
+        }
         for a in [
-            "-pix_fmt", pix_fmt(&self.cfg.video_encoder), "-r", &fps, "-g", &(self.fps * 2).to_string(), "-keyint_min", &(self.fps * 2).to_string(), "-sc_threshold", "0",
-            "-b:v", &format!("{kbps}k"), "-maxrate", &format!("{kbps}k"), "-bufsize", &format!("{}k", kbps * 2),
             "-c:a", "aac", "-ar", "44100", "-b:a", "128k", "-f", "mpegts", "-mpegts_flags", "+resend_headers", "pipe:1",
         ] {
             args.push(a.to_string());
         }
-        eprintln!("{} encoder start {}p{} {}kbps {}", self.tag, self.height, self.fps, kbps, self.cfg.video_encoder);
+        let venc = if self.video_copy { "copy (H.264 จากเบราว์เซอร์)" } else { self.cfg.video_encoder.as_str() };
+        eprintln!("{} encoder start {}p{} {}kbps {}", self.tag, self.height, self.fps, kbps, venc);
         let child = quiet(Command::new(&self.cfg.ffmpeg).args(&args)).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn();
         let mut child = match child {
             Ok(c) => c,

@@ -171,7 +171,24 @@
     $('#pgm-format').textContent = formatTag(H, settings.fps);
     output.reset();
     ticker.setRate(settings.fps);
+    checkHwAvc();
   }
+
+  // มือถือ (แอป Android): หน้าเว็บเข้ารหัส H.264 ด้วยชิปของเครื่อง (WebCodecs → MediaCodec) แล้วให้ Gateway ในแอป
+  // ส่งต่อเลยโดยไม่ถอดรหัส/เข้ารหัสซ้ำ — งานลดลงเกือบครึ่ง เครื่องร้อนน้อยลง ภาพคมขึ้น
+  // ปิดได้ด้วย localStorage 'webmix-vcopy' = '0'
+  const hwAvc = { key: '', ok: false };
+  function checkHwAvc() {
+    if (!desktop || !desktop.mobile || !window.WebMix.wcrec) return;
+    let off = false;
+    try { off = localStorage.getItem('webmix-vcopy') === '0'; } catch (e) {}
+    const key = `${W}x${H}@${settings.fps}`;
+    hwAvc.key = key; hwAvc.ok = false;
+    if (off) return;
+    window.WebMix.wcrec.avcSupported(W, H, settings.fps, settings.videoKbps * 1000)
+      .then(ok => { if (hwAvc.key === key) hwAvc.ok = ok; }).catch(() => {});
+  }
+  const useVideoCopy = () => usingLocalGateway() && hwAvc.ok && hwAvc.key === `${W}x${H}@${settings.fps}`;
 
   /* -------------------------------------------------------------- state */
   const inputs = [];
@@ -3178,16 +3195,32 @@
 
   function connectGateway(initial) {
     let r;
-    try { r = makeRecorder('stream'); } catch (e) {
+    const vcopy = useVideoCopy();
+    try {
+      if (vcopy) {
+        audio.ensure();
+        r = window.WebMix.wcrec.recorder({
+          canvas: pgmCanvas, audioNode: audio.post || null, fps: settings.fps,
+          videoBitsPerSecond: settings.videoKbps * 1000, audioBitsPerSecond: 160000,
+          requireAvc: true, constantBitrate: true
+        });
+      } else r = makeRecorder('stream');
+    } catch (e) {
       initial.forEach(d => streamer.dests.delete(d.id));
       toast('เริ่มสตรีมไม่ได้: ' + e.message, 'error');
       return;
     }
     const gw = gatewayUrl();
     const sep = gw.includes('?') ? '&' : '?';
-    const ws = new WebSocket(`${gw}${sep}fps=${settings.fps}&vb=${settings.videoKbps}&res=${H}`);
+    const ws = new WebSocket(`${gw}${sep}fps=${settings.fps}&vb=${settings.videoKbps}&res=${H}${vcopy ? '&vcopy=1' : ''}`);
     const reconnecting = !!streamer.reconnecting;
-    Object.assign(streamer, { ws, recorder: r, state: reconnecting ? 'reconnecting' : 'connecting', sent: 0, kbps: 0, lastBytes: 0, lastAt: performance.now(), queue: [...initial] });
+    Object.assign(streamer, { ws, recorder: r, videoCopy: vcopy, state: reconnecting ? 'reconnecting' : 'connecting', sent: 0, kbps: 0, lastBytes: 0, lastAt: performance.now(), queue: [...initial] });
+    // เข้ารหัสด้วยชิปของเครื่องไม่สำเร็จ → เลิกใช้ทางนี้ แล้วเชื่อมต่อใหม่ให้ Gateway เข้ารหัสเอง (ระบบเชื่อมต่อใหม่อัตโนมัติ)
+    if (vcopy) r.onerror = e => {
+      hwAvc.ok = false;
+      toast('เข้ารหัสวิดีโอด้วยชิปของเครื่องไม่สำเร็จ — สลับให้ Gateway เข้ารหัสแทน: ' + (e.error?.message || ''), 'warn', 8000);
+      if (streamer.ws === ws) { handleDisconnect(ws, 4002, 'สลับวิธีเข้ารหัส'); try { ws.close(); } catch (err) {} }
+    };
 
     ws.onopen = () => {
       ws.send(JSON.stringify({ type: 'start', destinations: streamer.queue.map(destPayload) }));
@@ -3337,7 +3370,19 @@
     lamp.classList.toggle('is-live', live);
     lamp.textContent = live ? 'ON AIR' : 'OFF AIR';
     keepScreenOn(live);
+    syncLiveService(live);
     updateStatus();
+  }
+
+  // แอป Android: เปิดบริการเบื้องหน้าระหว่างไลฟ์/บันทึก (แจ้งเตือนค้าง) — ระบบจะไม่หยุดกล้องและการสตรีมเมื่อปิดจอหรือสลับแอป
+  let liveServiceText = '';
+  function syncLiveService(live) {
+    if (!desktop || !desktop.mobile) return;
+    const text = !live ? '' : streamer.active || streamer.reconnecting
+      ? (rec.active ? 'กำลังไลฟ์และบันทึก' : 'กำลังไลฟ์') : 'กำลังบันทึก';
+    if (text === liveServiceText) return;
+    liveServiceText = text;
+    desktop.setLive(!!text, `${text} — แตะเพื่อกลับไปที่แอป`);
   }
 
   window.addEventListener('beforeunload', e => {

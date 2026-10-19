@@ -443,6 +443,8 @@ wss.on('connection', (ws, req) => {
   const fps = [24, 25, 30, 50, 60].includes(Number(params.get('fps'))) ? Number(params.get('fps')) : 30;
   const kbps = Math.min(MAX_KBPS, Math.max(500, Number(params.get('vb')) || 4500));
   const height = Math.min(4320, Math.max(0, Number(params.get('res')) || 0));
+  // vcopy=1: วิดีโอที่ส่งมาเป็น H.264 แล้ว (WebCodecs ด้วยชิปของเครื่อง) — ส่งต่อเลย เข้ารหัสเฉพาะเสียง
+  const videoCopy = params.get('vcopy') === '1';
   let encoderStats = null;
 
   const dests = new Map();
@@ -500,13 +502,15 @@ wss.on('connection', (ws, req) => {
   function startEncoder() {
     if (encoder) return true;
     if (!allowEncoder()) return false;
-    console.log(`${tag} encoder start ${height ? height + 'p' : ''}${fps} ${kbps}kbps ${VIDEO_ENCODER}`);
+    console.log(`${tag} encoder start ${height ? height + 'p' : ''}${fps} ${kbps}kbps ${videoCopy ? 'copy' : VIDEO_ENCODER}`);
     encoder = spawn(FFMPEG, [
       '-loglevel', 'warning', '-nostats', '-progress', 'pipe:3', '-stats_period', '2',
       '-i', 'pipe:0',
-      ...videoArgs(height),
-      '-pix_fmt', 'yuv420p', '-r', String(fps), '-g', String(fps * 2), '-keyint_min', String(fps * 2), '-sc_threshold', '0',
-      '-b:v', `${kbps}k`, '-maxrate', `${kbps}k`, '-bufsize', `${kbps * 2}k`,
+      ...(videoCopy ? ['-c:v', 'copy'] : [
+        ...videoArgs(height),
+        '-pix_fmt', 'yuv420p', '-r', String(fps), '-g', String(fps * 2), '-keyint_min', String(fps * 2), '-sc_threshold', '0',
+        '-b:v', `${kbps}k`, '-maxrate', `${kbps}k`, '-bufsize', `${kbps * 2}k`
+      ]),
       '-c:a', 'aac', '-ar', '44100', '-b:a', '128k',
       // MPEG-TS ส่ง SPS/PPS ซ้ำทุกคีย์เฟรม ปลายทางที่เริ่มกลางคันจึงต่อสัญญาณได้ทันที
       '-f', 'mpegts', '-mpegts_flags', '+resend_headers', 'pipe:1'

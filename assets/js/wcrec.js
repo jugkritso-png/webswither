@@ -145,27 +145,54 @@
     return hasApi() && (forced || webkitGtk);
   }
 
-  async function pickVideoConfig(width, height, fps, bitrate, preferAvc) {
+  async function pickVideoConfig(width, height, fps, bitrate, preferAvc, requireAvc = false, constantBitrate = false) {
     const avcLevel = height > 1080 ? '640033' : height > 720 ? '640028' : '64001f';
-    const list = [
+    let list = [
       { codec: `avc1.${avcLevel}`, codecId: 'V_MPEG4/ISO/AVC', avc: { format: 'avc' }, mime: 'h264' },
       { codec: 'vp8', codecId: 'V_VP8', mime: 'vp8' }
     ];
-    if (!preferAvc) list.reverse();
+    if (requireAvc) list = list.slice(0, 1);
+    else if (!preferAvc) list.reverse();
     for (const c of list) {
-      const cfg = { codec: c.codec, width, height, bitrate, framerate: fps, latencyMode: 'realtime', ...(c.avc ? { avc: c.avc } : {}) };
-      try { if ((await VideoEncoder.isConfigSupported(cfg)).supported) return { cfg, codecId: c.codecId, mime: c.mime }; } catch (e) {}
+      const base = { codec: c.codec, width, height, bitrate, framerate: fps, latencyMode: 'realtime', ...(c.avc ? { avc: c.avc } : {}) };
+      // สตรีม: บิตเรตคงที่ช่วยให้ปลายทาง (RTMP) ไม่ล้นบัฟเฟอร์ — ถ้าตัวเข้ารหัสไม่รองรับใช้แบบปกติ
+      for (const cfg of constantBitrate ? [{ ...base, bitrateMode: 'constant' }, base] : [base]) {
+        try { if ((await VideoEncoder.isConfigSupported(cfg)).supported) return { cfg, codecId: c.codecId, mime: c.mime }; } catch (e) {}
+      }
     }
     return null;
   }
 
+  // เข้ารหัส H.264 ด้วย WebCodecs ได้ไหม (มือถือ Android = ชิปเข้ารหัสของเครื่องผ่าน MediaCodec)
+  async function avcSupported(width, height, fps, bitrate) {
+    if (!hasApi()) return false;
+    return !!(await pickVideoConfig(width & ~1, height & ~1, fps, bitrate, true, true));
+  }
+
+  // ตัวจับเวลาใน Worker — เบราว์เซอร์ลด setInterval ของหน้าที่ซ่อนอยู่ (ปิดจอ/สลับแอป) เหลือวินาทีละครั้ง
+  // แต่ไม่ลดของ Worker จึงยังเข้ารหัสได้ครบทุกเฟรมระหว่างไลฟ์เบื้องหลัง
+  function every(fn, ms) {
+    try {
+      const src = 'let id;onmessage=e=>{clearInterval(id);if(e.data>0)id=setInterval(()=>postMessage(0),e.data)}';
+      const url = URL.createObjectURL(new Blob([src], { type: 'text/javascript' }));
+      const w = new Worker(url);
+      URL.revokeObjectURL(url);
+      w.onmessage = fn;
+      w.postMessage(ms);
+      return () => { w.postMessage(0); w.terminate(); };
+    } catch (e) {
+      const id = setInterval(fn, ms);
+      return () => clearInterval(id);
+    }
+  }
+
   /* ------------------------------------------------------------ recorder */
   // canvas: ภาพ Program · audioNode: โหนดเสียง Master (null = ไม่มีเสียง)
-  async function createRecorder({ canvas, audioNode, fps, videoBitsPerSecond, audioBitsPerSecond, preferAvc = true }) {
+  async function createRecorder({ canvas, audioNode, fps, videoBitsPerSecond, audioBitsPerSecond, preferAvc = true, requireAvc = false, constantBitrate = false }) {
     if (!hasApi()) throw new Error('เบราว์เซอร์นี้ไม่มี WebCodecs');
     const width = canvas.width & ~1, height = canvas.height & ~1;
-    const vsel = await pickVideoConfig(width, height, fps, videoBitsPerSecond, preferAvc);
-    if (!vsel) throw new Error('ไม่มีตัวเข้ารหัสวิดีโอ (H.264 / VP8) ใน WebCodecs');
+    const vsel = await pickVideoConfig(width, height, fps, videoBitsPerSecond, preferAvc, requireAvc, constantBitrate);
+    if (!vsel) throw new Error(requireAvc ? 'เข้ารหัส H.264 ด้วย WebCodecs ไม่ได้' : 'ไม่มีตัวเข้ารหัสวิดีโอ (H.264 / VP8) ใน WebCodecs');
 
     const actx = audioNode ? audioNode.context : null;
     let acfg = null;
@@ -183,7 +210,7 @@
     };
     const vinfo = { codecId: vsel.codecId, width, height, priv: null, ready: vsel.codecId === 'V_VP8' };
     const ainfo = acfg ? { codecId: 'A_OPUS', sampleRate: acfg.sampleRate, channels: 2, priv: opusHead(2, acfg.sampleRate) } : null;
-    let buf = [], bufBytes = 0, sliceTimer = null, failed = false;
+    let buf = [], bufBytes = 0, stopSlice = null, failed = false;
     const emit = () => {
       if (!bufBytes || !rec.ondataavailable) return;
       const blob = new Blob(buf, { type: rec.mimeType });
@@ -214,7 +241,7 @@
 
     let aenc = null, proc = null, sink = null;
     let aNext = null;
-    let t0 = 0, aStart = null, aFrames = 0, lastKey = -Infinity, frameTimer = null;
+    let t0 = 0, aStart = null, aFrames = 0, lastKey = -Infinity, stopFrames = null;
     if (ainfo) {
       aenc = new AudioEncoder({
         output: chunk => {
@@ -271,11 +298,18 @@
       };
     }
 
+    // ตัวจับเวลาเดินถี่กว่าเฟรมเรต แล้วจับภาพตามเวลาจริง — ข้อความจาก Worker อาจมาเป็นชุดตอนหน้าเว็บทำงานหนัก
+    // จึงไม่ใช้จำนวนครั้งที่ถูกเรียกเป็นตัวกำหนดเฟรม (กันเวลาซ้ำและเฟรมเรตแกว่ง)
+    const frameMs = 1000 / fps;
+    let nextAt = 0;
     const grab = () => {
       if (rec.state !== 'recording') return;
+      const now = performance.now() - t0;
+      if (now < nextAt) return;
+      nextAt = Math.max(nextAt + frameMs, now + frameMs / 2); // ช้าไปแล้วไม่จับภาพรัว ๆ ชดเชย
       // ตัวเข้ารหัสตามไม่ทัน → ทิ้งเฟรมนี้ (ภาพกระตุกเล็กน้อยแต่เสียงและเวลายังตรง)
       if (venc.encodeQueueSize > 2) { rec.droppedFrames++; return; }
-      const ts = Math.round((performance.now() - t0) * 1000);
+      const ts = Math.round(now * 1000);
       let frame;
       try { frame = new VideoFrame(canvas, { timestamp: ts }); } catch (err) { return; }
       const key = ts - lastKey >= 2e6;
@@ -288,15 +322,16 @@
       if (rec.state !== 'inactive') return;
       rec.state = 'recording';
       t0 = performance.now();
-      frameTimer = setInterval(grab, 1000 / fps);
+      nextAt = 0;
+      stopFrames = every(grab, Math.max(4, frameMs / 4));
       grab();
-      sliceTimer = setInterval(emit, Math.max(100, timeslice));
+      stopSlice = every(emit, Math.max(100, timeslice));
     };
     rec.stop = async () => {
       if (rec.state === 'inactive') return;
       rec.state = 'inactive';
-      clearInterval(frameTimer);
-      clearInterval(sliceTimer);
+      if (stopFrames) stopFrames();
+      if (stopSlice) stopSlice();
       try { await venc.flush(); } catch (e) {}
       if (aenc) { try { await aenc.flush(); } catch (e) {} }
       mux.drain(true);
@@ -340,5 +375,5 @@
     return rec;
   }
 
-  WM.wcrec = { preferred, recorder, createRecorder, createMuxer, hasApi };
+  WM.wcrec = { preferred, recorder, createRecorder, createMuxer, hasApi, avcSupported, every };
 })(window.WebMix = window.WebMix || {});

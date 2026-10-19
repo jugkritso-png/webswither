@@ -64,6 +64,16 @@ struct DesktopInfo {
     selftest: bool,
     /// โหมดทดสอบตัวเองแบบสตรีมจริง: ปลายทาง RTMP/SRT ที่จะส่งภาพทดสอบไป
     selftest_stream: Option<String>,
+    /// สตรีมทดสอบค้างไว้กี่วินาทีหลังขึ้น LIVE (ทดสอบไลฟ์เบื้องหลังตอนปิดจอ) — Android: debug.webmix.selftest_hold
+    selftest_hold: u32,
+}
+
+fn selftest_hold() -> u32 {
+    #[cfg(target_os = "android")]
+    let v = android::system_property("debug.webmix.selftest_hold");
+    #[cfg(not(target_os = "android"))]
+    let v = std::env::var("WEBMIX_SELFTEST_HOLD").ok();
+    v.and_then(|v| v.parse().ok()).unwrap_or(0).min(600)
 }
 
 /// ค่าโหมดทดสอบตัวเอง: เดสก์ท็อปใช้ตัวแปร WEBMIX_SELFTEST, Android ใช้ system property debug.webmix.selftest
@@ -210,6 +220,7 @@ async fn desktop_info(app: AppHandle, state: State<'_, AppState>) -> Result<Desk
         temp_dir: scratch_dir(&app).to_string_lossy().into(),
         selftest: selftest_value().is_some(),
         selftest_stream: selftest_value().filter(|v| v.starts_with("rtmp://") || v.starts_with("srt://")),
+        selftest_hold: selftest_hold(),
     })
 }
 
@@ -511,6 +522,35 @@ mod android {
         });
     }
 
+    /// เปิด/ปิดบริการเบื้องหน้า LiveService (Kotlin ที่ desktop/android/prepare.sh ใส่ไว้ในโปรเจกต์ Android)
+    pub fn set_live(window: &tauri::WebviewWindow, active: bool, text: String) {
+        let _ = window.with_webview(move |pv| {
+            pv.jni_handle().exec(move |env, activity, _webview| {
+                use jni::objects::{JClass, JString, JValue};
+                let r = (|| -> jni::errors::Result<()> {
+                    // หาคลาสผ่าน ClassLoader ของแอป (FindClass จากเธรด native ไม่เห็นคลาสของแอป)
+                    let loader = env.call_method(activity, "getClassLoader", "()Ljava/lang/ClassLoader;", &[])?.l()?;
+                    let pkg = JString::from(env.call_method(activity, "getPackageName", "()Ljava/lang/String;", &[])?.l()?);
+                    let pkg: String = env.get_string(&pkg)?.into();
+                    let name = env.new_string(format!("{pkg}.LiveService"))?;
+                    let cls = JClass::from(env.call_method(&loader, "loadClass", "(Ljava/lang/String;)Ljava/lang/Class;", &[JValue::Object(&name)])?.l()?);
+                    if active {
+                        let t = env.new_string(&text)?;
+                        env.call_static_method(&cls, "start", "(Landroid/app/Activity;Ljava/lang/String;)V", &[JValue::Object(activity), JValue::Object(&t)])?;
+                    } else {
+                        env.call_static_method(&cls, "stop", "(Landroid/app/Activity;)V", &[JValue::Object(activity)])?;
+                    }
+                    Ok(())
+                })();
+                if let Err(e) = r {
+                    let _ = env.exception_describe();
+                    let _ = env.exception_clear();
+                    log("WebMix", &format!("set_live({active}): {e}"));
+                }
+            });
+        });
+    }
+
     /// โฟลเดอร์ที่ระบบแตกไฟล์ native library ของแอปไว้ (หาจากไลบรารีของแอปเองที่โหลดอยู่ใน /proc/self/maps)
     pub fn native_lib_dir() -> Option<PathBuf> {
         let maps = std::fs::read_to_string("/proc/self/maps").ok()?;
@@ -521,12 +561,21 @@ mod android {
     }
 }
 
+/// Android: ไลฟ์/บันทึกอยู่ → เปิดบริการเบื้องหน้าพร้อมแจ้งเตือน (ระบบไม่หยุดกล้อง/สตรีมตอนปิดจอหรือสลับแอป)
+#[tauri::command]
+fn set_live(window: tauri::WebviewWindow, active: bool, text: String) {
+    #[cfg(target_os = "android")]
+    android::set_live(&window, active, text);
+    #[cfg(not(target_os = "android"))]
+    let _ = (window, active, text);
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState::default())
-        .invoke_handler(tauri::generate_handler![desktop_info, pick_folder, rec_open, rec_write, rec_patch, rec_close, selftest_report, selftest_cleanup])
+        .invoke_handler(tauri::generate_handler![desktop_info, pick_folder, rec_open, rec_write, rec_patch, rec_close, selftest_report, selftest_cleanup, set_live])
         .setup(|app| {
             #[cfg(mobile)]
             {
