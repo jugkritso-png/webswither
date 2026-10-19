@@ -72,9 +72,9 @@ echo "Android: สตรีมผ่าน Gateway ในแอปสำเร�
 BG_PORT=$PORT  # พอร์ตเดียวกับรอบแรก (เครื่องรับรอบแรกปิดไปแล้ว)
 adb shell am force-stop "$PKG"
 # ถ้ามีการเชื่อมต่อที่จับมือ RTMP ไม่สำเร็จเข้ามาก่อน (RTMP Handshake C2 Error) ffmpeg จะออก — เปิดรอรับใหม่จนกว่าจะได้ข้อมูล
-( end=$((SECONDS + 300))
+( end=$((SECONDS + 420))
   while [ ! -s "$OUT/android-bg.flv" ] && [ $SECONDS -lt $end ]; do
-    timeout 240 ffmpeg -hide_banner -loglevel error -listen 1 -i "rtmp://0.0.0.0:$BG_PORT/live/bg" -c copy -y "$OUT/android-bg.flv" || sleep 0.2
+    timeout 400 ffmpeg -nostdin -hide_banner -loglevel error -listen 1 -i "rtmp://0.0.0.0:$BG_PORT/live/bg" -c copy -y "$OUT/android-bg.flv" || sleep 0.2
   done ) &
 RECV=$!
 # จบสคริปต์ทางไหนก็ตาม ปิดเครื่องรับด้วย (ไม่ให้ขั้นตอนของ CI ค้าง)
@@ -82,11 +82,19 @@ trap 'rc=$?; pkill -f "live/bg" 2>/dev/null; kill $RECV 2>/dev/null; exit $rc' E
 sleep 1
 adb shell setprop debug.webmix.selftest "rtmp://10.0.2.2:$BG_PORT/live/bg"
 adb shell setprop debug.webmix.selftest_hold 45
-adb logcat -c
-adb shell input keyevent KEYCODE_WAKEUP
-adb shell monkey -p "$PKG" -c android.intent.category.LAUNCHER 1 >/dev/null
-for _ in $(seq 1 150); do [ -s "$OUT/android-bg.flv" ] && break; sleep 1; done
-[ -s "$OUT/android-bg.flv" ] || { echo "ไลฟ์เบื้องหลัง: สตรีมไม่เริ่ม"; adb logcat -d -s WebMix:* WebMixGateway:* | tail -40; exit 1; }
+# เปิดแอปแล้วรอให้สตรีมมาถึง — ถ้าไม่มาภายใน 100 วินาที (emulator บางรอบตัวเข้ารหัสค้างหลัง force-stop) ปิดแล้วเปิดใหม่อีกครั้ง
+for attempt in 1 2; do
+  adb logcat -c
+  adb shell input keyevent KEYCODE_WAKEUP
+  adb shell monkey -p "$PKG" -c android.intent.category.LAUNCHER 1 >/dev/null
+  for _ in $(seq 1 100); do [ -s "$OUT/android-bg.flv" ] && break; sleep 1; done
+  [ -s "$OUT/android-bg.flv" ] && break
+  echo "ไลฟ์เบื้องหลัง: สตรีมยังไม่มา (ครั้งที่ $attempt)"
+  adb logcat -d -s WebMix:* WebMixGateway:* | grep -vE "glBindAttrib|s_gl|Non-monotonic|backward in time" | tail -25
+  adb shell am force-stop "$PKG"
+  sleep 3
+done
+[ -s "$OUT/android-bg.flv" ] || { echo "ไลฟ์เบื้องหลัง: สตรีมไม่เริ่ม"; exit 1; }
 sleep 4
 adb shell input keyevent KEYCODE_HOME
 sleep 3
