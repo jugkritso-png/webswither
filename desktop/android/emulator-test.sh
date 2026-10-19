@@ -78,7 +78,7 @@ adb shell am force-stop "$PKG"
   done ) &
 RECV=$!
 # จบสคริปต์ทางไหนก็ตาม ปิดเครื่องรับด้วย (ไม่ให้ขั้นตอนของ CI ค้าง)
-trap 'pkill -f "live/bg" 2>/dev/null; kill $RECV 2>/dev/null' EXIT
+trap 'rc=$?; pkill -f "live/bg" 2>/dev/null; kill $RECV 2>/dev/null; exit $rc' EXIT
 sleep 1
 adb shell setprop debug.webmix.selftest "rtmp://10.0.2.2:$BG_PORT/live/bg"
 adb shell setprop debug.webmix.selftest_hold 45

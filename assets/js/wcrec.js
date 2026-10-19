@@ -330,17 +330,16 @@
     }
 
     // ตัวจับเวลาเดินถี่กว่าเฟรมเรต แล้วจับภาพตามเวลาจริง — ข้อความจาก Worker อาจมาเป็นชุดตอนหน้าเว็บทำงานหนัก
-    // จึงไม่ใช้จำนวนครั้งที่ถูกเรียกเป็นตัวกำหนดเฟรม (กันเวลาซ้ำและเฟรมเรตแกว่ง)
+    // เวลาของเฟรมวางบนตาราง 1/fps (ช่องละหนึ่งเฟรม) จึงไม่มีสองเฟรมในช่องเดียวกัน และปลายทางได้จังหวะภาพสม่ำเสมอ
     const frameMs = 1000 / fps;
-    let nextAt = 0;
+    let lastSlot = -1;
     const grab = () => {
       if (rec.state !== 'recording') return;
-      const now = performance.now() - t0;
-      if (now < nextAt) return;
-      nextAt = Math.max(nextAt + frameMs, now + frameMs * 0.85); // ช้าไปแล้วไม่จับภาพรัว ๆ ชดเชย (เฟรมชิดกันเกินจะซ้อนช่องเวลา)
-      // ตัวเข้ารหัสตามไม่ทัน → ทิ้งเฟรมนี้ (ภาพกระตุกเล็กน้อยแต่เสียงและเวลายังตรง)
+      const slot = Math.round((performance.now() - t0) / frameMs);
+      if (slot <= lastSlot) return;
+      lastSlot = slot;
       if (venc.encodeQueueSize > 2) { rec.droppedFrames++; return; }
-      const ts = Math.round(now * 1000);
+      const ts = Math.round(slot * frameMs * 1000);
       let frame;
       try { frame = new VideoFrame(canvas, { timestamp: ts }); } catch (err) { return; }
       const key = ts - lastKey >= 2e6;
@@ -353,7 +352,7 @@
       if (rec.state !== 'inactive') return;
       rec.state = 'recording';
       t0 = performance.now();
-      nextAt = 0;
+      lastSlot = -1;
       stopFrames = every(grab, Math.max(4, frameMs / 4));
       grab();
       stopSlice = every(emit, Math.max(100, timeslice));
