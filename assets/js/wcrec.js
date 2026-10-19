@@ -146,13 +146,12 @@
   }
 
   async function pickVideoConfig(width, height, fps, bitrate, preferAvc, requireAvc = false, constantBitrate = false) {
-    const avcLevel = height > 1080 ? '640033' : height > 720 ? '640028' : '64001f';
-    let list = [
-      { codec: `avc1.${avcLevel}`, codecId: 'V_MPEG4/ISO/AVC', avc: { format: 'avc' }, mime: 'h264' },
-      { codec: 'vp8', codecId: 'V_VP8', mime: 'vp8' }
-    ];
-    if (requireAvc) list = list.slice(0, 1);
-    else if (!preferAvc) list.reverse();
+    const level = height > 1080 ? '33' : height > 720 ? '28' : '1f';
+    // High → Main → Baseline: ตัวเข้ารหัสของมือถือบางรุ่น (MediaCodec) ไม่รับโปรไฟล์ High
+    const avc = ['6400', '4d00', '42e0'].map(p => ({ codec: `avc1.${p}${level}`, codecId: 'V_MPEG4/ISO/AVC', avc: { format: 'avc' }, mime: 'h264' }));
+    let list = [...avc, { codec: 'vp8', codecId: 'V_VP8', mime: 'vp8' }];
+    if (requireAvc) list = avc;
+    else if (!preferAvc) list = [list[list.length - 1], ...avc];
     for (const c of list) {
       const base = { codec: c.codec, width, height, bitrate, framerate: fps, latencyMode: 'realtime', ...(c.avc ? { avc: c.avc } : {}) };
       // สตรีม: บิตเรตคงที่ช่วยให้ปลายทาง (RTMP) ไม่ล้นบัฟเฟอร์ — ถ้าตัวเข้ารหัสไม่รองรับใช้แบบปกติ

@@ -164,7 +164,7 @@
     const types = ['video/webm;codecs=vp8,opus', 'video/webm;codecs=vp9,opus', 'video/webm', 'video/mp4'];
     // มือถือ: เส้นทางเดียวกับแอป — H.264 จาก WebCodecs (ชิปของเครื่อง) ส่งต่อโดย Gateway ไม่เข้ารหัสซ้ำ
     const vcopy = !!(desktop.mobile && WM.wcrec && await WM.wcrec.avcSupported(1280, 720, 30, 2500000));
-    add('webcodecs-h264', vcopy, vcopy ? 'เข้ารหัส H.264 ด้วยชิปของเครื่องได้' : 'ไม่รองรับ — Gateway เข้ารหัสเอง', false);
+    add('webcodecs-h264', vcopy, vcopy ? 'เข้ารหัส H.264 ด้วยชิปของเครื่องได้' : `ไม่รองรับ (VideoEncoder: ${typeof VideoEncoder}) — Gateway เข้ารหัสเอง`, false);
     const useWc = vcopy || (WM.wcrec && WM.wcrec.preferred());
     const type = useWc ? 'webcodecs' : typeof MediaRecorder === 'function' ? types.find(t => MediaRecorder.isTypeSupported(t)) : '';
     if (!type) { add('stream', false, 'ไม่มี MediaRecorder / WebCodecs'); return; }

@@ -83,6 +83,12 @@ if 'LiveService' not in m:
 manifest.write_text(m)
 print(m)
 
+# R8 (release) ลบ/เปลี่ยนชื่อเมธอดที่เรียกจาก Rust ผ่าน JNI เท่านั้น — เก็บ LiveService ไว้ทั้งคลาส
+rules = app / 'proguard-rules.pro'
+r = rules.read_text() if rules.exists() else ''
+if 'LiveService' not in r:
+    rules.write_text(r.rstrip() + '\n\n# WebMix: LiveService.start/stop ถูกเรียกผ่าน JNI\n-keep class **.LiveService { *; }\n')
+
 # LiveService.kt ไว้ข้าง MainActivity.kt (package เดียวกัน) และให้ MainActivity ไม่หยุด WebView ระหว่างไลฟ์
 main = next((app / 'src/main/java').rglob('MainActivity.kt'))
 src = main.read_text()
