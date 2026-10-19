@@ -168,6 +168,37 @@
     return !!(await pickVideoConfig(width & ~1, height & ~1, fps, bitrate, true, true));
   }
 
+  // ลองเข้ารหัส H.264 จริง ๆ สั้น ๆ แล้ววัดว่าทันเฟรมเรตไหม — บางเครื่อง (เช่น emulator) รองรับแต่ช้ามาก
+  // คืน { ok, fps } · ok = ได้อย่างน้อย 90% ของเฟรมเรตที่ต้องการ
+  async function avcBenchmark(width, height, fps, bitrate, ms = 2500) {
+    width &= ~1; height &= ~1;
+    const sel = hasApi() && await pickVideoConfig(width, height, fps, bitrate, true, true, true);
+    if (!sel) return { ok: false, fps: 0 };
+    const canvas = document.createElement('canvas');
+    canvas.width = width; canvas.height = height;
+    const g = canvas.getContext('2d');
+    let out = 0, broken = false, n = 0;
+    const enc = new VideoEncoder({ output: () => { out++; }, error: () => { broken = true; } });
+    try { enc.configure(sel.cfg); } catch (e) { return { ok: false, fps: 0 }; }
+    const t0 = performance.now();
+    await new Promise(resolve => {
+      const stop = every(() => {
+        const t = performance.now() - t0;
+        if (t >= ms || broken) { stop(); resolve(); return; }
+        if (t < n * 1000 / fps) return;
+        g.fillStyle = `hsl(${(n * 9) % 360} 60% 50%)`; g.fillRect(0, 0, width, height);
+        g.fillStyle = '#fff'; g.fillRect((n * 17) % width, (n * 11) % height, width / 6, height / 6);
+        n++;
+        if (enc.encodeQueueSize > 2) return;
+        try { const f = new VideoFrame(canvas, { timestamp: Math.round(t * 1000) }); enc.encode(f, { keyFrame: n === 1 }); f.close(); } catch (e) { broken = true; }
+      }, Math.max(4, 1000 / fps / 4));
+    });
+    // ไม่รอ flush นาน — นับเฉพาะที่เข้ารหัสออกมาภายในเวลาทดสอบ
+    const got = out / (ms / 1000);
+    try { enc.close(); } catch (e) {}
+    return { ok: !broken && got >= fps * 0.9, fps: Math.round(got * 10) / 10 };
+  }
+
   // ตัวจับเวลาใน Worker — เบราว์เซอร์ลด setInterval ของหน้าที่ซ่อนอยู่ (ปิดจอ/สลับแอป) เหลือวินาทีละครั้ง
   // แต่ไม่ลดของ Worker จึงยังเข้ารหัสได้ครบทุกเฟรมระหว่างไลฟ์เบื้องหลัง
   function every(fn, ms) {
@@ -205,7 +236,7 @@
     const rec = {
       mimeType: `video/webm;codecs=${vsel.mime}${acfg ? ',opus' : ''}`,
       state: 'inactive', ondataavailable: null, onstop: null, onerror: null,
-      videoCodec: vsel.cfg.codec, droppedFrames: 0
+      videoCodec: vsel.cfg.codec, droppedFrames: 0, encodedFrames: 0
     };
     const vinfo = { codecId: vsel.codecId, width, height, priv: null, ready: vsel.codecId === 'V_VP8' };
     const ainfo = acfg ? { codecId: 'A_OPUS', sampleRate: acfg.sampleRate, channels: 2, priv: opusHead(2, acfg.sampleRate) } : null;
@@ -230,6 +261,7 @@
           vinfo.priv = new Uint8Array(meta.decoderConfig.description instanceof ArrayBuffer ? meta.decoderConfig.description : meta.decoderConfig.description.buffer.slice(0));
         }
         if (vinfo.codecId !== 'V_VP8') vinfo.ready = !!vinfo.priv;
+        rec.encodedFrames++;
         const data = new Uint8Array(chunk.byteLength);
         chunk.copyTo(data);
         mux.add(1, Math.round(chunk.timestamp / 1000), chunk.type === 'key', data);
@@ -349,6 +381,7 @@
     const rec = {
       mimeType: 'video/webm', state: 'inactive', ondataavailable: null, onstop: null, onerror: null,
       get droppedFrames() { return inner ? inner.droppedFrames : 0; },
+      get encodedFrames() { return inner ? inner.encodedFrames : 0; },
       start(timeslice) {
         if (rec.state !== 'inactive') return;
         rec.state = 'recording';
@@ -374,5 +407,5 @@
     return rec;
   }
 
-  WM.wcrec = { preferred, recorder, createRecorder, createMuxer, hasApi, avcSupported, every };
+  WM.wcrec = { preferred, recorder, createRecorder, createMuxer, hasApi, avcSupported, avcBenchmark, every };
 })(window.WebMix = window.WebMix || {});

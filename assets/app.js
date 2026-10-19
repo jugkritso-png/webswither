@@ -185,8 +185,13 @@
     const key = `${W}x${H}@${settings.fps}`;
     hwAvc.key = key; hwAvc.ok = false;
     if (off) return;
-    window.WebMix.wcrec.avcSupported(W, H, settings.fps, settings.videoKbps * 1000)
-      .then(ok => { if (hwAvc.key === key) hwAvc.ok = ok; }).catch(() => {});
+    // วัดความเร็วจริงก่อน (บางเครื่องรองรับแต่ช้ากว่าให้ Gateway เข้ารหัส) — รอให้หน้าเริ่มทำงานเสร็จก่อนค่อยวัด
+    clearTimeout(hwAvc.timer);
+    hwAvc.timer = setTimeout(() => {
+      if (hwAvc.key !== key || streamer.active) return;
+      window.WebMix.wcrec.avcBenchmark(W, H, settings.fps, settings.videoKbps * 1000)
+        .then(r => { if (hwAvc.key === key) { hwAvc.ok = r.ok; hwAvc.fps = r.fps; } }).catch(() => {});
+    }, 4000);
   }
   const useVideoCopy = () => usingLocalGateway() && hwAvc.ok && hwAvc.key === `${W}x${H}@${settings.fps}`;
 
@@ -3216,11 +3221,22 @@
     const reconnecting = !!streamer.reconnecting;
     Object.assign(streamer, { ws, recorder: r, videoCopy: vcopy, state: reconnecting ? 'reconnecting' : 'connecting', sent: 0, kbps: 0, lastBytes: 0, lastAt: performance.now(), queue: [...initial] });
     // เข้ารหัสด้วยชิปของเครื่องไม่สำเร็จ → เลิกใช้ทางนี้ แล้วเชื่อมต่อใหม่ให้ Gateway เข้ารหัสเอง (ระบบเชื่อมต่อใหม่อัตโนมัติ)
-    if (vcopy) r.onerror = e => {
+    const fallback = why => {
       hwAvc.ok = false;
-      toast('เข้ารหัสวิดีโอด้วยชิปของเครื่องไม่สำเร็จ — สลับให้ Gateway เข้ารหัสแทน: ' + (e.error?.message || ''), 'warn', 8000);
+      toast(`เข้ารหัสวิดีโอด้วยชิปของเครื่อง${why} — สลับให้ Gateway เข้ารหัสแทน`, 'warn', 8000);
       if (streamer.ws === ws) { handleDisconnect(ws, 4002, 'สลับวิธีเข้ารหัส'); try { ws.close(); } catch (err) {} }
     };
+    if (vcopy) {
+      r.onerror = e => fallback('ไม่สำเร็จ: ' + (e.error?.message || ''));
+      // ทิ้งเฟรมเกิน 20% ในช่วง 6 วินาที = ชิปเข้ารหัสไม่ทัน (เช่นเครื่องร้อนจนลดความเร็ว) → ให้ Gateway เข้ารหัส
+      let last = { d: 0, e: 0 };
+      const watch = setInterval(() => {
+        if (streamer.recorder !== r || r.state === 'inactive') { clearInterval(watch); return; }
+        const d = r.droppedFrames - last.d, e = r.encodedFrames - last.e;
+        last = { d: r.droppedFrames, e: r.encodedFrames };
+        if (d + e > settings.fps && d / (d + e) > 0.2) { clearInterval(watch); fallback('ไม่ทัน (ทิ้งเฟรม)'); }
+      }, 6000);
+    }
 
     ws.onopen = () => {
       ws.send(JSON.stringify({ type: 'start', destinations: streamer.queue.map(destPayload) }));
