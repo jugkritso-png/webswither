@@ -78,7 +78,7 @@ adb shell am force-stop "$PKG"
   done ) &
 RECV=$!
 # จบสคริปต์ทางไหนก็ตาม ปิดเครื่องรับด้วย (ไม่ให้ขั้นตอนของ CI ค้าง)
-trap 'rc=$?; pkill -f "live/bg" 2>/dev/null; kill $RECV 2>/dev/null; exit $rc' EXIT
+trap 'rc=$?; pkill -f "0.0.0.0:[0-9]*/live/bg" 2>/dev/null || true; kill $RECV 2>/dev/null || true; exit $rc' EXIT
 sleep 1
 adb shell setprop debug.webmix.selftest "rtmp://10.0.2.2:$BG_PORT/live/bg"
 adb shell setprop debug.webmix.selftest_hold 45
@@ -113,7 +113,7 @@ adb shell setprop debug.webmix.selftest_hold 0
 adb logcat -d -v brief | grep -E 'WebMix|LiveService|chromium|AndroidRuntime' | tail -300 > "$OUT/logcat-bg.txt" || true
 adb logcat -d -v brief -s WebMix:* > "$OUT/logcat-bg-webmix.txt" || true
 sleep 3
-pkill -INT -f "live/bg" 2>/dev/null || true
+pkill -INT -f "0.0.0.0:[0-9]*/live/bg" 2>/dev/null || true
 wait "$RECV" 2>/dev/null || true
 grep -q "LiveService started" "$OUT/logcat-bg-webmix.txt" || { echo "ไลฟ์เบื้องหลัง: LiveService ไม่เริ่ม"; grep -iE "LiveService|set_live|Exception" "$OUT/logcat-bg.txt" "$OUT/logcat-bg-webmix.txt" | tail -20; exit 1; }
 BG_DUR=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$OUT/android-bg.flv")
