@@ -96,11 +96,12 @@ for _ in $(seq 1 60); do
 done
 adb shell setprop debug.webmix.selftest 0
 adb shell setprop debug.webmix.selftest_hold 0
-adb logcat -d -v brief | grep -E 'WebMix|LiveService|chromium|AndroidRuntime' | tail -120 > "$OUT/logcat-bg.txt" || true
+adb logcat -d -v brief | grep -E 'WebMix|LiveService|chromium|AndroidRuntime' | tail -300 > "$OUT/logcat-bg.txt" || true
+adb logcat -d -v brief -s WebMix:* > "$OUT/logcat-bg-webmix.txt" || true
 sleep 3
 kill "$RECV" 2>/dev/null || true
 wait "$RECV" 2>/dev/null || true
-grep -q "LiveService started" "$OUT/logcat-bg.txt" || { echo "ไลฟ์เบื้องหลัง: LiveService ไม่เริ่ม"; grep -iE "LiveService|set_live|Exception" "$OUT/logcat-bg.txt" | tail -20; exit 1; }
+grep -q "LiveService started" "$OUT/logcat-bg-webmix.txt" || { echo "ไลฟ์เบื้องหลัง: LiveService ไม่เริ่ม"; grep -iE "LiveService|set_live|Exception" "$OUT/logcat-bg.txt" "$OUT/logcat-bg-webmix.txt" | tail -20; exit 1; }
 BG_DUR=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$OUT/android-bg.flv")
 ffprobe -v error -select_streams v -show_entries packet=pts_time -of csv=p=0 "$OUT/android-bg.flv" > "$OUT/android-bg-pts.txt"
 node -e '
