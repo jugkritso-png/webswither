@@ -337,7 +337,7 @@
       if (rec.state !== 'recording') return;
       const now = performance.now() - t0;
       if (now < nextAt) return;
-      nextAt = Math.max(nextAt + frameMs, now + frameMs / 2); // ช้าไปแล้วไม่จับภาพรัว ๆ ชดเชย
+      nextAt = Math.max(nextAt + frameMs, now + frameMs * 0.85); // ช้าไปแล้วไม่จับภาพรัว ๆ ชดเชย (เฟรมชิดกันเกินจะซ้อนช่องเวลา)
       // ตัวเข้ารหัสตามไม่ทัน → ทิ้งเฟรมนี้ (ภาพกระตุกเล็กน้อยแต่เสียงและเวลายังตรง)
       if (venc.encodeQueueSize > 2) { rec.droppedFrames++; return; }
       const ts = Math.round(now * 1000);

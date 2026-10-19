@@ -71,7 +71,10 @@ echo "Android: สตรีมผ่าน Gateway ในแอปสำเร�
 # ---- ไลฟ์เบื้องหลัง: ระหว่างสตรีม กดปุ่มโฮมแล้วปิดจอ — สตรีมต้องไม่หยุดและภาพต้องไม่ค้าง (LiveService) ----
 BG_PORT=1936
 adb shell am force-stop "$PKG"
-ffmpeg -hide_banner -loglevel error -listen 1 -i "rtmp://0.0.0.0:$BG_PORT/live/bg" -c copy -y "$OUT/android-bg.flv" &
+# ถ้ามีการเชื่อมต่อที่จับมือ RTMP ไม่สำเร็จเข้ามาก่อน (RTMP Handshake C2 Error) ffmpeg จะออก — เปิดรอรับใหม่จนกว่าจะได้ข้อมูล
+( while [ ! -s "$OUT/android-bg.flv" ]; do
+    ffmpeg -hide_banner -loglevel error -listen 1 -i "rtmp://0.0.0.0:$BG_PORT/live/bg" -c copy -y "$OUT/android-bg.flv" || sleep 0.2
+  done ) &
 RECV=$!
 sleep 1
 adb shell setprop debug.webmix.selftest "rtmp://10.0.2.2:$BG_PORT/live/bg"
@@ -99,7 +102,7 @@ adb shell setprop debug.webmix.selftest_hold 0
 adb logcat -d -v brief | grep -E 'WebMix|LiveService|chromium|AndroidRuntime' | tail -300 > "$OUT/logcat-bg.txt" || true
 adb logcat -d -v brief -s WebMix:* > "$OUT/logcat-bg-webmix.txt" || true
 sleep 3
-kill "$RECV" 2>/dev/null || true
+pkill -INT -f "live/bg" 2>/dev/null || true
 wait "$RECV" 2>/dev/null || true
 grep -q "LiveService started" "$OUT/logcat-bg-webmix.txt" || { echo "ไลฟ์เบื้องหลัง: LiveService ไม่เริ่ม"; grep -iE "LiveService|set_live|Exception" "$OUT/logcat-bg.txt" "$OUT/logcat-bg-webmix.txt" | tail -20; exit 1; }
 BG_DUR=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$OUT/android-bg.flv")
