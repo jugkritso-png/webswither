@@ -207,6 +207,8 @@
       const timer = setTimeout(finish, 40000);
       ws.onopen = () => {
         ws.send(JSON.stringify({ type: 'start', destinations: [{ id: 'selftest', name: 'selftest', url: info.selftestStream }] }));
+        // เหมือนแอปจริง: เปิดบริการเบื้องหน้าทันทีที่เริ่มสตรีม (ระหว่างที่แอปยังอยู่บนหน้าจอ — Android ไม่ให้เริ่มจากเบื้องหลัง)
+        if (hold && desktop.mobile) desktop.setLive(true, 'ทดสอบไลฟ์เบื้องหลัง');
         rec = useWc
           ? WM.wcrec.recorder({ canvas, audioNode: osc, fps: 30, videoBitsPerSecond: 2500000, audioBitsPerSecond: 128000, preferAvc: true, requireAvc: vcopy, constantBitrate: vcopy })
           : new MediaRecorder(stream, { mimeType: type, videoBitsPerSecond: 2500000 });
@@ -225,7 +227,6 @@
           // เหมือนตอนไลฟ์จริง — CI กดปุ่มโฮมและปิดจอระหว่างนี้)
           if (d.state === 'live' && !live) {
             live = true; clearTimeout(timer);
-            if (hold && desktop.mobile) desktop.setLive(true, 'ทดสอบไลฟ์เบื้องหลัง');
             setTimeout(finish, hold ? hold * 1000 : 8000);
           }
         }

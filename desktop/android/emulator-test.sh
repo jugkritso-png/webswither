@@ -95,7 +95,9 @@ for attempt in 1 2; do
   sleep 3
 done
 [ -s "$OUT/android-bg.flv" ] || { echo "ไลฟ์เบื้องหลัง: สตรีมไม่เริ่ม"; exit 1; }
-sleep 4
+# กดโฮมหลังจากบริการเบื้องหน้าเริ่มแล้วเท่านั้น (Android ไม่ให้เริ่มบริการกล้อง/ไมค์จากเบื้องหลัง)
+for _ in $(seq 1 20); do adb logcat -d -s WebMix:I | grep -q "LiveService started" && break; sleep 1; done
+sleep 2
 adb shell input keyevent KEYCODE_HOME
 sleep 3
 adb shell input keyevent KEYCODE_SLEEP
