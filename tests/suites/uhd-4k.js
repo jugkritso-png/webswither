@@ -15,7 +15,7 @@ async function setup(ctx) {
   await p.goto('http://localhost:8765/index.html'); await p.waitForTimeout(800);
   // settings → 4K, recommended bitrate auto-filled
   await p.click('[data-action=settings]');
-  await p.selectOption('.modal select[name=resolution]', '2160p');
+  await p.evaluate(() => { const d = document.querySelector('.modal details.adv'); if (d) d.open = true; }); await p.selectOption('.modal select[name=resolution]', '2160p');
   ok('4K bitrate suggested', (await p.inputValue('.modal input[name=videoKbps]')) === '25000', await p.inputValue('.modal input[name=videoKbps]'));
   ok('4K requirements note shown', await p.isVisible('.res-4k-note'));
   await p.selectOption('.modal select[name=fps]', '60');

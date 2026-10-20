@@ -153,7 +153,7 @@ const px = (page, sel, x, y) => page.evaluate(([sel, x, y]) => { const c = docum
   ok('stream key not persisted', await p.evaluate(() => JSON.parse(localStorage.getItem('webmix:settings')).destinations.every(d => d.key === '')));
 
   // settings resolution
-  await p.click('[data-action=settings]'); await p.selectOption('.modal select[name=resolution]', '1080p'); await p.click('.modal-foot .btn-primary');
+  await p.click('[data-action=settings]'); await p.evaluate(() => { const d = document.querySelector('.modal details.adv'); if (d) d.open = true; }); await p.selectOption('.modal select[name=resolution]', '1080p'); await p.click('.modal-foot .btn-primary');
   ok('1080p applied', await p.evaluate(() => document.querySelector('#pgm-canvas').width === 1920), await p.textContent('#st-output'));
 
   // help + word

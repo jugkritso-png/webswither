@@ -57,6 +57,7 @@
     localGateway: true
   };
   const saved = store.get('settings', {}) || {};
+  const firstRun = !Object.keys(saved).length && !store.get('show', null);
   const settings = {
     ...defaults, ...saved,
     title: { ...defaults.title, ...(saved.title || {}) },
@@ -3165,6 +3166,8 @@
     refreshLiveDialog();
     updateOnAir();
     output.reset();
+    // ทดสอบปลายทาง: ไม่แสดงสรุป/แจ้งเตือน — ผลไปแสดงที่ปุ่มทดสอบแทน
+    if (streamer.testing) { liveStats.end(); streamer.lastError = byUser ? '' : reason || ''; return; }
     if (wasLive && liveStats.session) { const sess = liveStats.end(); if (isPhoneUI()) { closeLiveDialog?.(); openSummary(sess, byUser ? '' : reason); } }
     if (byUser) { if (wasLive && !isPhoneUI()) toast('หยุดสตรีมแล้ว'); }
     else toast((wasLive ? 'การสตรีมหยุดลง: ' : 'เชื่อมต่อ Stream Gateway ไม่ได้: ') + (reason || 'ตรวจสอบว่า Gateway ทำงานอยู่และ URL ถูกต้อง'), 'error', 7000);
@@ -3775,6 +3778,7 @@
       ['phone', 'เชื่อมกล้องมือถือเครื่องอื่น (QR)', showWirelessDialog],
       ...(desktop && desktop.mobile ? [] : [['grid', 'Multiview', () => multiview.open()], ['external', 'หน้าต่าง Program Output', openOutputWindow]]),
       ['sliders', 'ตั้งค่า', () => openSettings()],
+      ['broadcast', 'เริ่มต้นใช้งาน (ตั้งค่าไลฟ์ทีละขั้น)', openOnboarding],
       ['help', 'คู่มือ', openHelp]
     ];
     const menu = document.createElement('div');
@@ -3860,6 +3864,8 @@
         <div class="modal-tabs"><button type="button" data-mtab="output">เอาต์พุต</button><button type="button" data-mtab="stream">การสตรีม</button></div>
         <div class="modal-pane" data-mpane="output">
           ${live ? '<p class="note warn">กำลังบันทึกหรือสตรีมอยู่ — เปลี่ยนความละเอียดและเฟรมเรตได้หลังหยุดก่อน</p>' : ''}
+          <div class="field"><span>คุณภาพการไลฟ์และบันทึก</span>${qualityHtml(qualityOf(settings.resolution, settings.fps, settings.videoKbps)?.id)}</div>
+          <details class="adv" ${qualityOf(settings.resolution, settings.fps, settings.videoKbps) ? '' : 'open'}><summary>ขั้นสูง — ความละเอียด เฟรมเรต บิตเรต ระบบวาดภาพ</summary>
           <div class="field-row">
             <label class="field"><span>ความละเอียด Program</span><select name="resolution" class="select" ${live ? 'disabled' : ''}>
               ${Object.keys(RESOLUTIONS).map(k => `<option value="${k}" ${settings.resolution === k ? 'selected' : ''}>${RES_LABEL[k]}</option>`).join('')}
@@ -3876,11 +3882,12 @@
             <option value="cpu" ${settings.renderer === 'cpu' ? 'selected' : ''}>CPU (Canvas 2D) — ใช้เมื่อการ์ดจอมีปัญหา</option>
           </select></label>
           <p class="note">${gpu ? `การ์ดจอที่พบ: ${esc(gpu.rendererName)}${gpu.software ? ' (เป็นการ์ดจอจำลองด้วยซอฟต์แวร์ — โหมดอัตโนมัติจึงใช้ CPU)' : ''}` : 'เบราว์เซอร์นี้ใช้ WebGL ไม่ได้ — วาดภาพด้วย CPU'}</p>
+          <p class="note">ค่าแนะนำจะใส่ให้อัตโนมัติเมื่อเปลี่ยนความละเอียด/เฟรมเรต: 720p ≈ 4500 · 1080p ≈ 6000 · 1440p ≈ 13000 · 4K ≈ 25000 kbps (×1.5 สำหรับ 50/60 fps)</p>
+          </details>
           <div class="field"><span>โฟลเดอร์บันทึกวิดีโอ (REC)</span>
             <div class="link-row"><input class="input rec-folder-name" readonly value="${esc(recFolder ? recFolder.name : canPickFolder ? 'ยังไม่ได้เลือก — ดาวน์โหลดไฟล์เมื่อกดหยุด' : 'เบราว์เซอร์นี้เลือกโฟลเดอร์ไม่ได้ — ดาวน์โหลดไฟล์เมื่อกดหยุด')}">
             ${canPickFolder ? `<button type="button" class="btn rec-folder-pick">เลือกโฟลเดอร์</button>${recFolder ? '<button type="button" class="btn btn-ghost rec-folder-clear">ล้าง</button>' : ''}` : ''}</div></div>
           <p class="note">ระหว่างบันทึก ไฟล์ถูกเขียนลง${recFolder ? 'โฟลเดอร์ที่เลือก' : canUseOpfs ? 'ดิสก์ (พื้นที่ชั่วคราวของเบราว์เซอร์) แล้วดาวน์โหลดเมื่อหยุด' : ' RAM — บันทึกนาน ๆ ควรใช้ Chrome หรือ Edge'} จึงบันทึกนานหลายชั่วโมงได้โดยไม่กินหน่วยความจำ</p>
-          <p class="note">ค่าแนะนำจะใส่ให้อัตโนมัติเมื่อเปลี่ยนความละเอียด/เฟรมเรต: 720p ≈ 4500 · 1080p ≈ 6000 · 1440p ≈ 13000 · 4K ≈ 25000 kbps (×1.5 สำหรับ 50/60 fps)</p>
           <p class="note warn res-4k-note" ${RESOLUTIONS[settings.resolution][1] >= 1440 ? '' : 'hidden'}>ความละเอียด 1440p/4K ต้องใช้คอมพิวเตอร์แรง (แนะนำ CPU 8 คอร์ขึ้นไปหรือมีการ์ดจอแยก) และอินเทอร์เน็ตขาขึ้นอย่างน้อย 1.5 เท่าของบิตเรต · Stream Gateway ควรมี 8 vCPU ขึ้นไป · Facebook และ Twitch รับสูงสุด 1080p ส่วน YouTube รับได้ถึง 4K</p>
         </div>
         <div class="modal-pane" data-mpane="stream">
@@ -3908,11 +3915,18 @@
         $$('[data-mtab]', modal).forEach(b => b.addEventListener('click', () => showTab(b.dataset.mtab)));
         showTab(tab);
         const fo = $('form', modal);
+        const suggest4k = () => { $('.res-4k-note', modal).hidden = RESOLUTIONS[fo.resolution.value][1] < 1440; };
         const suggest = () => {
           fo.videoKbps.value = recommendedKbps(fo.resolution.value, +fo.fps.value);
-          $('.res-4k-note', modal).hidden = RESOLUTIONS[fo.resolution.value][1] < 1440;
+          suggest4k();
         };
         fo.resolution.addEventListener('change', suggest);
+        // เลือกระดับคุณภาพ → ใส่ค่าในช่องขั้นสูงให้ · แก้ช่องขั้นสูงเองจนไม่ตรงระดับไหน = "กำหนดเอง" (ไม่มีระดับถูกเลือก)
+        if (!live) bindQuality(modal, q => { fo.resolution.value = q.res; fo.fps.value = q.fps; fo.videoKbps.value = q.kbps; suggest4k(); });
+        else $$('input[name=quality], .q-speed-btn', modal).forEach(el => { el.disabled = true; });
+        const syncQ = () => { const q = qualityOf(fo.resolution.value, fo.fps.value, fo.videoKbps.value); $$('input[name=quality]', modal).forEach(r => { r.checked = !!q && r.value === q.id; }); };
+        [fo.resolution, fo.fps].forEach(el => el.addEventListener('change', syncQ));
+        fo.videoKbps.addEventListener('input', syncQ);
         $('.rec-folder-pick', modal)?.addEventListener('click', async () => {
           const dir = await pickRecFolder();
           if (dir) { $('.rec-folder-name', modal).value = dir.name; toast(`บันทึกวิดีโอลงโฟลเดอร์ “${dir.name}”`, 'success'); }
@@ -3941,6 +3955,7 @@
             <input class="input mono" data-f="key" type="${showKeys.checked ? 'text' : 'password'}" autocomplete="off" value="${esc(d.key)}" placeholder="${isSrt(d) ? 'Stream ID (ถ้ามี)' : 'Stream Key'}" aria-label="Stream Key / Stream ID">
             <button type="button" class="btn btn-ghost btn-icon dest-remove" title="ลบปลายทาง">${icon('x')}</button>
             <button type="button" class="btn dest-paste">${icon('copy')}วางคีย์จากคลิปบอร์ด</button>
+            <div class="dest-test"><button type="button" class="btn btn-sm dest-test-btn" title="${TEST_NOTE}">${icon('broadcast')}ทดสอบ</button><p class="dest-test-out" hidden></p></div>
             <div class="dest-srt" ${isSrt(d) ? '' : 'hidden'}>
               <input class="input mono" data-f="passphrase" type="${showKeys.checked ? 'text' : 'password'}" autocomplete="off" value="${esc(d.passphrase)}" placeholder="รหัสผ่านเข้ารหัส SRT (10–64 ตัว, ถ้ามี)" aria-label="SRT passphrase">
               <select class="select" data-f="latency" aria-label="SRT latency" title="SRT latency — ยิ่งสูงยิ่งทนเน็ตกระตุก แต่ดีเลย์มากขึ้น">
@@ -3964,6 +3979,8 @@
           if (rm) { rm.closest('.dest-row').remove(); syncAdd(); }
           const paste = e.target.closest('.dest-paste');
           if (paste) pasteKey(paste.closest('.dest-row'));
+          const test = e.target.closest('.dest-test-btn');
+          if (test) runDestTest(test, $('.dest-test-out', test.closest('.dest-row')), readRow(test.closest('.dest-row')));
         });
         // มือถือ: พิมพ์คีย์ยาว ๆ ยาก — วางจากคลิปบอร์ด · ถ้าวาง URL เต็ม (rtmp://…/คีย์) แยกเป็นเซิร์ฟเวอร์ + คีย์ให้
         const pasteKey = async row => {
@@ -3991,7 +4008,7 @@
         showKeys.addEventListener('change', () => {
           $$('[data-f=key], [data-f=passphrase]', list).forEach(i => { i.type = showKeys.checked ? 'text' : 'password'; });
         });
-        readDests = () => $$('.dest-row', list).map(row => ({
+        const readRow = row => ({
           id: row.dataset.id,
           enabled: row.querySelector('[data-f=enabled]').checked,
           platform: row.querySelector('[data-f=platform]').value,
@@ -3999,7 +4016,8 @@
           key: row.querySelector('[data-f=key]').value.trim(),
           passphrase: row.querySelector('[data-f=passphrase]').value,
           latency: +row.querySelector('[data-f=latency]').value || 500
-        }));
+        });
+        readDests = () => $$('.dest-row', list).map(readRow);
       }
     }).then(result => {
       if (result?.value !== 'save') return;
@@ -4024,6 +4042,209 @@
       updateStatus();
       toast('บันทึกการตั้งค่าแล้ว', 'success');
     });
+  }
+
+  /* ------------------------------------------- ใช้งานง่าย: คุณภาพแบบเลือกคำ · วัดความเร็วเน็ต · ทดสอบปลายทาง · เริ่มต้นใช้งาน */
+  // ระดับคุณภาพ — ผู้ใช้ส่วนใหญ่ไม่ต้องรู้จัก kbps/fps (ปรับละเอียดได้ใน "ขั้นสูง")
+  const QUALITY = [
+    { id: 'eco', label: 'ประหยัดเน็ต', res: '720p', fps: 30, kbps: 2500, note: 'เน็ตมือถือ / เน็ตไม่แรง' },
+    { id: 'std', label: 'มาตรฐาน', res: '720p', fps: 30, kbps: 4500, note: 'เหมาะกับงานส่วนใหญ่' },
+    { id: 'high', label: 'คมชัดสูง', res: '1080p', fps: 30, kbps: 6000, note: 'เน็ตบ้าน/ไฟเบอร์ เครื่องแรง' }
+  ];
+  const qualityOf = (res, f, kbps) => QUALITY.find(q => q.res === res && q.fps === +f && q.kbps === +kbps);
+  // เน็ตขาขึ้นที่ต้องใช้ (Mbps): Gateway ในเครื่องส่งแยกทีละปลายทาง · Gateway บนเซิร์ฟเวอร์ส่งขึ้นครั้งเดียว · เผื่อ 1.5 เท่า
+  const uploadCopies = () => usingLocalGateway() ? Math.max(1, settings.destinations.filter(d => d.enabled).length) : 1;
+  const needMbps = kbps => (kbps + 160) * uploadCopies() * 1.5 / 1000;
+  function qualityHtml(current) {
+    return `<div class="q-picker" role="radiogroup" aria-label="คุณภาพการไลฟ์">${QUALITY.map(q => `
+      <label class="q-opt"><input type="radio" name="quality" value="${q.id}" ${current === q.id ? 'checked' : ''}>
+        <span class="q-card"><b>${q.label}</b><small>${q.note}</small><small class="q-need">${formatTag(RESOLUTIONS[q.res][1], q.fps)} · เน็ตขาขึ้น ≈ ${needMbps(q.kbps).toFixed(1)} Mbps</small></span></label>`).join('')}
+      </div>
+      <div class="q-speed"><button type="button" class="btn btn-sm q-speed-btn">${icon('broadcast')}วัดความเร็วเน็ตแล้วแนะนำให้</button><span class="q-speed-out" aria-live="polite"></span></div>`;
+  }
+  // วัดความเร็วอัปโหลดจริง: ส่งข้อมูลสุ่มไป speed.cloudflare.com (ไม่มีข้อมูลของผู้ใช้) ใช้เน็ตราว 10–30 MB
+  async function measureUpload(onProgress) {
+    const chunk = n => { const a = new Uint8Array(n); for (let i = 0; i < n; i += 65536) crypto.getRandomValues(a.subarray(i, Math.min(n, i + 65536))); return a; };
+    const send = body => fetch('https://speed.cloudflare.com/__up', { method: 'POST', body, mode: 'cors', cache: 'no-store', headers: { 'Content-Type': 'text/plain' } })
+      .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); });
+    let best = 0;
+    for (const size of [1e6, 4e6, 10e6]) {
+      const data = chunk(size);
+      const t0 = performance.now();
+      await Promise.all([send(data), send(data)]);
+      const sec = (performance.now() - t0) / 1000;
+      best = Math.max(best, size * 2 * 8 / sec / 1e6);
+      onProgress?.(best);
+      if (sec > 3) break;
+    }
+    return best;
+  }
+  function bindQuality(root, onPick) {
+    const out = $('.q-speed-out', root), btn = $('.q-speed-btn', root);
+    $$('input[name=quality]', root).forEach(r => r.addEventListener('change', () => onPick(QUALITY.find(q => q.id === r.value))));
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      out.className = 'q-speed-out';
+      out.textContent = 'กำลังวัด…';
+      try {
+        const mbps = await measureUpload(v => { out.textContent = `กำลังวัด… ${v.toFixed(1)} Mbps`; });
+        const pick = [...QUALITY].reverse().find(q => needMbps(q.kbps) <= mbps) || QUALITY[0];
+        $(`input[name=quality][value=${pick.id}]`, root).checked = true;
+        onPick(pick);
+        const enough = needMbps(pick.kbps) <= mbps;
+        out.classList.add(enough ? 'ok' : 'warn');
+        out.textContent = `อัปโหลด ≈ ${mbps.toFixed(1)} Mbps — แนะนำ “${pick.label}”` + (enough ? '' : ' (เน็ตยังช้าไป ภาพอาจกระตุก)');
+      } catch (e) {
+        out.classList.add('warn');
+        out.textContent = 'วัดความเร็วไม่ได้ (ไม่มีอินเทอร์เน็ตหรือถูกบล็อก) — เลือกเองตามเน็ตที่ใช้';
+      }
+      btn.disabled = false;
+    });
+  }
+
+  // ทดสอบปลายทาง: ส่งภาพ Program สั้น ๆ จนปลายทางรับได้ ~3 วินาที แล้วหยุด — รู้ก่อนไลฟ์จริงว่าคีย์/เซิร์ฟเวอร์ใช้ได้
+  const pause = ms => new Promise(r => setTimeout(r, ms));
+  async function testDestination(d) {
+    if (streamer.ws || streamer.reconnecting) return { ok: false, message: 'กำลังไลฟ์อยู่ — ทดสอบได้เมื่อหยุดไลฟ์แล้ว' };
+    const problem = gatewayProblem() || destProblem(d);
+    if (problem) return { ok: false, message: problem };
+    streamer.testing = true;
+    streamer.lastError = '';
+    startDestinations([d]);
+    const t0 = Date.now();
+    let liveAt = 0, result = null;
+    while (!result) {
+      await pause(300);
+      const st = streamer.dests.get(d.id);
+      if (st && st.state === 'live') {
+        liveAt = liveAt || Date.now();
+        if (Date.now() - liveAt > 2500) result = { ok: true, message: `ส่งภาพถึง ${destLabel(d)} ได้แล้ว — พร้อมไลฟ์` };
+      } else if (st && st.state === 'error') result = { ok: false, message: st.message || 'ปลายทางปฏิเสธการเชื่อมต่อ — ตรวจ Stream Key' };
+      else if (!streamer.ws && !streamer.reconnecting) result = { ok: false, message: streamer.lastError || 'เชื่อมต่อ Stream Gateway ไม่ได้' };
+      else if (Date.now() - t0 > 20000) result = { ok: false, message: 'ปลายทางไม่ตอบรับภายใน 20 วินาที — ตรวจเซิร์ฟเวอร์และ Stream Key' };
+    }
+    stopAllStreams();
+    for (let i = 0; i < 20 && (streamer.ws || streamer.reconnecting); i++) await pause(150);
+    streamer.testing = false;
+    return result;
+  }
+  const TEST_NOTE = 'ส่งภาพจริงไปปลายทางประมาณ 5 วินาที — YouTube ที่เปิด “เริ่มอัตโนมัติ” อาจขึ้นไลฟ์สั้น ๆ';
+  async function runDestTest(btn, out, d) {
+    btn.disabled = true;
+    const label = btn.innerHTML;
+    btn.textContent = 'กำลังทดสอบ…';
+    out.hidden = false;
+    out.className = 'dest-test-out';
+    out.textContent = 'กำลังส่งภาพทดสอบ…';
+    const r = await testDestination(d);
+    out.classList.add(r.ok ? 'ok' : 'err');
+    out.textContent = (r.ok ? '✓ ' : '✕ ') + r.message;
+    btn.innerHTML = label;
+    btn.disabled = false;
+    return r;
+  }
+
+  // ตั้งค่าครั้งแรก 3 ขั้น: กล้อง → ช่องทางไลฟ์ + คีย์ (ทดสอบได้) → คุณภาพ
+  const KEY_HELP = {
+    youtube: 'หาคีย์: YouTube Studio → สร้าง → ไลฟ์สด → คัดลอก “คีย์สตรีม”',
+    facebook: 'หาคีย์: facebook.com/live/producer → “ซอฟต์แวร์สตรีม” → คัดลอก “คีย์สตรีม”',
+    twitch: 'หาคีย์: Twitch Creator Dashboard → Settings → Stream → Primary Stream key',
+    custom: 'ใส่ RTMP Server URL และ Stream Key จากผู้ให้บริการ'
+  };
+  const obSteps = n => `<ol class="ob-steps">${['กล้อง', 'ช่องทางไลฟ์', 'คุณภาพ'].map((t, i) => `<li class="${i + 1 < n ? 'done' : i + 1 === n ? 'now' : ''}">${t}</li>`).join('')}</ol>`;
+  const obSheet = modal => { modal.classList.add('ob'); if (isPhoneUI()) modal.classList.add('m-sheet'); };
+  function shouldOnboard() {
+    if (store.get('onboarded', false) || /[?&]call=/.test(location.search)) return false;
+    if (/onboard/.test(location.hash)) return true;
+    if (navigator.webdriver || (desktop && desktop.info && desktop.info.selftest)) return false;
+    return firstRun;
+  }
+  async function openOnboarding() {
+    store.set('onboarded', true);
+    // ขั้นที่ 1: กล้อง
+    const hasCam = () => inputs.some(i => i.type === 'camera');
+    const r1 = await dialog({
+      title: 'ยินดีต้อนรับสู่ WebMix',
+      body: `${obSteps(1)}<p class="ob-lead">ตั้งค่าให้พร้อมไลฟ์ใน 3 ขั้น — ข้ามแล้วกลับมาทำทีหลังได้จากเมนู “เพิ่มเติม → เริ่มต้นใช้งาน”</p>
+        <p class="modal-text">${hasCam() ? 'มีกล้องในรายการแหล่งภาพแล้ว ✓' : 'เริ่มจากเพิ่มกล้องและไมค์ของเครื่องนี้เป็นแหล่งภาพแรก'}</p>`,
+      actions: [{ label: 'ข้าม', value: 'skip' }, { label: hasCam() ? 'ถัดไป' : 'เพิ่มกล้อง', value: 'cam', primary: true }],
+      onOpen: obSheet
+    });
+    if (!r1) return;
+    if (r1.value === 'cam' && !hasCam()) await openCameraDialog();
+
+    // ขั้นที่ 2: ช่องทางไลฟ์
+    const first = settings.destinations[0];
+    const tiles = ['youtube', 'facebook', 'twitch', 'custom'];
+    const startPlat = first && tiles.includes(first.platform) ? first.platform : 'youtube';
+    const needGw = !usingLocalGateway() && !!gatewayProblem();
+    let draft = null;
+    const r2 = await dialog({
+      title: 'ไลฟ์ไปที่ไหน',
+      body: `${obSteps(2)}
+        <div class="ob-plats" role="radiogroup" aria-label="แพลตฟอร์ม">${tiles.map(k => `
+          <label class="ob-plat"><input type="radio" name="plat" value="${k}" ${k === startPlat ? 'checked' : ''}><span>${k === 'custom' ? 'อื่น ๆ (RTMP)' : esc(PLATFORMS[k].label.replace(/ Live$/, ''))}</span></label>`).join('')}</div>
+        <label class="field ob-server" hidden><span>RTMP Server URL</span><input name="server" class="input mono" placeholder="rtmp://..." value="${esc(first && first.platform === 'custom' ? first.server : '')}"></label>
+        <div class="field"><span>Stream Key</span>
+          <div class="link-row"><input name="key" class="input mono" type="password" autocomplete="off" placeholder="วางคีย์สตรีมที่นี่" aria-label="Stream Key" value="${esc(first ? first.key : '')}">
+          <button type="button" class="btn ob-paste">${icon('copy')}วาง</button></div></div>
+        <p class="note ob-help"></p>
+        ${needGw ? `<label class="field"><span>Stream Gateway (WebSocket) — การไลฟ์จากเว็บต้องมีตัวกลางส่งสัญญาณ</span><input name="gateway" class="input mono" placeholder="wss://gateway.example.com:8080/?token=..." value="${esc(settings.gateway)}"></label>` : ''}
+        <div class="ob-test"><button type="button" class="btn ob-test-btn">${icon('broadcast')}ทดสอบปลายทาง</button><p class="dest-test-out" hidden></p></div>
+        <p class="note">${TEST_NOTE}</p>`,
+      actions: [{ label: 'ข้าม', value: 'skip' }, { label: 'ถัดไป', value: 'next', primary: true }],
+      onOpen(modal) {
+        obSheet(modal);
+        const f = $('form', modal);
+        const plat = () => $('input[name=plat]:checked', modal).value;
+        const sync = () => { $('.ob-server', modal).hidden = plat() !== 'custom'; $('.ob-help', modal).textContent = KEY_HELP[plat()]; };
+        $$('input[name=plat]', modal).forEach(r => r.addEventListener('change', sync));
+        sync();
+        $('.ob-paste', modal).addEventListener('click', async () => {
+          let text = '';
+          try { text = (await navigator.clipboard.readText()).trim(); } catch (e) {}
+          if (!text) { toast('อ่านคลิปบอร์ดไม่ได้ — กดค้างที่ช่องคีย์แล้วเลือก “วาง”', 'warn'); f.key.focus(); return; }
+          const m = /^(rtmps?:\/\/.+)\/([^/]+)$/i.exec(text);
+          if (m) { f.key.value = m[2]; if (plat() === 'custom') f.server.value = m[1]; } else f.key.value = text;
+        });
+        draft = () => {
+          const k = plat();
+          if (f.gateway) settings.gateway = f.gateway.value.trim();
+          return { ...(first && first.platform === k ? first : newDest(k)), platform: k, server: k === 'custom' ? f.server.value.trim() : PLATFORMS[k].server, key: f.key.value.trim(), enabled: true };
+        };
+        $('.ob-test-btn', modal).addEventListener('click', e => runDestTest(e.currentTarget, $('.ob-test .dest-test-out', modal), draft()));
+      }
+    });
+    if (!r2) return;
+    if (r2.value === 'next' && draft) {
+      const d = draft();
+      if (d.key || d.platform === 'custom') {
+        const i = settings.destinations.findIndex(x => x.id === d.id);
+        if (i >= 0) settings.destinations[i] = d; else settings.destinations.unshift(d);
+        // ปลายทางเริ่มต้นที่ยังว่าง (ไม่มีคีย์) ไม่ต้องเก็บไว้ให้สับสน
+        settings.destinations = settings.destinations.filter(x => x.id === d.id || x.key).slice(0, MAX_DESTINATIONS);
+      }
+      saveSettings();
+    }
+
+    // ขั้นที่ 3: คุณภาพ
+    let picked = qualityOf(settings.resolution, settings.fps, settings.videoKbps) || QUALITY[1];
+    const r3 = await dialog({
+      title: 'คุณภาพการไลฟ์',
+      body: `${obSteps(3)}<p class="modal-text">เลือกตามความเร็วอินเทอร์เน็ต — ไม่แน่ใจให้กด “วัดความเร็วเน็ต”</p>${qualityHtml(picked.id)}
+        <p class="note">ปรับความละเอียด/เฟรมเรต/บิตเรตเองได้ที่ ตั้งค่า → เอาต์พุต → ขั้นสูง</p>`,
+      actions: [{ label: 'เสร็จสิ้น', value: 'done', primary: true }],
+      onOpen(modal) { obSheet(modal); bindQuality(modal, q => { picked = q; }); }
+    });
+    if (r3 && !(rec.active || streamer.active)) applyQuality(picked);
+    if (r3) toast('พร้อมแล้ว — กด STREAM เพื่อเริ่มไลฟ์', 'success', 5000);
+  }
+  function applyQuality(q) {
+    const before = `${settings.resolution}|${settings.fps}`;
+    Object.assign(settings, { resolution: q.res, fps: q.fps, videoKbps: q.kbps });
+    saveSettings();
+    if (before !== `${settings.resolution}|${settings.fps}`) applyResolution();
+    updateStatus();
   }
 
   /* --------------------------------------------------------------- help */
@@ -4703,6 +4924,7 @@
     tickClock();
     setInterval(tickClock, 1000);
     requestAnimationFrame(rafLoop);
+    setTimeout(() => { if (shouldOnboard()) openOnboarding(); }, 700);
 
     // สำหรับดีบัก/ทดสอบอัตโนมัติ
     window.webmix = { playlist, dataSources, timerControl, multiview, renderer, gpu, setRenderer: v => { settings.renderer = v; renderer.resolve(); updateStatus(); }, show, ovl, setChannel, toggleInputOverlay, useRecFolder: dir => { recFolder = dir; }, inputs, state, settings, overlays, audio, rec, streamer, wireless, cut, autoTransition, setPreview, tr, ftb };

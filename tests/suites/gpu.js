@@ -80,7 +80,7 @@ const results = []; const ok = (n, c, x = '') => results.push(`${c ? 'PASS' : 'F
   // render time at 4K with 4 keyed overlays (informational: headless uses a software GPU)
   await p.evaluate(() => { const w = window.webmix; w.settings.resolution = '2160p'; });
   // ใช้หน้าตั้งค่าเพื่อเปลี่ยนความละเอียดจริง
-  await p.click('[data-action=settings]'); await p.waitForSelector('.modal [name=resolution]'); await p.selectOption('.modal [name=resolution]', '2160p'); await p.click('.modal-foot .btn-primary'); await p.waitForTimeout(500);
+  await p.click('[data-action=settings]'); await p.evaluate(() => { const d = document.querySelector('.modal details.adv'); if (d) d.open = true; }); await p.waitForSelector('.modal [name=resolution]'); await p.selectOption('.modal [name=resolution]', '2160p'); await p.click('.modal-foot .btn-primary'); await p.waitForTimeout(500);
   await p.evaluate(() => { const w = window.webmix; for (const k of [1, 2, 3, 4]) { w.toggleInputOverlay(w.ids.green, k); w.ovl[k].anim = 1; } });
   const times = {};
   for (const mode of ['cpu', 'gpu']) {
@@ -97,7 +97,7 @@ const results = []; const ok = (n, c, x = '') => results.push(`${c ? 'PASS' : 'F
   ok('context loss → automatic CPU fallback', await p.evaluate(() => window.webmix.renderer.active) === 'cpu' && /สลับไปใช้ CPU/.test(await p.textContent('#toasts')));
   const px = await p.evaluate(() => Array.from(document.querySelector('#pgm-canvas').getContext('2d').getImageData(10, 10, 1, 1).data));
   ok('picture keeps rendering after fallback', px[3] === 255);
-  ok('settings offer the renderer choice', await (async () => { await p.click('[data-action=settings]'); await p.waitForSelector('.modal [name=renderer]'); const n = (await p.$$('.modal [name=renderer] option')).length; await p.keyboard.press('Escape'); return n === 3; })());
+  ok('settings offer the renderer choice', await (async () => { await p.click('[data-action=settings]'); await p.evaluate(() => { const d = document.querySelector('.modal details.adv'); if (d) d.open = true; }); await p.waitForSelector('.modal [name=renderer]'); const n = (await p.$$('.modal [name=renderer] option')).length; await p.keyboard.press('Escape'); return n === 3; })());
   ok('no page errors', errs.length === 0, JSON.stringify(errs));
   console.log(results.join('\n')); await b.close();
 })().catch(e => { console.log(results.join('\n')); console.error('CRASH', e.message); process.exit(1); });
