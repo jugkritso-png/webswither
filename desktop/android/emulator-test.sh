@@ -80,8 +80,7 @@ RECV=$!
 # จบสคริปต์ทางไหนก็ตาม ปิดเครื่องรับด้วย (ไม่ให้ขั้นตอนของ CI ค้าง)
 trap 'rc=$?; pkill -f "0.0.0.0:[0-9]*/live/bg" 2>/dev/null || true; kill $RECV 2>/dev/null || true; exit $rc' EXIT
 sleep 1
-adb shell setprop debug.webmix.selftest "rtmp://10.0.2.2:$BG_PORT/live/bg"
-adb shell setprop debug.webmix.selftest_hold 45
+adb shell setprop debug.webmix.selftest "rtmp://10.0.2.2:$BG_PORT/live/bg#hold=45"
 # เปิดแอปแล้วรอให้สตรีมมาถึง — ถ้าไม่มาภายใน 100 วินาที (emulator บางรอบตัวเข้ารหัสค้างหลัง force-stop) ปิดแล้วเปิดใหม่อีกครั้ง
 for attempt in 1 2; do
   adb logcat -c
@@ -97,6 +96,7 @@ done
 [ -s "$OUT/android-bg.flv" ] || { echo "ไลฟ์เบื้องหลัง: สตรีมไม่เริ่ม"; exit 1; }
 # กดโฮมหลังจากบริการเบื้องหน้าเริ่มแล้วเท่านั้น (Android ไม่ให้เริ่มบริการกล้อง/ไมค์จากเบื้องหลัง)
 for _ in $(seq 1 20); do adb logcat -d -s WebMix:I | grep -q "LiveService started" && break; sleep 1; done
+adb logcat -d -s WebMix:I | grep -q "LiveService started" || { echo "ไลฟ์เบื้องหลัง: LiveService ไม่เริ่มภายใน 20 วินาที"; adb logcat -d -s WebMix:* | tail -20; exit 1; }
 sleep 2
 adb shell input keyevent KEYCODE_HOME
 sleep 3
@@ -111,7 +111,6 @@ for _ in $(seq 1 60); do
   sleep 1
 done
 adb shell setprop debug.webmix.selftest 0
-adb shell setprop debug.webmix.selftest_hold 0
 adb logcat -d -v brief | grep -E 'WebMix|LiveService|chromium|AndroidRuntime' | tail -300 > "$OUT/logcat-bg.txt" || true
 adb logcat -d -v brief -s WebMix:* > "$OUT/logcat-bg-webmix.txt" || true
 sleep 3

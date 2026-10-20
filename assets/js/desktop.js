@@ -182,7 +182,10 @@
       g.fillStyle = '#fff'; g.font = 'bold 96px sans-serif'; g.fillText(`WebMix ${n++}`, 80 + (n * 8) % 600, 380);
     };
     const stopDraw = WM.wcrec ? WM.wcrec.every(draw, 33) : (id => () => clearInterval(id))(setInterval(draw, 33));
-    const hold = info.selftestHold || 0;
+    // ค้างสตรีมไว้กี่วินาที (ทดสอบไลฟ์เบื้องหลัง): ส่งมาท้าย URL "#hold=45" — ค่าเดียวกับ URL จึงมาถึงพร้อมกันเสมอ
+    const holdTag = /#hold=(\d+)$/.exec(info.selftestStream || '');
+    const hold = holdTag ? Math.min(600, +holdTag[1]) : info.selftestHold || 0;
+    const streamUrl = (info.selftestStream || '').replace(/#hold=\d+$/, '');
     const stream = useWc ? null : canvas.captureStream(30);
     let actx = null, osc = null;
     try {
@@ -206,7 +209,7 @@
       };
       const timer = setTimeout(finish, 40000);
       ws.onopen = () => {
-        ws.send(JSON.stringify({ type: 'start', destinations: [{ id: 'selftest', name: 'selftest', url: info.selftestStream }] }));
+        ws.send(JSON.stringify({ type: 'start', destinations: [{ id: 'selftest', name: 'selftest', url: streamUrl }] }));
         // เหมือนแอปจริง: เปิดบริการเบื้องหน้าทันทีที่เริ่มสตรีม (ระหว่างที่แอปยังอยู่บนหน้าจอ — Android ไม่ให้เริ่มจากเบื้องหลัง)
         if (hold && desktop.mobile) desktop.setLive(true, 'ทดสอบไลฟ์เบื้องหลัง');
         rec = useWc
