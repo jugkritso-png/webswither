@@ -94,7 +94,7 @@ main = next((app / 'src/main/java').rglob('MainActivity.kt'))
 src = main.read_text()
 pkg = re.search(r'^package\s+([\w.`]+)', src, re.M).group(1)
 (main.parent / 'LiveService.kt').write_text(pathlib.Path(sys.argv[2]).read_text().replace('__PACKAGE__', pkg))
-if 'LiveService.running' not in src:
+if 'ACTION_STOP' not in src:
     if not re.search(r'class MainActivity\s*:\s*TauriActivity\(\)\s*\{', src):
         src = re.sub(r'(class MainActivity\s*:\s*TauriActivity\(\))', r'\1 {\n}', src, count=1)
     body = (
@@ -110,6 +110,14 @@ if 'LiveService.running' not in src:
         '  override fun onPause() {\n'
         '    super.onPause()\n'
         '    if (LiveService.running) liveWebView?.onResume()\n'
+        '  }\n'
+        '\n'
+        '  // ปุ่ม "หยุดไลฟ์…" บนแจ้งเตือน → เปิดหน้ายืนยันในหน้าเว็บ\n'
+        '  override fun onNewIntent(intent: android.content.Intent) {\n'
+        '    super.onNewIntent(intent)\n'
+        '    if (intent.action == LiveService.ACTION_STOP) {\n'
+        '      liveWebView?.evaluateJavascript("window.WebMix && WebMix.nativeAction && WebMix.nativeAction(\'stop\')", null)\n'
+        '    }\n'
         '  }\n'
         '}\n'
     )

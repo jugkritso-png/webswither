@@ -66,6 +66,7 @@
     <symbol id="i-square" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2" fill="currentColor"/></symbol>
     <symbol id="i-type" viewBox="0 0 24 24"><path d="M4 7V4h16v3M9 20h6M12 4v16"/></symbol>
     <symbol id="i-power" viewBox="0 0 24 24"><path d="M12 2v10M18.4 6.6a9 9 0 1 1-12.8 0"/></symbol>
+    <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.6" fill="currentColor"/><circle cx="12" cy="12" r="1.6" fill="currentColor"/><circle cx="19" cy="12" r="1.6" fill="currentColor"/></symbol>
   </svg>
 
   <!-- ===================================================== STUDIO -->
@@ -246,6 +247,15 @@
       <span id="st-wireless" class="stat"><i class="dot"></i>WIRELESS <b>--</b></span>
       <span id="st-audio" class="stat"><i class="dot"></i>AUDIO <b>--</b></span>
     </footer>
+
+    <!-- มือถือ: แถบเมนูล่าง (หน้าจอแคบ) — แต่ละแท็บแสดงทีละส่วนของห้องควบคุม -->
+    <nav id="m-tabs" class="m-tabs" aria-label="เมนูหลัก">
+      <button type="button" data-mview="switch" aria-current="page"><svg class="i"><use href="#i-grid"/></svg><span>สวิตช์</span></button>
+      <button type="button" data-mview="audio"><svg class="i"><use href="#i-sliders"/></svg><span>เสียง</span></button>
+      <button type="button" data-mview="graphics"><svg class="i"><use href="#i-type"/></svg><span>กราฟิก</span></button>
+      <button type="button" data-action="stream"><svg class="i"><use href="#i-broadcast"/></svg><span>ไลฟ์</span></button>
+      <button type="button" data-mmore><svg class="i"><use href="#i-more"/></svg><span>เพิ่มเติม</span></button>
+    </nav>
   </div>
 
   <!-- ===================================================== PHONE CAMERA -->

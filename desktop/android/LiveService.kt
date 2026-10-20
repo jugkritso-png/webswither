@@ -39,14 +39,28 @@ class LiveService : Service() {
             Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
+        // "หยุดไลฟ์…" เปิดหน้ายืนยันในแอป (กดค้างเพื่อหยุด) — ไม่หยุดทันที กันมือโดนตอนมือถืออยู่ในกระเป๋า
+        val stop = PendingIntent.getActivity(
+            this, 1,
+            Intent(this, MainActivity::class.java).setAction(ACTION_STOP).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+        if (startedAt == 0L) startedAt = System.currentTimeMillis()
         @Suppress("DEPRECATION")
         val builder = if (Build.VERSION.SDK_INT >= 26) Notification.Builder(this, CHANNEL) else Notification.Builder(this)
         val notification = builder
-            .setContentTitle("WebMix Pro")
-            .setContentText(text)
+            .setContentTitle(text)
+            .setContentText("แตะเพื่อกลับไปที่แอป")
             .setSmallIcon(applicationInfo.icon)
             .setOngoing(true)
+            .setWhen(startedAt)
+            .setShowWhen(true)
+            .setUsesChronometer(true)
             .setContentIntent(open)
+            .addAction(Notification.Action.Builder(
+                android.graphics.drawable.Icon.createWithResource(this, android.R.drawable.ic_menu_close_clear_cancel),
+                "หยุดไลฟ์…", stop
+            ).build())
             .build()
         try {
             if (Build.VERSION.SDK_INT >= 29) startForeground(NOTIFICATION_ID, notification, types())
@@ -85,6 +99,7 @@ class LiveService : Service() {
 
     override fun onDestroy() {
         running = false
+        startedAt = 0L
         wake?.let { if (it.isHeld) it.release() }
         wifi?.let { if (it.isHeld) it.release() }
         wake = null
@@ -96,6 +111,8 @@ class LiveService : Service() {
     companion object {
         private const val CHANNEL = "webmix-live"
         private const val NOTIFICATION_ID = 4401
+        const val ACTION_STOP = "io.github.webmix.STOP_LIVE"
+        private var startedAt = 0L
 
         @Volatile
         @JvmStatic

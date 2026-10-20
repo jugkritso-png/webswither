@@ -2983,7 +2983,11 @@
   const rec = { active: false, starting: false, recorder: null, sink: null, chain: Promise.resolve(), bytes: 0, start: 0, warnedRam: false };
 
   async function toggleRecord() {
-    if (rec.active) { rec.recorder.stop(); return; }
+    if (rec.active) {
+      if (isPhoneUI() && !(await holdConfirm('หยุดบันทึก?', `บันทึกมาแล้ว ${fmtDuration(Date.now() - rec.start)} — ไฟล์จะถูกปิดและบันทึกลงเครื่อง`, 'กดค้างเพื่อหยุดบันทึก'))) return;
+      if (rec.active) rec.recorder.stop();
+      return;
+    }
     if (rec.starting) return;
     let r;
     try { r = makeRecorder(); } catch (e) { toast('เริ่มบันทึกไม่ได้: ' + e.message, 'error'); return; }
@@ -3343,7 +3347,7 @@
             if (!list.length) { toast('ยังไม่ได้ติ๊กปลายทางที่จะเริ่มพร้อมกัน — กด “แก้ไขปลายทาง”', 'warn'); return; }
             startDestinations(list);
           } else if (e.target.closest('.dest-stop-all')) {
-            if (await confirmDialog('หยุดสตรีมทั้งหมด', 'ทุกปลายทางจะหยุดออกอากาศทันที', 'หยุดสตรีม')) stopAllStreams();
+            if (await confirmStopAll()) stopAllStreams();
           }
         });
         refreshLiveDialog();
@@ -3353,6 +3357,14 @@
       closeLiveDialog = null;
       if (r?.value === 'edit') openSettings('stream');
     });
+  }
+
+  // หยุดไลฟ์ทั้งหมด: มือถือใช้ "กดค้าง" (กันนิ้วโดน) · จอใหญ่ใช้หน้าต่างยืนยันตามเดิม
+  function confirmStopAll() {
+    const since = streamer.start ? ` · ไลฟ์มาแล้ว ${fmtDuration(Date.now() - streamer.start)}` : '';
+    return isPhoneUI()
+      ? holdConfirm('หยุดไลฟ์?', `ทุกปลายทางจะหยุดออกอากาศ ผู้ชมจะเห็นว่าไลฟ์จบ${since}`, 'กดค้างเพื่อหยุดไลฟ์')
+      : confirmDialog('หยุดสตรีมทั้งหมด', 'ทุกปลายทางจะหยุดออกอากาศทันที', 'หยุดสตรีม');
   }
 
   function refreshLiveDialog() {
@@ -3398,7 +3410,7 @@
       ? (rec.active ? 'กำลังไลฟ์และบันทึก' : 'กำลังไลฟ์') : 'กำลังบันทึก';
     if (text === liveServiceText) return;
     liveServiceText = text;
-    desktop.setLive(!!text, `${text} — แตะเพื่อกลับไปที่แอป`);
+    desktop.setLive(!!text, text);
   }
 
   window.addEventListener('beforeunload', e => {
@@ -3495,6 +3507,70 @@
       const first = form.querySelector('input:not([readonly]), select');
       (first && !matchMedia('(hover: none)').matches ? first : foot.lastElementChild)?.focus({ preventScroll: true });
     });
+  }
+
+  /* ---- มือถือ: จอแคบใช้เลย์เอาต์แบบแท็บ (CSS @media max-width 760px) ---- */
+  const phoneQuery = matchMedia('(max-width: 760px)');
+  const isPhoneUI = () => phoneQuery.matches;
+  function setMobileView(view) {
+    document.documentElement.dataset.mview = view;
+    $$('#m-tabs [data-mview]').forEach(b => { if (b.dataset.mview === view) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); });
+    store.set('mview', view);
+    if (isPhoneUI()) window.scrollTo({ top: 0 });
+  }
+  function openMoreMenu(anchor) {
+    closeMenu();
+    const items = [
+      ['camera', 'บันทึกภาพนิ่งจาก Program', snapshot],
+      ['folder', 'โชว์: บันทึก / เปิด / เริ่มใหม่', openShowDialog],
+      ['phone', 'เชื่อมกล้องมือถือเครื่องอื่น (QR)', showWirelessDialog],
+      ...(desktop && desktop.mobile ? [] : [['grid', 'Multiview', () => multiview.open()], ['external', 'หน้าต่าง Program Output', openOutputWindow]]),
+      ['sliders', 'ตั้งค่า', () => openSettings()],
+      ['help', 'คู่มือ', openHelp]
+    ];
+    const menu = document.createElement('div');
+    menu.className = 'menu';
+    menu.setAttribute('role', 'menu');
+    menu.innerHTML = '<div class="menu-label">เพิ่มเติม</div>' + items.map((it, i) => `<button role="menuitem" data-i="${i}">${icon(it[0])}${esc(it[1])}</button>`).join('');
+    document.body.appendChild(menu);
+    const r = anchor.getBoundingClientRect();
+    menu.style.left = `${clamp(r.right - menu.offsetWidth, 8, innerWidth - menu.offsetWidth - 8)}px`;
+    menu.style.top = `${Math.max(8, r.top - menu.offsetHeight - 6)}px`;
+    menu.addEventListener('click', e => {
+      const b = e.target.closest('[data-i]');
+      if (!b) return;
+      closeMenu();
+      items[+b.dataset.i][2]();
+    });
+    setTimeout(() => document.addEventListener('pointerdown', outsideMenu, true));
+  }
+
+  // กดค้างเพื่อยืนยัน (หยุดไลฟ์/หยุดบันทึกบนมือถือ) — ปล่อยก่อนครบเวลาเท่ากับยกเลิก · คีย์บอร์ด: กด Space/Enter ค้าง
+  function holdConfirm(title, text, label, ms = 1500) {
+    return dialog({
+      title,
+      body: `<p class="modal-text">${esc(text)}</p>
+        <button type="button" class="hold-btn"><span class="hold-fill"></span><span class="hold-label">${esc(label)}</span></button>
+        <p class="hold-hint">กดค้าง ${ms / 1000} วินาที — ปล่อยก่อนเพื่อยกเลิก</p>`,
+      actions: [{ label: 'ไม่หยุด', primary: true }],
+      onOpen(modal, close) {
+        const btn = $('.hold-btn', modal), fill = $('.hold-fill', btn);
+        let t0 = 0, raf = 0;
+        const tick = () => {
+          const p = Math.min(1, (performance.now() - t0) / ms);
+          fill.style.width = `${p * 100}%`;
+          if (p >= 1) { t0 = 0; navigator.vibrate?.(60); close('hold'); return; }
+          raf = requestAnimationFrame(tick);
+        };
+        const start = e => { if (e) e.preventDefault(); if (t0) return; t0 = performance.now(); navigator.vibrate?.(15); raf = requestAnimationFrame(tick); };
+        const stop = () => { t0 = 0; cancelAnimationFrame(raf); fill.style.width = '0'; };
+        btn.addEventListener('pointerdown', start);
+        ['pointerup', 'pointerleave', 'pointercancel'].forEach(ev => btn.addEventListener(ev, stop));
+        btn.addEventListener('keydown', e => { if ((e.key === ' ' || e.key === 'Enter') && !e.repeat) start(e); });
+        btn.addEventListener('keyup', e => { if (e.key === ' ' || e.key === 'Enter') stop(); });
+        btn.addEventListener('contextmenu', e => e.preventDefault());
+      }
+    }).then(r => r?.value === 'hold');
   }
 
   async function confirmDialog(title, text, okLabel = 'ยืนยัน') {
@@ -3615,6 +3691,7 @@
             <input class="input mono" data-f="server" value="${esc(d.server)}" placeholder="${isSrt(d) ? 'srt://host:9000' : 'rtmp://...'}" aria-label="Server URL">
             <input class="input mono" data-f="key" type="${showKeys.checked ? 'text' : 'password'}" autocomplete="off" value="${esc(d.key)}" placeholder="${isSrt(d) ? 'Stream ID (ถ้ามี)' : 'Stream Key'}" aria-label="Stream Key / Stream ID">
             <button type="button" class="btn btn-ghost btn-icon dest-remove" title="ลบปลายทาง">${icon('x')}</button>
+            <button type="button" class="btn dest-paste">${icon('copy')}วางคีย์จากคลิปบอร์ด</button>
             <div class="dest-srt" ${isSrt(d) ? '' : 'hidden'}>
               <input class="input mono" data-f="passphrase" type="${showKeys.checked ? 'text' : 'password'}" autocomplete="off" value="${esc(d.passphrase)}" placeholder="รหัสผ่านเข้ารหัส SRT (10–64 ตัว, ถ้ามี)" aria-label="SRT passphrase">
               <select class="select" data-f="latency" aria-label="SRT latency" title="SRT latency — ยิ่งสูงยิ่งทนเน็ตกระตุก แต่ดีเลย์มากขึ้น">
@@ -3636,7 +3713,19 @@
         list.addEventListener('click', e => {
           const rm = e.target.closest('.dest-remove');
           if (rm) { rm.closest('.dest-row').remove(); syncAdd(); }
+          const paste = e.target.closest('.dest-paste');
+          if (paste) pasteKey(paste.closest('.dest-row'));
         });
+        // มือถือ: พิมพ์คีย์ยาว ๆ ยาก — วางจากคลิปบอร์ด · ถ้าวาง URL เต็ม (rtmp://…/คีย์) แยกเป็นเซิร์ฟเวอร์ + คีย์ให้
+        const pasteKey = async row => {
+          let text = '';
+          try { text = (await navigator.clipboard.readText()).trim(); } catch (err) {}
+          if (!text) { toast('อ่านคลิปบอร์ดไม่ได้ — กดค้างที่ช่อง Stream Key แล้วเลือก “วาง”', 'warn'); row.querySelector('[data-f=key]').focus(); return; }
+          const m = /^(rtmps?:\/\/.+)\/([^/]+)$/i.exec(text);
+          if (m && /\/(live|rtmp|live2|app)\b/i.test(m[1])) { row.querySelector('[data-f=server]').value = m[1]; row.querySelector('[data-f=key]').value = m[2]; }
+          else row.querySelector('[data-f=key]').value = text;
+          toast('วางคีย์แล้ว', 'success', 2000);
+        };
         list.addEventListener('change', e => {
           const row = e.target.closest('.dest-row');
           if (e.target.dataset.f === 'platform') {
@@ -3906,6 +3995,20 @@
     }));
 
     $('#inputs-grid').addEventListener('click', onGridClick);
+
+    // มือถือ: แท็บล่าง และปุ่ม "หยุดไลฟ์…" บนแจ้งเตือนของ Android (MainActivity เรียก WebMix.nativeAction)
+    setMobileView(['switch', 'audio', 'graphics'].includes(store.get('mview', 'switch')) ? store.get('mview', 'switch') : 'switch');
+    $('#m-tabs').addEventListener('click', e => {
+      const v = e.target.closest('button[data-mview]');
+      if (v) { setMobileView(v.dataset.mview); return; }
+      const more = e.target.closest('[data-mmore]');
+      if (more) openMoreMenu(more);
+    });
+    window.WebMix.nativeAction = async action => {
+      if (action !== 'stop') return;
+      if (streamer.ws || streamer.reconnecting) { if (await confirmStopAll()) stopAllStreams(); }
+      else if (rec.active) toggleRecord();
+    };
     $('#st-stream').addEventListener('click', openLiveDialog);
 
     const actions = {

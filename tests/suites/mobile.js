@@ -25,6 +25,30 @@ const results = []; const ok = (n, c, x = '') => results.push(`${c ? 'PASS' : 'F
   await m.tap('[data-action=add-menu]'); await m.waitForTimeout(200); await m.screenshot({ path: S + '/m2.png' });
   await m.tap('.menu button:has-text("Slate")'); ok('add input from menu on phone', (await m.evaluate(() => window.webmix.inputs.length)) === 5);
 
+  // แท็บล่างของมือถือ: แต่ละแท็บแสดงเฉพาะส่วนของตัวเอง
+  const vis = sel => m.evaluate(s => { const e = document.querySelector(s); return !!e && e.getClientRects().length > 0 && getComputedStyle(e).display !== 'none'; }, sel);
+  ok('phone: switch tab shows program + inputs, hides mixer', await vis('#pgm-canvas') && await vis('#inputs-grid') && !(await vis('#mixer')));
+  await m.tap('#m-tabs [data-mview=audio]');
+  ok('phone: audio tab shows the mixer only', await vis('#mixer') && !(await vis('#inputs-grid')) && !(await vis('#pgm-canvas')));
+  await m.tap('#m-tabs [data-mview=graphics]');
+  ok('phone: graphics tab shows overlays + program', await vis('.overlays-panel') && await vis('#pgm-canvas') && !(await vis('#mixer')));
+  await m.tap('#m-tabs [data-mmore]'); await m.waitForTimeout(150);
+  ok('phone: more menu opens', await vis('.menu'));
+  await m.tap('.menu button:has-text("คู่มือ")'); await m.waitForTimeout(200);
+  ok('phone: more → help opens a dialog', await vis('.modal')); await m.tap('.modal [data-close]');
+  await m.tap('#m-tabs [data-mview=switch]');
+  ok('phone: REC and stream buttons stay reachable', await vis('#btn-rec') && await vis('#btn-stream'));
+  // หยุดบันทึกบนมือถือ = กดค้าง (แตะเฉยๆ ไม่หยุด)
+  await m.tap('#btn-rec'); await m.waitForTimeout(1500);
+  ok('phone: recording started', await m.evaluate(() => window.webmix.rec.active));
+  await m.tap('#btn-rec'); await m.waitForTimeout(300);
+  await m.tap('.hold-btn'); await m.waitForTimeout(300);
+  ok('phone: a tap on the hold button does not stop', await m.evaluate(() => window.webmix.rec.active));
+  const hb = await m.locator('.hold-btn').boundingBox();
+  await m.mouse.move(hb.x + hb.width / 2, hb.y + hb.height / 2); await m.mouse.down(); await m.waitForTimeout(1900); await m.mouse.up();
+  await m.waitForTimeout(800);
+  ok('phone: holding 1.5 s stops recording', !(await m.evaluate(() => window.webmix.rec.active)));
+
   // studio desktop + phone camera
   const hctx = await b.newContext({ viewport: { width: 1440, height: 900 } }); await setup(hctx);
   const host = await hctx.newPage(); host.on('pageerror', e => errs.push('host ' + e.message));
