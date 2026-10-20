@@ -908,7 +908,9 @@ kbd {
 }
 
 @media (hover: none) {
-  .card-actions { opacity: 1; }
+  /* ปุ่มแก้ไข/ลบ ไว้มุมขวาบน (ใต้ป้าย PGM/PVW) — กลางการ์ดว่างไว้ให้แตะเลือกภาพ */
+  .card-actions { opacity: 1; top: 30px; bottom: auto; left: auto; flex-wrap: nowrap; }
+  .card .mini { width: 36px; height: 36px; }
 }
 
 @media (max-width: 720px) {
@@ -1077,4 +1079,50 @@ kbd {
 @media (max-width: 760px) {
   .dest-paste { display: inline-flex; grid-column: 1 / -1; justify-content: center; height: 44px; }
   .dest-row .input, .dest-row .select { height: 46px; }
+}
+
+/* ---------------------------------------------------------- แท็บเล็ต / iPad (จอสัมผัสที่กว้างกว่ามือถือ)
+   ปุ่มทุกปุ่มสูงพอให้นิ้วกด (≥ 40–44px) · ไม่แสดงคีย์ลัด/คำใบ้ที่ใช้กับเมาส์ · กันการแตะสองครั้งแล้วซูม */
+@media (pointer: coarse) and (min-width: 761px) {
+  button, .tab, .seg button, select, input, label { touch-action: manipulation; }
+  kbd, .hint { display: none; }
+  .btn { height: 44px; }
+  .btn-sm { height: 40px; }
+  .btn-icon { width: 44px; }
+  .btn-sm.btn-icon { width: 40px; }
+  .seg button { height: 40px; }
+  .tab { height: 48px; }
+  .input, .select { height: 44px; font-size: 16px; }
+  .ovl-row .select { height: 40px; font-size: 15px; }
+  .ovl-take, .ovl-pvw { min-height: 40px; }
+  .mini { width: 40px; height: 40px; }
+  .mini .i { width: 17px; height: 17px; }
+  .card-actions { opacity: 1; }
+  .card-ovl { grid-template-columns: repeat(4, 1fr) 36px; gap: 4px; }
+  .card-ovl button { height: 30px; font-size: 12px; }
+  .chip-btn { height: 36px; }
+  .key-ovl { min-height: 52px; }
+  .monitor-panel .panel-head .btn-icon { width: 44px; height: 44px; }
+  .topbar { padding-top: max(10px, env(safe-area-inset-top)); }
+}
+
+/* iPad แนวตั้ง: Preview/Program คู่กันด้านบน → แผงทรานซิชันแถวเดียว (CUT/AUTO · ตัวเลือก · Overlay)
+   → แหล่งภาพเต็มความกว้าง → Overlay/Title กับ Audio วางคู่กัน */
+@media (min-width: 761px) and (max-width: 1023px) {
+  .deck-body { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr) minmax(0, 1fr); gap: 14px; align-items: stretch; }
+  .deck-main { min-height: 0; }
+  .deck-buttons { flex-direction: column; }
+  .deck-buttons .key { min-height: 0; flex: 1; font-size: 18px; }
+  .deck-options { display: flex; flex-direction: column; gap: 10px; }
+  .deck-options .key-ftb { min-height: 44px; }
+  .deck-ovl .ovl-keys { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .workspace { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .workspace .inputs-panel { grid-column: 1 / -1; }
+  .inputs-grid { grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); }
+}
+
+/* iPad แนวนอน: ไม่บีบแผงล่างให้พอดีจอ — เลื่อนหน้าลงได้ แหล่งภาพ/Overlay/Audio ได้ความสูงเต็ม */
+@media (pointer: coarse) and (min-width: 1024px) {
+  .studio { height: auto; min-height: 100dvh; }
+  .workspace { flex: none; height: min(600px, 86dvh); }
 }

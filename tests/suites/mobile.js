@@ -49,6 +49,26 @@ const results = []; const ok = (n, c, x = '') => results.push(`${c ? 'PASS' : 'F
   await m.waitForTimeout(800);
   ok('phone: holding 1.5 s stops recording', !(await m.evaluate(() => window.webmix.rec.active)));
 
+  // iPad (แนวตั้ง/แนวนอน): พอดีจอ ปุ่มใหญ่พอให้นิ้วกด และเพิ่มลงหน้าจอโฮมได้ (manifest + apple-touch-icon)
+  for (const dev of ['iPad Pro 11', 'iPad Pro 11 landscape']) {
+    const tctx = await b.newContext({ ...devices[dev] }); await setup(tctx);
+    const t = await tctx.newPage(); t.on('pageerror', e => errs.push('ipad ' + e.message));
+    await t.goto('http://localhost:8765/index.html'); await t.waitForTimeout(1200);
+    const r = await t.evaluate(() => {
+      const h = s => { const e = document.querySelector(s); return e ? Math.round(e.getBoundingClientRect().height) : -1; };
+      return { fit: document.documentElement.scrollWidth === innerWidth, mini: h('.card .mini'), ovl: h('.card-ovl button'), seg: h('#seg-transition button'), cut: h('[data-action=cut]'), tab: h('.tab'),
+        kbd: [...document.querySelectorAll('kbd')].some(k => k.getClientRects().length), mtabs: getComputedStyle(document.querySelector('#m-tabs')).display };
+    });
+    ok(`${dev}: fits the screen, touch-size controls`, r.fit && r.mini >= 36 && r.ovl >= 28 && r.seg >= 40 && r.cut >= 56 && r.tab >= 48 && !r.kbd && r.mtabs === 'none', JSON.stringify(r));
+    await t.tap('.card >> nth=1'); await t.tap('[data-action=cut]');
+    ok(`${dev}: tap card + CUT switches program`, (await t.evaluate(() => window.webmix.inputs.find(i => i.id === window.webmix.state.programId).name)) === 'COLOR BARS');
+    if (dev === 'iPad Pro 11') {
+      const man = await t.evaluate(async () => { const l = document.querySelector('link[rel=manifest]'); const j = await (await fetch(l.href)).json(); const icon = document.querySelector('link[rel=apple-touch-icon]'); const ir = await fetch(icon.href); return { name: j.name, display: j.display, icons: j.icons.length, apple: ir.ok }; });
+      ok('home-screen manifest + icon', man.name === 'WebMix Pro' && man.display === 'standalone' && man.icons >= 2 && man.apple, JSON.stringify(man));
+    }
+    await tctx.close();
+  }
+
   // studio desktop + phone camera
   const hctx = await b.newContext({ viewport: { width: 1440, height: 900 } }); await setup(hctx);
   const host = await hctx.newPage(); host.on('pageerror', e => errs.push('host ' + e.message));
