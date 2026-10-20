@@ -49,6 +49,37 @@ const results = []; const ok = (n, c, x = '') => results.push(`${c ? 'PASS' : 'F
   await m.waitForTimeout(800);
   ok('phone: holding 1.5 s stops recording', !(await m.evaluate(() => window.webmix.rec.active)));
 
+  // ไลฟ์จากมือถือตามแบบ: หน้าเตรียมไลฟ์ (ตรวจความพร้อม) → นับถอยหลัง 3-2-1 → แผงไลฟ์ (สุขภาพ + ปลายทาง) → กดค้างหยุด → สรุป
+  await m.waitForTimeout(500);
+  await m.evaluate(() => { window.webmix.settings.destinations.forEach(d => { d.key = ''; }); });
+  await m.tap('#btn-stream'); await m.waitForTimeout(300);
+  ok('phone: pre-flight blocks a destination without a key', await vis('.pf-item.is-error') && (await m.locator('.modal-foot button:has-text("แก้ไขปลายทาง")').count()) === 1);
+  await m.tap('.modal-foot button:has-text("ปิด")'); await m.waitForTimeout(200);
+  const rx = listenRtmp(1951, 'mk', `${S}/mlive.flv`);
+  await m.evaluate(() => { const st = window.webmix.settings; st.gateway = 'ws://127.0.0.1:8089/?token=abc'; st.destinations.splice(0, st.destinations.length, { id: 'mdest', platform: 'custom', server: 'rtmp://127.0.0.1:1951/live', key: 'mk', passphrase: '', latency: 500, enabled: true }); });
+  await m.tap('#btn-stream'); await m.waitForTimeout(300);
+  ok('phone: pre-flight lists checks and allows start', (await m.locator('.pf-item').count()) >= 4 && !(await vis('.pf-item.is-error')) && await vis('.btn-golive'));
+  await m.screenshot({ path: S + '/m-preflight.png' });
+  await m.tap('.modal-foot .btn-golive'); await m.waitForTimeout(400);
+  ok('phone: 3-2-1 countdown before going live', await vis('.m-countdown') && !(await m.evaluate(() => window.webmix.streamer.ws)));
+  let live = false;
+  for (let i = 0; i < 40 && !live; i++) { await m.waitForTimeout(500); live = await m.evaluate(() => window.webmix.streamer.dests.get('mdest')?.state === 'live'); }
+  ok('phone: live after the countdown', live && !(await vis('.m-countdown')));
+  await m.waitForTimeout(3000);
+  await m.tap('#btn-stream'); await m.waitForTimeout(1300);
+  ok('phone: live sheet shows health + destination card', await vis('.m-live .ml-health') && (await m.locator('.m-live .ml-dest.is-live').count()) === 1 && /fps/.test(await m.textContent('.ml-stats')),
+    await m.textContent('.m-live .dest-live'));
+  ok('phone: bitrate sparkline drawn', ((await m.getAttribute('.ml-line', 'd')) || '').length > 10);
+  await m.screenshot({ path: S + '/m-live.png' });
+  await m.tap('.m-live .dest-stop-all'); await m.waitForTimeout(300);
+  const sb = await m.locator('.hold-btn').boundingBox();
+  await m.mouse.move(sb.x + sb.width / 2, sb.y + sb.height / 2); await m.mouse.down(); await m.waitForTimeout(1900); await m.mouse.up();
+  await m.waitForTimeout(1200);
+  ok('phone: summary after stopping', await vis('.sum-grid') && /จบไลฟ์/.test(await m.textContent('.modal')) && (await m.locator('.sum-dests > div').count()) === 1, await m.evaluate(() => document.querySelector('.modal')?.textContent.slice(0, 200)));
+  await m.screenshot({ path: S + '/m-summary.png' });
+  await m.tap('.modal-foot .btn-primary'); rx.kill('SIGINT');
+  ok('phone: alert container idle when nothing is wrong', await m.evaluate(() => document.querySelector('#m-alerts').hidden));
+
   // iPad (แนวตั้ง/แนวนอน): พอดีจอ ปุ่มใหญ่พอให้นิ้วกด และเพิ่มลงหน้าจอโฮมได้ (manifest + apple-touch-icon)
   for (const dev of ['iPad Pro 11', 'iPad Pro 11 landscape']) {
     const tctx = await b.newContext({ ...devices[dev] }); await setup(tctx);

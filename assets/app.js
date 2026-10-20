@@ -3023,6 +3023,7 @@
     };
     r.onstop = async () => {
       rec.active = false;
+      rec.last = { name, bytes: rec.bytes, duration: Date.now() - rec.start, where: sink.kind === 'folder' ? sink.label : sink.label || '' };
       setRecButton();
       updateOnAir();
       try {
@@ -3069,7 +3070,11 @@
   const streamer = { active: false, state: 'idle', ws: null, recorder: null, sent: 0, kbps: 0, lastBytes: 0, lastAt: 0, start: 0, dests: new Map(), queue: [] };
 
   // ปุ่ม STREAM เปิดแผงควบคุมปลายทาง — เริ่ม/หยุดแต่ละช่องได้อิสระ หรือเริ่ม/หยุดทั้งหมดพร้อมกัน
-  function toggleStream() { openLiveDialog(); }
+  function toggleStream() {
+    // มือถือ: ยังไม่ได้ไลฟ์ → หน้าเตรียมก่อนไลฟ์ (ตรวจความพร้อม + นับถอยหลัง) · ไลฟ์อยู่ → แผงไลฟ์
+    if (isPhoneUI() && !streamer.ws && !streamer.reconnecting) openPreflight();
+    else openLiveDialog();
+  }
 
   function gatewayProblem() {
     const gw = gatewayUrl();
@@ -3160,7 +3165,8 @@
     refreshLiveDialog();
     updateOnAir();
     output.reset();
-    if (byUser) { if (wasLive) toast('หยุดสตรีมแล้ว'); }
+    if (wasLive && liveStats.session) { const sess = liveStats.end(); if (isPhoneUI()) { closeLiveDialog?.(); openSummary(sess, byUser ? '' : reason); } }
+    if (byUser) { if (wasLive && !isPhoneUI()) toast('หยุดสตรีมแล้ว'); }
     else toast((wasLive ? 'การสตรีมหยุดลง: ' : 'เชื่อมต่อ Stream Gateway ไม่ได้: ') + (reason || 'ตรวจสอบว่า Gateway ทำงานอยู่และ URL ถูกต้อง'), 'error', 7000);
   }
 
@@ -3319,6 +3325,7 @@
   let liveDialog = null, closeLiveDialog = null;
   function openLiveDialog() {
     if (liveDialog) return;
+    if (isPhoneUI()) return openMobileLive();
     dialog({
       title: 'ปลายทางการสตรีม',
       wide: true,
@@ -3359,6 +3366,34 @@
     });
   }
 
+  // แผงไลฟ์บนมือถือ (bottom sheet): สุขภาพสตรีม · การ์ดปลายทาง · กดค้างเพื่อหยุด
+  function openMobileLive() {
+    dialog({
+      title: 'ไลฟ์',
+      body: '<div class="dest-live"></div>',
+      actions: [{ label: 'ปิด' }],
+      onOpen(modal, close) {
+        modal.classList.add('m-sheet', 'm-live');
+        liveDialog = modal;
+        closeLiveDialog = close;
+        $('.modal-foot', modal).insertAdjacentHTML('afterbegin', `
+          <button type="button" class="btn btn-green btn-golive ml-go">${icon('broadcast')}เริ่มไลฟ์</button>
+          <button type="button" class="btn btn-danger dest-stop-all">หยุดไลฟ์…</button>`);
+        modal.addEventListener('click', async e => {
+          const b = e.target.closest('[data-dest-toggle]');
+          if (b) {
+            const d = settings.destinations.find(x => x.id === b.dataset.destToggle);
+            if (b.dataset.on === '1') { if (d) startDestinations([d]); }
+            else stopDestination(b.dataset.destToggle);
+          } else if (e.target.closest('[data-ml-edit]')) { close(); openSettings('stream'); }
+          else if (e.target.closest('.ml-go')) { close(); openPreflight(); }
+          else if (e.target.closest('.dest-stop-all')) { if (await confirmStopAll()) stopAllStreams(); }
+        });
+        refreshLiveDialog();
+      }
+    }).then(() => { liveDialog = null; closeLiveDialog = null; });
+  }
+
   // หยุดไลฟ์ทั้งหมด: มือถือใช้ "กดค้าง" (กันนิ้วโดน) · จอใหญ่ใช้หน้าต่างยืนยันตามเดิม
   function confirmStopAll() {
     const since = streamer.start ? ` · ไลฟ์มาแล้ว ${fmtDuration(Date.now() - streamer.start)}` : '';
@@ -3370,6 +3405,14 @@
   function refreshLiveDialog() {
     const box = liveDialog && $('.dest-live', liveDialog);
     if (!box) return;
+    if (liveDialog.classList.contains('m-sheet')) {
+      renderMobileLive(box);
+      const live = !!(streamer.ws || streamer.reconnecting);
+      const go = $('.ml-go', liveDialog), stop = $('.dest-stop-all', liveDialog);
+      if (go) go.hidden = live;
+      if (stop) stop.hidden = !live;
+      return;
+    }
     const text = { live: 'LIVE', connecting: 'กำลังเชื่อมต่อ…', error: 'หลุด — กำลังลองใหม่', stopped: 'หยุดแล้ว', off: 'พร้อม' };
     box.innerHTML = settings.destinations.map(d => {
       const st = streamer.dests.get(d.id);
@@ -3507,6 +3550,211 @@
       const first = form.querySelector('input:not([readonly]), select');
       (first && !matchMedia('(hover: none)').matches ? first : foot.lastElementChild)?.focus({ preventScroll: true });
     });
+  }
+
+  /* ================================================== มือถือ: หน้าจอไลฟ์ตามแบบ (Android/iPhone)
+     สถิติระหว่างไลฟ์ (สุขภาพสตรีม/สรุปหลังไลฟ์) · หน้าเตรียมก่อนไลฟ์ · การ์ดเตือนตอนมีปัญหา · สรุปหลังไลฟ์ */
+  let battery = null;
+  try { navigator.getBattery?.().then(b => { battery = b; }).catch(() => {}); } catch (e) {}
+  const batteryText = () => battery ? `${Math.round(battery.level * 100)}%${battery.charging ? ' (ชาร์จอยู่)' : ''}` : '';
+
+  // เก็บสถิติทุกวินาทีระหว่างไลฟ์: บิตเรตย้อนหลัง 2 นาที, ข้อมูลที่ส่งรวม, เฟรมเรต, การหลุดของแต่ละปลายทาง
+  const liveStats = {
+    session: null,
+    tick() {
+      const on = !!(streamer.ws || streamer.reconnecting);
+      if (!on) return;
+      if (!this.session) this.session = { start: Date.now(), bytes: 0, lastSent: 0, kbps: [], fps: [], reconnects: 0, wasReconnecting: false, dests: {} };
+      const s = this.session;
+      const d = streamer.sent - s.lastSent;
+      s.bytes += d >= 0 ? d : streamer.sent;
+      s.lastSent = streamer.sent;
+      s.kbps.push(streamer.state === 'live' ? streamer.kbps : 0);
+      if (s.kbps.length > 120) s.kbps.shift();
+      const f = streamer.encoder?.fps || (streamer.state === 'live' ? fps : 0);
+      if (f) s.fps.push(f);
+      if (streamer.reconnecting && !s.wasReconnecting) s.reconnects++;
+      s.wasReconnecting = !!streamer.reconnecting;
+      for (const [id, st] of streamer.dests) {
+        const x = s.dests[id] || (s.dests[id] = { label: destLabel(settings.destinations.find(z => z.id === id)) || id, live: 0, down: 0, drops: 0, last: '' });
+        if (st.state === 'live') x.live++; else x.down++;
+        if (x.last === 'live' && st.state !== 'live') x.drops++;
+        x.last = st.state;
+      }
+    },
+    end() {
+      const s = this.session;
+      this.session = null;
+      if (!s) return null;
+      s.duration = Date.now() - s.start;
+      return s;
+    }
+  };
+
+  const sparkPath = (vals, w, h) => {
+    if (vals.length < 2) return '';
+    const max = Math.max(1, ...vals) * 1.15;
+    return vals.map((v, i) => `${i ? 'L' : 'M'}${(i / (vals.length - 1) * w).toFixed(1)} ${(h - v / max * h).toFixed(1)}`).join(' ');
+  };
+
+  // หน้าเตรียมก่อนไลฟ์: ตรวจความพร้อมทีละข้อ แล้วนับถอยหลัง 3-2-1 ก่อนเริ่มทุกปลายทางที่ติ๊กไว้
+  async function openPreflight() {
+    const list = settings.destinations.filter(d => d.enabled);
+    const items = [];
+    const add = (state, title, detail) => items.push({ state, title, detail });
+    const gwErr = gatewayProblem();
+    const bad = list.find(d => destProblem(d));
+    if (!list.length) add('error', 'ยังไม่มีปลายทาง', 'เพิ่มปลายทาง (Facebook / YouTube / …) และติ๊กช่องที่จะไลฟ์');
+    else if (bad) add('error', destLabel(bad), destProblem(bad));
+    else add('ok', `ปลายทาง ${list.length} ช่อง`, list.map(destLabel).join(' · '));
+    if (gwErr) add('error', 'Stream Gateway', gwErr);
+    else add('ok', 'Stream Gateway', usingLocalGateway() ? 'ในเครื่องนี้' : 'เซิร์ฟเวอร์ ' + gatewayUrl().replace(/^wss?:\/\//, '').replace(/[/?].*$/, ''));
+    const need = settings.videoKbps * Math.max(1, list.length) / 1000;
+    const net = navigator.connection;
+    if (!navigator.onLine) add('error', 'อินเทอร์เน็ต', 'ไม่ได้เชื่อมต่ออินเทอร์เน็ต');
+    else if (net && net.downlink && !usingLocalGateway()) add(net.downlink < need * 1.5 ? 'warn' : 'ok', 'อินเทอร์เน็ต', `ประมาณ ${net.downlink} Mbps · ต้องการราว ${need.toFixed(1)} Mbps ขาขึ้น`);
+    else add('ok', 'อินเทอร์เน็ต', `ต้องการขาขึ้นราว ${need.toFixed(1)} Mbps สำหรับ ${Math.max(1, list.length)} ปลายทาง`);
+    if (battery) add(battery.charging || battery.level >= 0.5 ? 'ok' : 'warn', `แบตเตอรี่ ${batteryText()}`, battery.charging ? 'เสียบสายชาร์จอยู่' : 'แนะนำเสียบสายชาร์จระหว่างไลฟ์');
+    const hasCam = inputs.some(i => ['camera', 'wireless', 'guest'].includes(i.type));
+    add(hasCam ? 'ok' : 'warn', 'กล้องและไมค์', hasCam ? `${inputs.filter(i => ['camera', 'wireless', 'guest'].includes(i.type)).length} กล้อง · ${audio.channels.length} ช่องเสียง` : 'ยังไม่มีกล้อง — เพิ่มจากปุ่ม “เพิ่ม Input”');
+    if (desktop && desktop.info) add('ok', 'ตัวเข้ารหัส', useVideoCopy() ? 'ชิปของเครื่อง (ไม่เข้ารหัสซ้ำ)' : desktop.info.encoder === 'libx264' ? 'CPU (libx264)' : 'ชิปของเครื่อง (MediaCodec)');
+    try {
+      const est = await navigator.storage?.estimate?.();
+      if (est && est.quota) {
+        const hours = (est.quota - est.usage) * 8 / (settings.videoKbps * 1000 + 160000) / 3600;
+        add(hours < 0.5 ? 'warn' : 'ok', 'พื้นที่บันทึก', `บันทึกได้อีกราว ${hours >= 10 ? '10+ ชม.' : hours.toFixed(1) + ' ชม.'}`);
+      }
+    } catch (e) {}
+    if (desktop && desktop.mobile) add('ok', 'ไลฟ์เบื้องหลัง', 'ปิดจอหรือสลับแอประหว่างไลฟ์ได้ — ดูสถานะที่แจ้งเตือน');
+    const blocked = items.some(i => i.state === 'error');
+    const mark = { ok: '✓', warn: '!', error: '✕' };
+    const r = await dialog({
+      title: 'พร้อมไลฟ์หรือยัง',
+      body: `<p class="pf-sub">${formatTag(H, settings.fps)} · ${settings.videoKbps} kbps</p>
+        <div class="pf-list">${items.map(i => `<div class="pf-item is-${i.state}"><span class="pf-dot" aria-hidden="true">${mark[i.state]}</span><div><b>${esc(i.title)}</b><small>${esc(i.detail)}</small></div></div>`).join('')}</div>`,
+      actions: blocked ? [{ label: 'แก้ไขปลายทาง', value: 'edit', primary: true }, { label: 'ปิด' }] : [{ label: 'ยกเลิก' }, { label: 'เริ่มไลฟ์', value: 'go', primary: true }],
+      onOpen(modal) { modal.classList.add('m-sheet'); const go = $('.modal-foot .btn-primary', modal); if (go && !blocked) go.classList.add('btn-golive'); }
+    });
+    if (r?.value === 'edit') { openSettings('stream'); return; }
+    if (r?.value !== 'go') return;
+    if (await countdown()) startDestinations(list);
+  }
+
+  function countdown(n = 3) {
+    return new Promise(resolve => {
+      const el = document.createElement('div');
+      el.className = 'm-countdown';
+      el.innerHTML = `<div>กำลังจะออกอากาศใน</div><b>${n}</b><button type="button" class="btn">ยกเลิก</button>`;
+      document.body.appendChild(el);
+      const num = $('b', el);
+      let left = n;
+      const t = setInterval(() => {
+        left--;
+        if (left <= 0) { clearInterval(t); el.remove(); navigator.vibrate?.(80); resolve(true); return; }
+        num.textContent = left;
+        navigator.vibrate?.(20);
+      }, 1000);
+      $('button', el).addEventListener('click', () => { clearInterval(t); el.remove(); resolve(false); });
+    });
+  }
+
+  // การ์ดเตือนบนหน้าสวิตช์ (มือถือ): เรียงตามความรุนแรง บอกว่าเกิดอะไรและควรทำอะไร · กด "รับทราบ" เพื่อซ่อนจนกว่าจะเกิดใหม่
+  const alertDismissed = new Set();
+  function renderAlerts() {
+    const box = $('#m-alerts');
+    if (!box) return;
+    const live = !!(streamer.ws || streamer.reconnecting);
+    const list = [];
+    if (battery && !battery.charging && battery.level <= 0.15 && (live || rec.active)) {
+      list.push({ key: 'battery', level: 'red', title: `แบตเหลือ ${Math.round(battery.level * 100)}%`, text: 'เสียบสายชาร์จตอนนี้ — ถ้าแบตหมด ไลฟ์และการบันทึกจะหยุด' });
+    }
+    if (streamer.reconnecting) {
+      list.push({ key: 'gw', level: 'amber', title: `การเชื่อมต่อหลุด — กำลังเชื่อมต่อใหม่ (ครั้งที่ ${streamer.attempt || 1})`, text: 'ปลายทางที่ไลฟ์อยู่จะเริ่มต่อให้เองเมื่อเชื่อมต่อได้' });
+    }
+    for (const [id, st] of streamer.dests) {
+      if (st.state !== 'error') continue;
+      const d = settings.destinations.find(z => z.id === id);
+      const others = [...streamer.dests.values()].filter(x => x.state === 'live').length;
+      list.push({ key: 'dest-' + id, level: 'amber', title: `${destLabel(d) || id} หลุด — กำลังเชื่อมต่อใหม่`, text: (st.message ? st.message + ' · ' : '') + (others ? `ปลายทางอื่นยังออกอากาศปกติ (${others})` : 'ลองใหม่อัตโนมัติ'), action: { label: 'หยุดเฉพาะช่องนี้', run: () => stopDestination(id) } });
+    }
+    if (live && streamer.encoder && streamer.encoder.speed && streamer.encoder.speed < 0.9) {
+      list.push({ key: 'enc', level: 'gray', title: `เข้ารหัสไม่ทัน (${streamer.encoder.speed.toFixed(2)}x)`, text: 'ภาพที่ผู้ชมเห็นอาจกระตุก — ลดความละเอียดหรือเฟรมเรตในตั้งค่า', action: { label: 'ตั้งค่า', run: () => openSettings('output') } });
+    }
+    // เงื่อนไขหายไปแล้ว → ล้างการซ่อน (ถ้าเกิดอีกจะแสดงใหม่)
+    for (const k of [...alertDismissed]) if (!list.some(a => a.key === k)) alertDismissed.delete(k);
+    const shown = list.filter(a => !alertDismissed.has(a.key));
+    const sig = shown.map(a => a.key + a.title + a.text).join('|');
+    if (box.dataset.sig === sig) return;
+    box.dataset.sig = sig;
+    box.hidden = !shown.length;
+    box.innerHTML = shown.map((a, i) => `
+      <div class="m-alert is-${a.level}" role="${a.level === 'red' ? 'alert' : 'status'}">
+        <div class="m-alert-text"><b>${esc(a.title)}</b><small>${esc(a.text)}</small></div>
+        <div class="m-alert-actions">${a.action ? `<button type="button" class="btn btn-sm" data-alert-act="${i}">${esc(a.action.label)}</button>` : ''}<button type="button" class="btn btn-sm btn-ghost" data-alert-ok="${esc(a.key)}">รับทราบ</button></div>
+      </div>`).join('');
+    box.onclick = e => {
+      const act = e.target.closest('[data-alert-act]');
+      if (act) { shown[+act.dataset.alertAct]?.action?.run(); return; }
+      const okb = e.target.closest('[data-alert-ok]');
+      if (okb) { alertDismissed.add(okb.dataset.alertOk); box.dataset.sig = ''; renderAlerts(); }
+    };
+  }
+
+  // สรุปหลังไลฟ์ (มือถือ)
+  function openSummary(s, reason) {
+    if (!s) return;
+    const avgFps = s.fps.length ? s.fps.reduce((a, b) => a + b, 0) / s.fps.length : 0;
+    const dests = Object.values(s.dests);
+    const recLine = rec.active ? `<p class="note">ยังบันทึกอยู่ — กด REC เพื่อหยุดและบันทึกไฟล์</p>`
+      : rec.last && Date.now() - rec.start < s.duration + 600000 ? `<div class="sum-file"><b>${esc(rec.last.name)}</b><small>${fmtBytes(rec.last.bytes)}${rec.last.where ? ' · ' + esc(rec.last.where) : ''}</small></div>` : '';
+    dialog({
+      title: reason ? 'ไลฟ์หยุดลง' : 'จบไลฟ์แล้ว',
+      body: `${reason ? `<p class="modal-text">${esc(reason)}</p>` : ''}
+        <div class="sum-grid">
+          <div><small>ระยะเวลา</small><b>${fmtDuration(s.duration)}</b></div>
+          <div><small>ข้อมูลที่ส่ง</small><b>${fmtBytes(s.bytes)}</b></div>
+          <div><small>ภาพเฉลี่ย</small><b>${avgFps ? avgFps.toFixed(1) + ' fps' : '—'}</b></div>
+          <div><small>หลุด / เชื่อมต่อใหม่</small><b>${s.reconnects} ครั้ง</b></div>
+        </div>
+        ${dests.length ? `<div class="sum-dests">${dests.map(d => `<div><span>${esc(d.label)}</span><span class="${d.drops || d.down > 5 ? 'warn' : 'ok'}">${d.drops ? `หลุด ${d.drops} ครั้ง` : d.down > 5 ? `ขาด ${d.down} วินาที` : 'ครบทั้งรายการ'}</span></div>`).join('')}</div>` : ''}
+        ${recLine}`,
+      actions: [{ label: 'กลับหน้าสวิตช์ภาพ', primary: true }],
+      onOpen(modal) { modal.classList.add('m-sheet'); }
+    });
+  }
+
+  // แผงไลฟ์แบบมือถือ: สุขภาพสตรีม + ปลายทาง (การ์ด) — ใช้โครงเดียวกับ openLiveDialog
+  function renderMobileLive(box) {
+    const s = liveStats.session;
+    const live = !!(streamer.ws || streamer.reconnecting);
+    const { live: nLive, active } = destCounts();
+    const health = streamer.reconnecting ? ['warn', 'กำลังเชื่อมต่อใหม่'] : !live ? ['idle', 'ยังไม่ได้ไลฟ์']
+      : streamer.encoder && streamer.encoder.speed && streamer.encoder.speed < 0.9 ? ['warn', 'เข้ารหัสไม่ทัน'] : nLive < active ? ['warn', 'บางปลายทางมีปัญหา'] : ['ok', 'ดีมาก'];
+    const fpsNow = streamer.encoder?.fps || (live ? fps : 0);
+    const text = { live: 'ออกอากาศ', connecting: 'กำลังเชื่อมต่อ…', error: 'หลุด — กำลังลองใหม่', stopped: 'หยุดแล้ว', off: 'พร้อม' };
+    box.innerHTML = `
+      <section class="ml-health is-${health[0]}">
+        <div class="ml-head"><b>สุขภาพสตรีม</b><span>${health[1]}</span></div>
+        <svg class="ml-spark" viewBox="0 0 330 54" preserveAspectRatio="none" role="img" aria-label="กราฟบิตเรต 2 นาทีล่าสุด"><path d="M0 46 H330" class="ml-base"/><path d="${s ? sparkPath(s.kbps, 330, 50) : ''}" class="ml-line"/></svg>
+        <div class="ml-stats">
+          <div><small>บิตเรต</small><b>${live ? (streamer.kbps / 1000).toFixed(1) + 'M' : '—'}</b></div>
+          <div><small>เฟรม</small><b>${fpsNow ? Math.round(fpsNow) + ' fps' : '—'}</b></div>
+          <div><small>แบต</small><b>${battery ? Math.round(battery.level * 100) + '%' : '—'}</b></div>
+          <div><small>เวลา</small><b>${live && streamer.start ? fmtDuration(Date.now() - streamer.start) : '—'}</b></div>
+        </div>
+      </section>
+      <div class="ml-dests">${settings.destinations.map(d => {
+        const st = streamer.dests.get(d.id);
+        const state = st ? st.state : 'off';
+        const running = !!st && state !== 'stopped';
+        return `<div class="ml-dest is-${state}">
+          <span class="ml-badge">${esc((PLATFORMS[d.platform]?.label || '?').slice(0, 1))}</span>
+          <div class="ml-info"><b>${esc(destLabel(d))}</b><small>${esc(state === 'error' && st.message ? st.message : text[state] + (state === 'live' && st.kbps ? ` · ${(st.kbps / 1000).toFixed(1)} Mbps` : ''))}</small></div>
+          <button type="button" class="btn btn-sm ${running ? 'btn-danger' : 'btn-green'}" data-dest-toggle="${esc(d.id)}" data-on="${running ? 0 : 1}">${running ? 'หยุด' : 'เริ่ม'}</button>
+        </div>`;
+      }).join('') || '<p class="note">ยังไม่มีปลายทาง</p>'}
+      <button type="button" class="btn ml-add" data-ml-edit>+ เพิ่ม / แก้ไขปลายทาง</button></div>
+      ${desktop && desktop.mobile ? '<p class="ml-tip">ปิดจอหรือสลับแอปได้ — ไลฟ์ยังส่งต่อ ดูสถานะได้จากแจ้งเตือน</p>' : ''}`;
   }
 
   /* ---- มือถือ: จอแคบใช้เลย์เอาต์แบบแท็บ (CSS @media max-width 760px) ---- */
@@ -3931,7 +4179,10 @@
       streamer.kbps = Math.round((streamer.sent - streamer.lastBytes) * 8 / (t - streamer.lastAt));
       streamer.lastBytes = streamer.sent; streamer.lastAt = t;
     }
+    liveStats.tick();
     updateStatus();
+    renderAlerts();
+    if (liveDialog && liveDialog.classList.contains('m-live')) refreshLiveDialog();
   }
 
   /* --------------------------------------------------------- wiring */
