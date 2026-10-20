@@ -50,12 +50,22 @@ window.WebMix = window.WebMix || {};
   };
 
   /* ---------------------------------------------------------------- toasts */
-  function toast(message, type = 'info', ms = 4200) {
+  // action = { label, run } → ปุ่มในข้อความ (เช่น "เลิกทำ")
+  function toast(message, type = 'info', ms = 4200, action = null) {
     const box = $('#toasts');
     if (!box) return;
     const el = document.createElement('div');
     el.className = `toast ${type}`;
     el.textContent = message;
+    if (action) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'toast-action';
+      btn.textContent = action.label;
+      btn.addEventListener('click', () => { action.run(); el.remove(); });
+      el.classList.add('has-action');
+      el.appendChild(btn);
+    }
     box.appendChild(el);
     setTimeout(() => { el.classList.add('is-leaving'); setTimeout(() => el.remove(), 300); }, ms);
   }

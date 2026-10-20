@@ -82,7 +82,7 @@ const results = []; const ok = (n, c, x = '') => results.push(`${c ? 'PASS' : 'F
   await p.keyboard.press('Shift+R'); await p.waitForTimeout(700);
   ok('Shift+R takes Overlay 8 off', !(await p.evaluate(() => window.webmix.ovl[7].on)) && near(await pgm(0.5, 0.5), [0, 0, 0], 12), JSON.stringify(await pgm(0.5, 0.5)));
   await p.keyboard.press('Shift+Q'); await p.waitForTimeout(200);
-  ok('Shift+Q on an empty Overlay 5 warns', /เลือก Input ให้ Overlay 5/.test(await p.textContent('#toasts')));
+  ok('Shift+Q on an empty Overlay 5 warns', /เลือกแหล่งภาพให้ Overlay 5/.test(await p.textContent('#toasts')));
 
   // --- PVW staging: shows on Preview only
   await p.click('[data-ovl-pvw="0"]'); await p.waitForTimeout(200);

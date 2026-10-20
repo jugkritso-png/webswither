@@ -96,7 +96,7 @@
         </button>
         <span class="divider"></span>
         <button class="btn btn-icon" data-action="snapshot" title="บันทึกภาพนิ่งจาก Program (PNG)"><svg class="i"><use href="#i-camera"/></svg></button>
-        <button class="btn btn-icon" data-action="multiview" title="Multiview — ทุก Input + Preview/Program พร้อม tally (สำหรับจอที่สอง)"><svg class="i"><use href="#i-grid"/></svg></button>
+        <button class="btn btn-icon" data-action="multiview" title="Multiview — ทุกแหล่งภาพ + Preview/Program พร้อม tally (สำหรับจอที่สอง)"><svg class="i"><use href="#i-grid"/></svg></button>
         <button class="btn btn-icon" data-action="output-window" title="เปิดหน้าต่าง Program Output (ต่อจอ/โปรเจกเตอร์)"><svg class="i"><use href="#i-external"/></svg></button>
         <button class="btn btn-icon" data-action="show" title="โชว์: บันทึก / เปิด / เริ่มใหม่"><svg class="i"><use href="#i-folder"/></svg></button>
         <button class="btn btn-icon" data-action="settings" title="ตั้งค่าเอาต์พุตและการสตรีม"><svg class="i"><use href="#i-sliders"/></svg></button>
@@ -119,7 +119,7 @@
       </div>
 
       <div class="panel deck">
-        <div class="panel-head"><span class="panel-title">TRANSITION</span></div>
+        <div class="panel-head"><span class="panel-title th">เปลี่ยนภาพ</span></div>
         <div class="deck-body">
           <div class="deck-main">
             <div class="deck-buttons">
@@ -173,28 +173,29 @@
     <section class="workspace">
       <div class="panel inputs-panel">
         <div class="panel-head">
-          <span class="panel-title">INPUTS</span>
+          <span class="panel-title th">แหล่งภาพ</span>
           <span id="input-count" class="panel-count">0</span>
           <span class="hint">แตะ = Preview · แตะสองครั้ง = Cut</span>
           <div class="head-actions">
             <button class="btn btn-sm btn-green" data-action="wireless" title="เชื่อมต่อกล้องมือถือผ่าน QR Code"><svg class="i"><use href="#i-phone"/></svg>กล้องมือถือ</button>
-            <button class="btn btn-sm" data-action="add-menu" title="เพิ่มแหล่งภาพ"><svg class="i"><use href="#i-plus"/></svg>เพิ่ม Input</button>
+            <button class="btn btn-sm" data-action="add-menu" title="เพิ่มแหล่งภาพ"><svg class="i"><use href="#i-plus"/></svg>เพิ่มแหล่งภาพ</button>
           </div>
         </div>
         <div id="inputs-grid" class="inputs-grid"></div>
       </div>
 
       <div class="panel overlays-panel">
+        <div id="m-gfx" class="m-gfx"></div>
         <div class="tabs" role="tablist">
-          <button class="tab is-active" data-tab="overlay" role="tab">OVERLAY<span class="live-dot"></span></button>
-          <button class="tab" data-tab="title" role="tab">TITLE<span class="live-dot"></span></button>
-          <button class="tab" data-tab="pip" role="tab">PIP<span class="live-dot"></span></button>
-          <button class="tab" data-tab="key" role="tab">KEY<span class="live-dot"></span></button>
+          <button class="tab th is-active" data-tab="overlay" role="tab">ซ้อนภาพ<span class="live-dot"></span></button>
+          <button class="tab th" data-tab="title" role="tab">ป้ายชื่อ<span class="live-dot"></span></button>
+          <button class="tab th" data-tab="pip" role="tab">ภาพซ้อนมุม<span class="live-dot"></span></button>
+          <button class="tab th" data-tab="key" role="tab">ฉากเขียว<span class="live-dot"></span></button>
         </div>
 
         <div class="pane is-active" data-pane="overlay">
           <div id="ovl-rows" class="ovl-rows"></div>
-          <p class="note">กดปุ่ม <b>1–8</b> ใต้การ์ด Input เพื่อซ้อนเข้า Overlay นั้นทันที · ปุ่ม <b>⧉</b> บนการ์ดตั้งตำแหน่ง/ขนาด/ครอป/คีย์ฉากเขียว · <b>PVW</b> ดูบน Preview ก่อนขึ้นจอ</p>
+          <p class="note">กดปุ่ม <b>1–8</b> ใต้การ์ดแหล่งภาพเพื่อซ้อนเข้า Overlay นั้นทันที · ปุ่ม <b>⧉</b> บนการ์ดตั้งตำแหน่ง/ขนาด/ครอป/คีย์ฉากเขียว · <b>PVW</b> ดูบน Preview ก่อนขึ้นจอ</p>
         </div>
 
         <div class="pane" data-pane="title">
@@ -232,9 +233,9 @@
 
       <div class="panel audio-panel">
         <div class="panel-head">
-          <span class="panel-title">AUDIO</span>
+          <span class="panel-title th">เสียง</span>
           <div class="head-actions">
-            <button id="btn-monitor" class="btn btn-sm" data-action="monitor" title="ฟังเสียง Master ผ่านลำโพง/หูฟังของเครื่องนี้"><svg class="i"><use href="#i-headphones"/></svg>MON</button>
+            <button id="btn-monitor" class="btn btn-sm" data-action="monitor" title="ฟังเสียง Master ผ่านลำโพง/หูฟังของเครื่องนี้"><svg class="i"><use href="#i-headphones"/></svg>ฟังเสียง</button>
             <button class="btn btn-sm" data-action="add-mic" title="เพิ่มไมโครโฟน"><svg class="i"><use href="#i-mic"/></svg>เพิ่มไมค์</button>
           </div>
         </div>

@@ -68,8 +68,11 @@ const until = async (fn, ms = 10000) => { const end = Date.now() + ms; while (Da
   ok('playlist restored after reload with its files', st && st.names.join(',') === 'green.png,clip.webm' && st.imageSec === 3 && st.status === 'live', JSON.stringify(st));
   const stored2 = await p.evaluate(async () => { const r = await navigator.storage.getDirectory(); const d = await r.getDirectoryHandle('webmix-media'); let n = 0; for await (const _ of d.entries()) n++; return n; });
   ok('startup clean-up keeps playlist files', stored2 === 2, String(stored2));
-  // remove the input → files gone
+  // remove the input → files gone once the undo window (10 s) has passed
   await card.hover(); await card.locator('[data-card=remove]').click(); await p.click('.modal-foot .btn-danger'); await p.waitForTimeout(800);
+  const kept = await p.evaluate(async () => { const r = await navigator.storage.getDirectory(); const d = await r.getDirectoryHandle('webmix-media'); let n = 0; for await (const _ of d.entries()) n++; return n; });
+  ok('files kept while undo is possible', kept > 0, String(kept));
+  await p.waitForTimeout(11000);
   const stored3 = await p.evaluate(async () => { const r = await navigator.storage.getDirectory(); const d = await r.getDirectoryHandle('webmix-media'); let n = 0; for await (const _ of d.entries()) n++; return n; });
   ok('removing the playlist deletes its files', stored3 === 0, String(stored3));
   ok('no page errors', errs.length === 0, JSON.stringify(errs));

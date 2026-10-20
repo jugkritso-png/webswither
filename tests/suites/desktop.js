@@ -49,6 +49,7 @@ const MOCK = () => {
   // ---- Gateway ในแอป ----
   ok('status bar ready without typing a gateway', (await p.textContent('#st-stream')).includes('READY'), await p.textContent('#st-stream'));
   await p.click('[data-action=settings]'); await p.click('[data-mtab=stream]');
+  await p.evaluate(() => document.querySelectorAll('.modal details.adv').forEach(d => { d.open = true; }));
   ok('settings: local gateway ticked by default', await p.isChecked('[name=localGateway]'));
   const pane = await p.textContent('[data-mpane=stream]');
   ok('settings: shows ffmpeg version', pane.includes('ffmpeg version 6.1-test'));

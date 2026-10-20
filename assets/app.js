@@ -387,7 +387,7 @@
 
   /* ------------------------------------------------------- overlay channels (แบบ vMix)
      Overlay 1–8 วางแหล่งภาพใดก็ได้ซ้อนบน Program โดยไม่กระทบการตัดภาพหลัก (8 อยู่บนสุด)
-     แต่ละ Input มี "ตำแหน่ง" ของตัวเอง: ตำแหน่ง ขนาด ครอป ความทึบ คีย์ฉากเขียว/ฟ้า และขอบ
+     แต่ละแหล่งภาพมี "ตำแหน่ง" ของตัวเอง: ตำแหน่ง ขนาด ครอป ความทึบ คีย์ฉากเขียว/ฟ้า และขอบ
      แต่ละช่องเลือกเอฟเฟกต์เข้า-ออกได้ (Cut, Fade, Zoom, Slide, Wipe) และพักไว้ดูบน Preview ก่อนได้ */
   const OVL_EFFECTS = { cut: 'Cut', fade: 'Fade', zoom: 'Zoom', 'slide-left': 'Slide ←', 'slide-right': 'Slide →', 'slide-up': 'Slide ↑', 'slide-down': 'Slide ↓', wipe: 'Wipe' };
   const OVL_DURATIONS = [250, 500, 1000, 2000];
@@ -967,12 +967,13 @@
   }
 
   function renderInputs() {
+    queueMicrotask(renderQuickGfx);
     const grid = $('#inputs-grid');
     grid.innerHTML = '';
     thumbs.clear();
     $('#input-count').textContent = inputs.length;
     if (!inputs.length) {
-      grid.innerHTML = '<div class="empty-state">ยังไม่มี Input — กด “เพิ่ม Input” เพื่อเพิ่มกล้อง ไฟล์วิดีโอ หรือแหล่งภาพอื่น</div>';
+      grid.innerHTML = '<div class="empty-state">ยังไม่มีแหล่งภาพ — กด “เพิ่มแหล่งภาพ” เพื่อเพิ่มกล้อง ไฟล์วิดีโอ หรือแหล่งภาพอื่น</div>';
     }
     inputs.forEach((inp, i) => {
       const meta = TYPE_META[inp.type];
@@ -1007,7 +1008,7 @@
             ${inp.type === 'title' && inp.data && inp.data.rows && inp.data.rows.length > 1 ? `
               <button class="mini txt" data-card="dprev" title="แถวก่อนหน้า">‹</button><button class="mini txt" data-card="dnext" title="แถวถัดไป">›</button>` : ''}
             <button class="mini" data-card="rename" title="แก้ไขชื่อ / ข้อความ">${icon('edit')}</button>
-            <button class="mini danger" data-card="remove" title="ลบ Input">${icon('x')}</button>
+            <button class="mini danger" data-card="remove" title="ลบแหล่งภาพ">${icon('x')}</button>
           </div>
         </div>
         <div class="card-foot">${icon(meta.icon)}<span class="card-name">${esc(inp.name)}</span><span class="card-sub">${esc(cardSub(inp))}</span></div>
@@ -1069,15 +1070,58 @@
     if (!inp) return;
     const onAir = id === state.programId;
     const ok = await confirmDialog(`ลบ “${inp.name}”`,
-      onAir ? 'Input นี้กำลังออกอากาศอยู่ใน Program — ภาพจะถูกเปลี่ยนเป็นแหล่งอื่นทันที' : 'ต้องการลบ Input นี้ออกจากรายการหรือไม่',
-      'ลบ Input');
+      onAir ? 'แหล่งภาพนี้กำลังออกอากาศอยู่ใน Program — ภาพจะถูกเปลี่ยนเป็นแหล่งอื่นทันที' : 'ต้องการลบแหล่งภาพนี้ออกจากรายการหรือไม่',
+      'ลบแหล่งภาพ');
     if (!ok || !byId(id)) return;
-    disposeInput(inp, true);
+    // จำไว้ก่อนลบ เพื่อ "เลิกทำ" ได้ภายใน 10 วินาที (ไฟล์/ลิงก์มือถือยังไม่ถูกลบจริงจนหมดเวลา)
+    const snap = show.serialize(true);
+    const raw = snap.inputs.find(x => x.id === id);
+    const was = { at: inputs.indexOf(inp), chan: snap.audio.inputs[id], pvw: state.previewId === id || onAir, ovl: ovl.map((c, i) => c.inputId === id ? i : -1).filter(i => i >= 0),
+      pip: overlays.pip.sourceId === id, key: overlays.key.sourceId === id, data: inp.data ? { ...inp.data } : null };
+    // มือถือ/แขก: ตัดการเชื่อมต่อทันที (ผู้ใช้ตั้งใจให้หลุด) — เลิกทำแล้วการ์ดกลับมารอให้เชื่อมต่อใหม่
+    const hangUp = inp.type === 'wireless' || inp.type === 'guest';
+    disposeInput(inp, hangUp);
     if (inp.type === 'srt') saveSrtInputs();
     resetAfterRemoval(id);
     renderInputs();
     refreshSourceSelects();
-    toast(`ลบ “${inp.name}” แล้ว`);
+    let undone = false;
+    const forgetLater = hangUp ? 0 : setTimeout(() => { if (!undone) forgetInput(inp); }, UNDO_MS + 1000);
+    toast(`ลบ “${inp.name}” แล้ว`, 'info', UNDO_MS, { label: 'เลิกทำ', run: () => {
+      if (undone || !raw) return;
+      undone = true;
+      clearTimeout(forgetLater);
+      undoRemoveInput(raw, was);
+    } });
+  }
+  const UNDO_MS = 10000;
+  // ลบข้อมูลที่เก็บไว้ถาวร หลังหมดเวลาเลิกทำ
+  function forgetInput(inp) {
+    if (inp.peerId && inp.type === 'wireless') wireless.release(inp.peerId);
+    if (inp.type === 'media' || inp.type === 'image') mediaStore.del(inp.id);
+    if (inp.type === 'playlist') for (const it of inp.list.items) mediaStore.del(it.key);
+  }
+  function undoRemoveInput(raw, was) {
+    if (byId(raw.id)) return;
+    if (was.chan) audio.pending.set(raw.id, was.chan);
+    try { show.restoreInput(raw, { id: raw.id, name: raw.name }); } catch (e) { toast('นำกลับมาไม่ได้: ' + e.message, 'error'); return; }
+    const made = byId(raw.id);
+    if (!made) return;
+    inputs.splice(inputs.indexOf(made), 1);
+    inputs.splice(Math.min(was.at, inputs.length), 0, made);
+    if (raw.layout) made.layout = sanitizeLayout(raw.layout);
+    if (was.data) made.data = { ...was.data };
+    for (const i of was.ovl) if (!ovl[i].inputId) ovl[i].inputId = made.id;
+    if (was.pip) overlays.pip.sourceId = made.id;
+    if (was.key) overlays.key.sourceId = made.id;
+    if (was.pvw && state.programId !== made.id) state.previewId = made.id;
+    if (made.type === 'srt') saveSrtInputs();
+    renderInputs();
+    refreshSourceSelects();
+    refreshOverlaySelects();
+    renderMixer();
+    updateOverlayUI();
+    toast(`นำ “${made.name}” กลับมาแล้ว`, 'success', 2500);
   }
 
   // ปล่อยทรัพยากรของ Input (กล้อง, ไฟล์, การเชื่อมต่อ) แล้วนำออกจากรายการ
@@ -1133,9 +1177,9 @@
     if (inp.type === 'ticker') return openTickerDialog(inp);
     const hasText = inp.type === 'slate' || inp.type === 'clock';
     const result = await dialog({
-      title: 'แก้ไข Input',
+      title: 'แก้ไขแหล่งภาพ',
       body: `
-        <label class="field"><span>ชื่อ Input</span><input name="name" class="input" maxlength="40" value="${esc(inp.name)}"></label>
+        <label class="field"><span>ชื่อแหล่งภาพ</span><input name="name" class="input" maxlength="40" value="${esc(inp.name)}"></label>
         ${hasText ? `<label class="field"><span>${inp.type === 'slate' ? 'ข้อความบนจอ' : 'หัวข้อเหนือนาฬิกา'}</span><input name="text" class="input" maxlength="80" value="${esc(inp.text)}"></label>` : ''}`,
       actions: [{ label: 'ยกเลิก' }, { label: 'บันทึก', primary: true, value: 'save' }]
     });
@@ -1240,7 +1284,7 @@
           <option value="1280x720">1280 × 720 (HD)</option>
           <option value="640x480">640 × 480</option>
         </select></label>
-        <label class="field"><span>เสียงของ Input นี้</span><select name="mic" class="select">
+        <label class="field"><span>เสียงของแหล่งภาพนี้</span><select name="mic" class="select">
           <option value="">ไม่ใช้เสียง</option>
           ${mics.map((d, i) => `<option value="${esc(d.deviceId)}">${esc(d.label || 'Microphone ' + (i + 1))}</option>`).join('')}
         </select></label>`,
@@ -1404,7 +1448,7 @@
   }
   function setChannel(i, on) {
     const c = ovl[i];
-    if (on && !byId(c.inputId)) { toast(`เลือก Input ให้ Overlay ${c.n} ก่อน (แท็บ OVERLAY หรือปุ่ม ${c.n} ใต้การ์ด Input)`, 'warn'); return; }
+    if (on && !byId(c.inputId)) { toast(`เลือกแหล่งภาพให้ Overlay ${c.n} ก่อน (แท็บ ซ้อนภาพ หรือปุ่ม ${c.n} ใต้การ์ดแหล่งภาพ)`, 'warn'); return; }
     c.on = on;
     if (on) { c.staged = false; playIfMedia(byId(c.inputId)); }
     updateOverlayUI();
@@ -1424,7 +1468,7 @@
   }
   function setStaged(i) {
     const c = ovl[i];
-    if (!byId(c.inputId)) { toast(`เลือก Input ให้ Overlay ${c.n} ก่อน`, 'warn'); return; }
+    if (!byId(c.inputId)) { toast(`เลือกแหล่งภาพให้ Overlay ${c.n} ก่อน`, 'warn'); return; }
     c.staged = !c.staged;
     updateOverlayUI();
   }
@@ -1434,7 +1478,7 @@
     $('#ovl-rows').innerHTML = ovl.map((c, i) => `
       <div class="ovl-row" data-row="${i}">
         <button type="button" class="ovl-take" data-ovl="${i}" title="Overlay ${c.n} — เปิด/ปิดบน Program (${ovlKeyLabel(i)})">${c.n}</button>
-        <select class="select ovl-src" data-ovl-src="${i}" aria-label="Input ของ Overlay ${c.n}"></select>
+        <select class="select ovl-src" data-ovl-src="${i}" aria-label="แหล่งภาพของ Overlay ${c.n}"></select>
         <select class="select ovl-fx" data-ovl-fx="${i}" aria-label="เอฟเฟกต์ของ Overlay ${c.n}">${Object.entries(OVL_EFFECTS).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}</select>
         <select class="select ovl-dur" data-ovl-dur="${i}" aria-label="ระยะเวลาของ Overlay ${c.n}">${OVL_DURATIONS.map(d => `<option value="${d}">${d / 1000}s</option>`).join('')}</select>
         <button type="button" class="ovl-pvw" data-ovl-pvw="${i}" title="แสดง Overlay ${c.n} บน Preview เพื่อตรวจก่อนขึ้นจอ">PVW</button>
@@ -1455,6 +1499,50 @@
     updateOverlayUI();
   }
 
+  // มือถือ (แท็บกราฟิก): การ์ดกราฟิก แตะครั้งเดียว = ขึ้นจอ / แตะอีกครั้ง = เอาออก (ใช้ช่อง Overlay ที่ว่างให้เอง)
+  const GFX_LABEL = { title: 'ป้ายชื่อ', timer: 'นับเวลา', score: 'ป้ายคะแนน', ticker: 'ตัววิ่ง', image: 'ภาพ / โลโก้', playlist: 'Playlist' };
+  function renderQuickGfx() {
+    const box = $('#m-gfx');
+    if (!box) return;
+    const bound = new Set(ovl.map(c => c.inputId).filter(Boolean));
+    const list = inputs.filter(i => GRAPHIC_TYPES.includes(i.type) || i.type === 'image' || bound.has(i.id));
+    const onAir = id => ovl.some(c => c.on && c.inputId === id);
+    const sig = list.map(i => `${i.id}:${i.name}:${onAir(i.id)}`).join('|');
+    if (box.dataset.sig === sig) return;
+    box.dataset.sig = sig;
+    const any = ovl.some(c => c.on);
+    box.innerHTML = `
+      <div class="m-gfx-head"><b>กราฟิกบนจอ</b><span>แตะเพื่อขึ้นจอ · แตะอีกครั้งเพื่อเอาออก</span>
+        ${any ? '<button type="button" class="btn btn-sm" data-gfx-clear>เอาออกทั้งหมด</button>' : ''}</div>
+      <div class="m-gfx-grid">${list.map(i => `
+        <button type="button" class="gfx-card ${onAir(i.id) ? 'is-on' : ''}" data-gfx="${esc(i.id)}" aria-pressed="${onAir(i.id)}">
+          ${icon(TYPE_META[i.type]?.icon || 'type')}<b>${esc(i.name)}</b><small>${onAir(i.id) ? 'ออกอากาศ' : esc(GFX_LABEL[i.type] || TYPE_META[i.type]?.label || '')}</small></button>`).join('')}
+        <button type="button" class="gfx-card gfx-add" data-gfx-add="title">${icon('plus')}<b>ป้ายชื่อใหม่</b></button>
+        <button type="button" class="gfx-card gfx-add" data-gfx-add="timer">${icon('plus')}<b>นับถอยหลัง</b></button>
+        <button type="button" class="gfx-card gfx-add" data-gfx-add="score">${icon('plus')}<b>ป้ายคะแนน</b></button>
+        <button type="button" class="gfx-card gfx-add" data-gfx-add="image">${icon('plus')}<b>โลโก้</b></button>
+      </div>`;
+  }
+  function quickGfxTap(e) {
+    if (e.target.closest('[data-gfx-clear]')) { ovl.forEach((c, i) => { if (c.on) setChannel(i, false); }); return; }
+    const add = e.target.closest('[data-gfx-add]');
+    if (add) {
+      ({ title: addTitleInput, timer: addTimerInput, score: addScoreInput, image: () => pickFiles('image/*', addImageFiles) })[add.dataset.gfxAdd]();
+      return;
+    }
+    const card = e.target.closest('[data-gfx]');
+    if (!card) return;
+    const id = card.dataset.gfx;
+    const live = ovl.map((c, i) => c.on && c.inputId === id ? i : -1).filter(i => i >= 0);
+    if (live.length) { live.forEach(i => setChannel(i, false)); return; }
+    // ช่องที่ผูกกับกราฟิกนี้อยู่แล้ว → ช่องว่าง → ช่องที่ไม่ได้ขึ้นจอ
+    let i = ovl.findIndex(c => c.inputId === id);
+    if (i < 0) i = ovl.findIndex(c => !c.inputId);
+    if (i < 0) i = ovl.findIndex(c => !c.on);
+    if (i < 0) { toast('ช่อง Overlay เต็มทั้ง 8 ช่อง — เอากราฟิกอื่นออกก่อน', 'warn'); return; }
+    toggleInputOverlay(id, i);
+  }
+
   function updateOverlayUI() {
     ovl.forEach((c, i) => {
       const inp = byId(c.inputId);
@@ -1472,6 +1560,7 @@
       if (sel && sel.value !== (c.inputId || '')) sel.value = c.inputId || '';
     });
     $('.tab[data-tab="overlay"]').classList.toggle('is-live', ovl.some(c => c.on));
+    renderQuickGfx();
     updateTally();
   }
 
@@ -1525,7 +1614,7 @@
         </div>
         <div class="layout-grid">${slider('tol', 'ความไว (Tolerance)', 10, 150, L.tolerance)}
           <label class="check"><input type="checkbox" name="border" ${L.border ? 'checked' : ''}> ขอบสีขาว (เมื่อย่อภาพ)</label></div>
-        <p class="note">ค่านี้ใช้เมื่อ Input นี้ขึ้นเป็น Overlay — เห็นผลทันทีบน Program/Preview (กด PVW ในแท็บ OVERLAY เพื่อดูก่อนขึ้นจอ)</p>`,
+        <p class="note">ค่านี้ใช้เมื่อแหล่งภาพนี้ขึ้นเป็น Overlay — เห็นผลทันทีบน Program/Preview (กด PVW ในแท็บ ซ้อนภาพ เพื่อดูก่อนขึ้นจอ)</p>`,
       actions: [{ label: 'รีเซ็ต', value: 'reset' }, { label: 'เสร็จ', primary: true, value: 'ok' }],
       onOpen(modal) {
         const f = $('form', modal).elements;
@@ -1578,7 +1667,7 @@
     const result = await dialog({
       title: 'แก้ไข Title',
       body: `
-        <label class="field"><span>ชื่อ Input</span><input name="name" class="input" maxlength="40" value="${esc(inp.name)}"></label>
+        <label class="field"><span>ชื่อแหล่งภาพ</span><input name="name" class="input" maxlength="40" value="${esc(inp.name)}"></label>
         <label class="field"><span>รูปแบบ</span><select name="style" class="select">${Object.entries(TITLE_STYLES).map(([k, v]) => `<option value="${k}" ${k === t.style ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
         <label class="field"><span>ข้อความหลัก</span><input name="headline" class="input" maxlength="80" value="${esc(t.headline)}"></label>
         <label class="field"><span>ข้อความรอง</span><input name="subtitle" class="input" maxlength="120" value="${esc(t.subtitle)}"></label>
@@ -1707,7 +1796,7 @@
       const result = await dialog({
         title: `Playlist — ${inp.name}`,
         body: `
-          <label class="field"><span>ชื่อ Input</span><input name="name" class="input" maxlength="40" value="${esc(inp.name)}"></label>
+          <label class="field"><span>ชื่อแหล่งภาพ</span><input name="name" class="input" maxlength="40" value="${esc(inp.name)}"></label>
           <div class="pl-list">${rows()}</div>
           <button type="button" class="btn" data-pl="add">${icon('plus')}เพิ่มไฟล์ (วิดีโอ / รูป)</button>
           <div class="field-row">
@@ -1779,7 +1868,7 @@
     const result = await dialog({
       title: 'นาฬิกานับถอยหลัง / จับเวลา',
       body: `
-        <label class="field"><span>ชื่อ Input</span><input name="name" class="input" maxlength="40" value="${esc(inp.name)}"></label>
+        <label class="field"><span>ชื่อแหล่งภาพ</span><input name="name" class="input" maxlength="40" value="${esc(inp.name)}"></label>
         <label class="field"><span>โหมด</span><select name="mode" class="select">${Object.entries(TIMER_MODES).map(([k, v]) => `<option value="${k}" ${k === t.mode ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
         <div class="field-row">
           <label class="field"><span>ระยะเวลา (นาที:วินาที)</span><input name="duration" class="input mono" value="${durText(t.duration)}"></label>
@@ -1814,7 +1903,7 @@
     const result = await dialog({
       title: 'ป้ายคะแนน',
       body: `
-        <label class="field"><span>ชื่อ Input</span><input name="name" class="input" maxlength="40" value="${esc(inp.name)}"></label>
+        <label class="field"><span>ชื่อแหล่งภาพ</span><input name="name" class="input" maxlength="40" value="${esc(inp.name)}"></label>
         <div class="field-row">
           <label class="field"><span>ทีม A</span><input name="teamA" class="input" maxlength="24" value="${esc(sc.teamA)}"></label>
           <label class="field"><span>คะแนน</span><input name="scoreA" class="input mono" type="number" min="0" value="${+sc.scoreA || 0}"></label>
@@ -1859,7 +1948,7 @@
     const result = await dialog({
       title: 'ตัววิ่งข่าว (Ticker)',
       body: `
-        <label class="field"><span>ชื่อ Input</span><input name="name" class="input" maxlength="40" value="${esc(inp.name)}"></label>
+        <label class="field"><span>ชื่อแหล่งภาพ</span><input name="name" class="input" maxlength="40" value="${esc(inp.name)}"></label>
         <div class="field-row">
           <label class="field"><span>ป้ายหัว (เว้นว่างได้)</span><input name="label" class="input" maxlength="24" value="${esc(tk.label)}"></label>
           <label class="field"><span>ความเร็ว</span><select name="speed" class="select">${[[60, 'ช้า'], [90, 'ปกติ'], [130, 'เร็ว'], [180, 'เร็วมาก']].map(([v, l]) => `<option value="${v}" ${+tk.speed === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
@@ -1962,7 +2051,7 @@
       }
       sel.innerHTML = inputs.length
         ? inputs.map((i, n) => `<option value="${i.id}" ${i.id === o.sourceId ? 'selected' : ''}>${n + 1}. ${esc(i.name)}</option>`).join('')
-        : '<option value="">— ไม่มี Input —</option>';
+        : '<option value="">— ไม่มีแหล่งภาพ —</option>';
     }
     refreshOverlaySelects();
   }
@@ -2168,7 +2257,13 @@
       obj.lastAt = now;
       obj.level = db > obj.level ? db : Math.max(db, obj.level - 26 * dt);
       if (db >= obj.peak || now - obj.peakAt > 1500) { obj.peak = db; obj.peakAt = now; }
-      if (obj.ui) {
+      if (obj.ui && obj.ui.hbar) {
+        obj.ui.hbar.style.width = `${meterPct(obj.level) * 100}%`;
+        obj.ui.hbar.classList.toggle('is-hot', obj.level > -6);
+        obj.ui.hpeak.style.left = `${meterPct(obj.peak) * 100}%`;
+        obj.ui.hpeak.style.opacity = obj.peak > -59 ? '1' : '0';
+        obj.ui.hpeak.style.background = obj.peak > -1 ? '#ef4444' : '#fff';
+      } else if (obj.ui) {
         obj.ui.cover.style.height = `${(1 - meterPct(obj.level)) * 100}%`;
         obj.ui.peak.style.bottom = `${meterPct(obj.peak) * 100}%`;
         obj.ui.peak.style.opacity = obj.peak > -59 ? (obj.peak > -1 ? '1' : '.75') : '0';
@@ -2200,6 +2295,7 @@
   }
 
   function buildStrip(ch, isMaster) {
+    if (phoneLayout()) return buildPhoneStrip(ch, isMaster);
     const el = document.createElement('div');
     el.className = 'strip' + (isMaster ? ' master' : '');
     el.innerHTML = `
@@ -2228,6 +2324,45 @@
         isMaster ? audio.applyMaster() : audio.applyGain(ch);
       }
     });
+    bindStripButtons(el, ch, isMaster);
+    return el;
+  }
+
+  // มือถือ: ช่องเสียงเป็นแถวแนวนอน — แถบเลื่อนยาวเต็มจอ ปุ่มปิดเสียงใหญ่ ไฟระดับเสียงอยู่หลังแถบเลื่อน
+  function phoneLayout() { return matchMedia('(max-width: 760px), (pointer: coarse) and (orientation: landscape) and (max-height: 500px)').matches; }
+  function buildPhoneStrip(ch, isMaster) {
+    const el = document.createElement('div');
+    el.className = 'strip hstrip' + (isMaster ? ' master' : '');
+    el.innerHTML = `
+      <div class="hs-head"><b class="strip-name" title="${esc(ch.name)}">${esc(ch.name)}</b><span class="strip-db mono">${fmtDb(ch.db)} dB</span>
+        <span class="hs-btns">
+          ${isMaster ? `<button class="chip-btn lim ${ch.limiter ? 'is-on' : ''}" title="ลิมิตเตอร์ — กันเสียงแตก">LIM</button>` : ''}
+          ${!isMaster && ch.inputId ? `<button class="chip-btn afv ${ch.afv ? 'is-on' : ''}" title="เปิดเสียงเฉพาะตอนภาพนี้อยู่ใน Program">AFV</button>` : ''}
+          ${!isMaster ? `<button class="chip-btn fx ${fxActive(ch) ? 'is-on' : ''}" title="ดีเลย์ / EQ / คอมเพรสเซอร์">FX</button>` : ''}
+          ${!isMaster && ch.kind === 'mic' ? '<button class="chip-btn rm" title="ลบช่องเสียงนี้">✕</button>' : ''}
+        </span></div>
+      <div class="hs-row">
+        <button class="chip-btn mute hs-mute ${ch.muted ? 'is-on' : ''}" title="ปิดเสียง">${icon('mic')}<span>ปิดเสียง</span></button>
+        <div class="hs-fader"><div class="hs-meter"><div class="hs-level"></div><div class="hs-peak"></div></div>
+          <input type="range" class="hs-range" min="0" max="100" step="0.5" value="${(dbToPos(ch.db) * 100).toFixed(1)}" aria-label="ระดับเสียง ${esc(ch.name)}"></div>
+      </div>`;
+    ch.ui = { hbar: el.querySelector('.hs-level'), hpeak: el.querySelector('.hs-peak'), lim: el.querySelector('.lim'), fxBtn: el.querySelector('.fx') };
+    const dbEl = el.querySelector('.strip-db');
+    el.querySelector('.hs-range').addEventListener('input', e => {
+      ch.db = posToDb(+e.target.value / 100);
+      dbEl.textContent = `${fmtDb(ch.db)} dB`;
+      isMaster ? audio.applyMaster() : audio.applyGain(ch);
+    });
+    // แตะสองครั้งที่แถบเลื่อน = กลับไป 0 dB
+    el.querySelector('.hs-range').addEventListener('dblclick', e => {
+      e.target.value = 75;
+      e.target.dispatchEvent(new Event('input'));
+    });
+    bindStripButtons(el, ch, isMaster);
+    return el;
+  }
+
+  function bindStripButtons(el, ch, isMaster) {
     el.querySelector('.mute').addEventListener('click', e => {
       audio.ensure();
       ch.muted = !ch.muted;
@@ -2249,7 +2384,6 @@
     el.querySelector('.rm')?.addEventListener('click', async () => {
       if (await confirmDialog(`ลบช่องเสียง “${ch.name}”`, 'ไมค์นี้จะถูกปิดและนำออกจากมิกเซอร์', 'ลบ')) audio.remove(ch);
     });
-    return el;
   }
 
   const fxActive = ch => ch.fx && (ch.fx.delayMs || ch.fx.low || ch.fx.mid || ch.fx.high || ch.fx.comp);
@@ -2553,7 +2687,7 @@
     const result = await dialog({
       title: 'เพิ่มสัญญาณ SRT',
       body: `
-        <label class="field"><span>ชื่อ Input</span><input name="name" class="input" maxlength="32" value="SRT ${n}"></label>
+        <label class="field"><span>ชื่อแหล่งภาพ</span><input name="name" class="input" maxlength="32" value="SRT ${n}"></label>
         <div class="field"><span>วิธีรับสัญญาณ</span>
           <div class="seg srt-mode"><button type="button" data-value="listener" class="is-active">รอรับ (ผู้ส่งเชื่อมต่อเข้ามา)</button><button type="button" data-value="caller">ดึงจาก SRT Server</button></div>
         </div>
@@ -2571,7 +2705,7 @@
             ${SRT_LATENCIES.map(ms => `<option value="${ms}" ${ms === 500 ? 'selected' : ''}>${ms} ms</option>`).join('')}
           </select></label>
         </div>`,
-      actions: [{ label: 'ยกเลิก' }, { label: 'เพิ่ม Input', primary: true, value: 'add' }],
+      actions: [{ label: 'ยกเลิก' }, { label: 'เพิ่มแหล่งภาพ', primary: true, value: 'add' }],
       onOpen(modal) {
         let mode = 'listener';
         const seg = $('.srt-mode', modal);
@@ -2601,7 +2735,7 @@
     if (cfg.passphrase && (cfg.passphrase.length < 10 || cfg.passphrase.length > 64)) { toast('รหัสผ่าน SRT ต้องยาว 10–64 ตัวอักษร', 'warn'); return; }
     if (mode === 'caller' && !SRT_RE.test(cfg.url)) { toast('SRT URL ต้องอยู่ในรูปแบบ srt://host:port', 'warn'); return; }
     if (mode === 'listener' && inputs.some(i => i.type === 'srt' && i.srt.mode === 'listener' && i.srt.port === cfg.port)) {
-      toast(`พอร์ต ${cfg.port} ถูกใช้โดย Input อื่นแล้ว`, 'warn'); return;
+      toast(`พอร์ต ${cfg.port} ถูกใช้โดยแหล่งภาพอื่นแล้ว`, 'warn'); return;
     }
     const inp = createSrtInput(cfg, f.name.value.trim() || 'SRT');
     saveSrtInputs();
@@ -2725,7 +2859,7 @@
     dialog({
       title: `ตั้งค่าผู้ส่งสำหรับ “${inp.name}”`,
       body: `
-        <p class="modal-text">ใส่ค่าด้านล่างในโปรแกรม/อุปกรณ์ที่จะส่งภาพเข้ามา แล้วกดเริ่มส่ง ภาพจะขึ้นใน Input นี้อัตโนมัติ</p>
+        <p class="modal-text">ใส่ค่าด้านล่างในโปรแกรม/อุปกรณ์ที่จะส่งภาพเข้ามา แล้วกดเริ่มส่ง ภาพจะขึ้นในแหล่งภาพนี้อัตโนมัติ</p>
         <label class="field"><span>OBS → ตั้งค่า → สตรีม → บริการ “กำหนดเอง” → เซิร์ฟเวอร์</span>
           <div class="link-row"><input class="input" readonly value="${esc(url)}"><button type="button" class="btn btn-icon srt-copy" title="คัดลอก">${icon('copy')}</button></div></label>
         <div class="kbd-grid">
@@ -2779,7 +2913,7 @@
       title: 'เชิญแขกรับเชิญทางไกล',
       body: `
         <label class="field"><span>ชื่อแขก (แสดงบนการ์ดและหน้าของแขก)</span><input name="name" class="input" maxlength="32" value="GUEST ${n}"></label>
-        <p class="note">แขกเปิดลิงก์จากมือถือหรือคอมพิวเตอร์ (ไม่ต้องติดตั้งแอป) ส่งกล้อง+ไมค์เข้ามาเป็น Input และเห็น/ได้ยินรายการจากสตูดิโอ
+        <p class="note">แขกเปิดลิงก์จากมือถือหรือคอมพิวเตอร์ (ไม่ต้องติดตั้งแอป) ส่งกล้อง+ไมค์เข้ามาเป็นแหล่งภาพและเห็น/ได้ยินรายการจากสตูดิโอ
           โดยไม่ได้ยินเสียงตัวเองย้อนกลับ (mix-minus) · แต่ละลิงก์ใช้ได้กับแขกคนเดียว</p>`,
       actions: [{ label: 'ยกเลิก' }, { label: 'สร้างลิงก์เชิญ', primary: true, value: 'add' }]
     });
@@ -2825,7 +2959,7 @@
     await dialog({
       title: 'เชื่อมต่อกล้องมือถือ',
       body: `
-        <p class="modal-text">ใช้มือถือหรือแท็บเล็ตสแกน QR Code แล้วกดอนุญาตให้ใช้กล้อง ภาพและเสียงจะเข้ามาเป็น Input ใหม่อัตโนมัติ (เชื่อมต่อได้หลายเครื่อง)</p>
+        <p class="modal-text">ใช้มือถือหรือแท็บเล็ตสแกน QR Code แล้วกดอนุญาตให้ใช้กล้อง ภาพและเสียงจะเข้ามาเป็นแหล่งภาพใหม่อัตโนมัติ (เชื่อมต่อได้หลายเครื่อง)</p>
         ${insecure ? '<p class="note warn">หน้านี้ไม่ได้เปิดผ่าน HTTPS มือถือจะไม่อนุญาตให้ใช้กล้อง — เปิดผ่าน GitHub Pages หรือเว็บเซิร์ฟเวอร์ HTTPS</p>' : ''}
         ${ready ? `
           <div class="qr-box" id="qr-target"></div>
@@ -3619,7 +3753,7 @@
     else add('ok', 'อินเทอร์เน็ต', `ต้องการขาขึ้นราว ${need.toFixed(1)} Mbps สำหรับ ${Math.max(1, list.length)} ปลายทาง`);
     if (battery) add(battery.charging || battery.level >= 0.5 ? 'ok' : 'warn', `แบตเตอรี่ ${batteryText()}`, battery.charging ? 'เสียบสายชาร์จอยู่' : 'แนะนำเสียบสายชาร์จระหว่างไลฟ์');
     const hasCam = inputs.some(i => ['camera', 'wireless', 'guest'].includes(i.type));
-    add(hasCam ? 'ok' : 'warn', 'กล้องและไมค์', hasCam ? `${inputs.filter(i => ['camera', 'wireless', 'guest'].includes(i.type)).length} กล้อง · ${audio.channels.length} ช่องเสียง` : 'ยังไม่มีกล้อง — เพิ่มจากปุ่ม “เพิ่ม Input”');
+    add(hasCam ? 'ok' : 'warn', 'กล้องและไมค์', hasCam ? `${inputs.filter(i => ['camera', 'wireless', 'guest'].includes(i.type)).length} กล้อง · ${audio.channels.length} ช่องเสียง` : 'ยังไม่มีกล้อง — เพิ่มจากปุ่ม “เพิ่มแหล่งภาพ”');
     if (desktop && desktop.info) add('ok', 'ตัวเข้ารหัส', useVideoCopy() ? 'ชิปของเครื่อง (ไม่เข้ารหัสซ้ำ)' : desktop.info.encoder === 'libx264' ? 'CPU (libx264)' : 'ชิปของเครื่อง (MediaCodec)');
     try {
       const est = await navigator.storage?.estimate?.();
@@ -3851,7 +3985,7 @@
       <p class="note">${gw ? `Gateway ในแอปพร้อม · ${esc(gw.url.replace(/\?.*$/, ''))}${gw.srt ? ' · ส่ง SRT ได้' : ''}` : `เปิด Gateway ในแอปไม่ได้: ${esc(info.gatewayError || desktop.error || 'ไม่ทราบสาเหตุ')}`}</p>
       <p class="note ${ff ? '' : 'warn'}">${ff ? `ffmpeg: ${esc(ff.version)} · ตัวเข้ารหัส: ${esc(ENCODER_LABEL[info.encoder] || info.encoder || 'libx264')}${info.encoderNote ? `<br><small>ใช้ตัวเข้ารหัสฮาร์ดแวร์ไม่ได้: ${esc(info.encoderNote)}</small>` : ''}` : `ไม่พบ ffmpeg — ติดตั้งด้วย ${install} แล้วเปิดแอปใหม่`}</p>
       ${desktop.mobile ? '<p class="note warn">ระหว่างไลฟ์ให้เปิดแอปค้างไว้บนหน้าจอและเสียบสายชาร์จ — ถ้าสลับไปแอปอื่นหรือปิดจอ Android จะหยุดกล้องและการสตรีม</p>' : ''}
-      <p class="note">อินเทอร์เน็ตขาขึ้นของเครื่องนี้ต้องพอสำหรับทุกปลายทางรวมกัน (ffmpeg ส่งแยกทีละปลายทาง) · การรับสัญญาณ SRT (Input) และ TURN สำหรับมือถือยังต้องใช้ Gateway บนเซิร์ฟเวอร์</p>`;
+      <p class="note">อินเทอร์เน็ตขาขึ้นของเครื่องนี้ต้องพอสำหรับทุกปลายทางรวมกัน (ffmpeg ส่งแยกทีละปลายทาง) · การรับสัญญาณ SRT เข้ามา และ TURN สำหรับมือถือยังต้องใช้ Gateway บนเซิร์ฟเวอร์</p>`;
   }
 
   function openSettings(tab = 'output') {
@@ -3891,10 +4025,6 @@
           <p class="note warn res-4k-note" ${RESOLUTIONS[settings.resolution][1] >= 1440 ? '' : 'hidden'}>ความละเอียด 1440p/4K ต้องใช้คอมพิวเตอร์แรง (แนะนำ CPU 8 คอร์ขึ้นไปหรือมีการ์ดจอแยก) และอินเทอร์เน็ตขาขึ้นอย่างน้อย 1.5 เท่าของบิตเรต · Stream Gateway ควรมี 8 vCPU ขึ้นไป · Facebook และ Twitch รับสูงสุด 1080p ส่วน YouTube รับได้ถึง 4K</p>
         </div>
         <div class="modal-pane" data-mpane="stream">
-          ${desktop ? desktopGatewayHtml() : ''}
-          <label class="field gateway-remote"><span>${desktop ? 'Stream Gateway บนเซิร์ฟเวอร์ (WebSocket)' : 'Stream Gateway (WebSocket)'}</span>
-            <input name="gateway" class="input mono" placeholder="wss://gateway.example.com:8080/?token=..." value="${esc(settings.gateway)}"></label>
-          <p class="note" ${desktop ? 'hidden' : ''}>เบราว์เซอร์ส่ง RTMP เองไม่ได้ ต้องมี Gateway (โฟลเดอร์ <code>server/</code> ในโปรเจกต์) คอยแปลงสัญญาณ — หน้า HTTPS ต้องใช้ <code>wss://</code> · ภาพถูกส่งขึ้น Gateway ครั้งเดียวแล้วกระจายไปทุกปลายทาง จึงใช้อินเทอร์เน็ตขาขึ้นเท่ากับสตรีมช่องเดียว</p>
           ${streamer.ws ? '<p class="note warn">กำลังสตรีมอยู่ — การแก้ไขปลายทางจะมีผลเมื่อหยุดแล้วเริ่มปลายทางนั้นใหม่ในแผง STREAM</p>' : ''}
           <div class="field">
             <span>ปลายทาง (สูงสุด ${MAX_DESTINATIONS} ช่อง) — ช่องที่ติ๊กไว้จะเริ่มพร้อมกันเมื่อกด “เริ่มทั้งหมด” ส่วนช่องอื่นเริ่มทีละช่องได้ในแผง STREAM</span>
@@ -3905,6 +4035,12 @@
             <label class="check"><input type="checkbox" class="dest-showkeys"> แสดง Stream Key / รหัสผ่าน</label>
             <label class="check"><input type="checkbox" name="rememberKey" ${settings.rememberKey ? 'checked' : ''}> จำ Stream Key และรหัสผ่าน SRT ไว้ในเบราว์เซอร์เครื่องนี้</label>
           </div>
+          <details class="adv" ${gatewayProblem() ? 'open' : ''}><summary>ขั้นสูง — Stream Gateway (ตัวกลางส่งสัญญาณ)${gatewayProblem() ? ' · ต้องตั้งค่า' : ''}</summary>
+          ${desktop ? desktopGatewayHtml() : ''}
+          <label class="field gateway-remote"><span>${desktop ? 'Stream Gateway บนเซิร์ฟเวอร์ (WebSocket)' : 'Stream Gateway (WebSocket)'}</span>
+            <input name="gateway" class="input mono" placeholder="wss://gateway.example.com:8080/?token=..." value="${esc(settings.gateway)}"></label>
+          <p class="note" ${desktop ? 'hidden' : ''}>เบราว์เซอร์ส่ง RTMP เองไม่ได้ ต้องมี Gateway (โฟลเดอร์ <code>server/</code> ในโปรเจกต์) คอยแปลงสัญญาณ — หน้า HTTPS ต้องใช้ <code>wss://</code> · ภาพถูกส่งขึ้น Gateway ครั้งเดียวแล้วกระจายไปทุกปลายทาง จึงใช้อินเทอร์เน็ตขาขึ้นเท่ากับสตรีมช่องเดียว</p>
+          </details>
         </div>`,
       actions: [{ label: 'ยกเลิก' }, { label: 'บันทึก', primary: true, value: 'save' }],
       onOpen(modal) {
@@ -3963,7 +4099,7 @@
               </select>
             </div>
           </div>`;
-        const syncAdd = () => { addBtn.disabled = list.children.length >= MAX_DESTINATIONS; };
+        const syncAdd = () => { addBtn.disabled = $$('.dest-row', list).length >= MAX_DESTINATIONS; };
         list.innerHTML = settings.destinations.map(rowHtml).join('');
         syncAdd();
         addBtn.addEventListener('click', () => {
@@ -3975,8 +4111,19 @@
           syncAdd();
         });
         list.addEventListener('click', e => {
+          // ลบปลายทาง: เหลือแถบ "เลิกทำ" ไว้แทน จนกว่าจะปิดหน้าต่าง
           const rm = e.target.closest('.dest-remove');
-          if (rm) { rm.closest('.dest-row').remove(); syncAdd(); }
+          if (rm) {
+            const row = rm.closest('.dest-row');
+            const ph = document.createElement('div');
+            ph.className = 'dest-removed';
+            ph.innerHTML = `<span>ลบ “${esc(destLabel(readRow(row)) || 'ปลายทาง')}” แล้ว</span><button type="button" class="btn btn-sm dest-undo">เลิกทำ</button>`;
+            ph.row = row;
+            row.replaceWith(ph);
+            syncAdd();
+          }
+          const undo = e.target.closest('.dest-undo');
+          if (undo) { const ph = undo.closest('.dest-removed'); ph.replaceWith(ph.row); syncAdd(); }
           const paste = e.target.closest('.dest-paste');
           if (paste) pasteKey(paste.closest('.dest-row'));
           const test = e.target.closest('.dest-test-btn');
@@ -4283,33 +4430,42 @@
   }
 
   /* ---------------------------------------------------------- add menu */
+  // เพิ่มแหล่งภาพ: แผ่นการ์ดไอคอน + คำอธิบายสั้น จัดเป็นหมวด (มือถือเลื่อนขึ้นจากล่าง)
+  const ADD_GROUPS = () => [
+    ['กล้องและหน้าจอ', [
+      ['video', 'กล้อง / แคปเจอร์การ์ด', 'เว็บแคม กล้องของเครื่อง หรือการ์ดจับภาพ HDMI', openCameraDialog],
+      ['monitor', 'แชร์หน้าจอ', 'หน้าจอคอม หน้าต่างโปรแกรม หรือแท็บเบราว์เซอร์', addScreen]]],
+    ['ไฟล์', [
+      ['film', 'ไฟล์วิดีโอ', 'MP4 / WebM จากเครื่องนี้', () => pickFiles('video/*', addVideoFiles)],
+      ['repeat', 'Playlist', 'วิดีโอและรูปหลายไฟล์เล่นต่อกัน', addPlaylist],
+      ['image', 'ภาพนิ่ง / โลโก้', 'PNG พื้นโปร่งใสใช้เป็นโลโก้มุมจอได้', () => pickFiles('image/*', addImageFiles)]]],
+    ['เชื่อมต่อจากที่อื่น', [
+      ['phone', 'กล้องมือถือไร้สาย', 'สแกน QR ด้วยมือถืออีกเครื่อง แล้วใช้เป็นกล้อง', showWirelessDialog],
+      ['headphones', 'แขกรับเชิญทางไกล', 'ส่งลิงก์ให้แขก คุยกันได้ทั้งภาพและเสียง', addGuest],
+      ['broadcast', 'สัญญาณ SRT', 'รับภาพจาก OBS / vMix / encoder', openSrtInputDialog]]],
+    ['กราฟิกและข้อความ', [
+      ['type', 'Title กราฟิกข้อความ', 'ป้ายชื่อ/ข้อความบนพื้นโปร่งใส', addTitleInput],
+      ['clock', 'นาฬิกานับถอยหลัง / จับเวลา', 'นับถอยหลังก่อนเริ่ม หรือจับเวลาการแข่ง', addTimerInput],
+      ['grid', 'ป้ายคะแนน', 'คะแนนสองทีม พร้อมเวลาแข่ง', addScoreInput],
+      ['type', 'ตัววิ่งข่าว', 'ข้อความวิ่งด้านล่างจอ', addTickerInput]]],
+    ['ภาพพื้นฐาน', [
+      ['type', 'Slate ข้อความ', 'จอข้อความ เช่น “เริ่มเร็ว ๆ นี้”', () => addGenerator('slate')],
+      ['clock', 'นาฬิกา', 'เวลาปัจจุบันเต็มจอ', () => addGenerator('clock')],
+      ['bars', 'Color Bars', 'แถบสีสำหรับทดสอบภาพ', () => addGenerator('bars')],
+      ['square', 'Black', 'จอดำ', () => addGenerator('black')]]]
+  ];
   function openAddMenu(anchor) {
     closeMenu();
-    const items = [
-      ['video', 'กล้อง / แคปเจอร์การ์ด', openCameraDialog],
-      ['monitor', 'แชร์หน้าจอ', addScreen],
-      ['film', 'ไฟล์วิดีโอ', () => pickFiles('video/*', addVideoFiles)],
-      ['repeat', 'Playlist (วิดีโอ/รูปเล่นต่อกัน)', addPlaylist],
-      ['image', 'ภาพนิ่ง / โลโก้', () => pickFiles('image/*', addImageFiles)],
-      ['phone', 'กล้องมือถือไร้สาย', showWirelessDialog],
-      ['headphones', 'แขกรับเชิญทางไกล (ภาพ+เสียงไป-กลับ)', addGuest],
-      ['broadcast', 'สัญญาณ SRT (OBS / vMix / encoder)', openSrtInputDialog],
-      null,
-      ['bars', 'Color Bars', () => addGenerator('bars')],
-      ['type', 'Slate ข้อความ', () => addGenerator('slate')],
-      ['clock', 'นาฬิกา', () => addGenerator('clock')],
-      ['type', 'Title กราฟิกข้อความ (พื้นโปร่งใส)', addTitleInput],
-      ['clock', 'นาฬิกานับถอยหลัง / จับเวลา', addTimerInput],
-      ['grid', 'ป้ายคะแนน (Scoreboard)', addScoreInput],
-      ['type', 'ตัววิ่งข่าว (Ticker)', addTickerInput],
-      ['square', 'Black', () => addGenerator('black')]
-    ];
+    const groups = ADD_GROUPS();
+    const items = groups.flatMap(g => g[1]);
+    let n = 0;
     const menu = document.createElement('div');
-    menu.className = 'menu';
+    menu.className = 'menu add-sheet';
     menu.setAttribute('role', 'menu');
-    menu.innerHTML = '<div class="menu-label">แหล่งภาพ</div>' + items.map((it, i) => it
-      ? `<button role="menuitem" data-i="${i}">${icon(it[0])}${esc(it[1])}</button>`
-      : '<div class="menu-sep"></div><div class="menu-label">แหล่งภาพในตัว</div>').join('');
+    menu.setAttribute('aria-label', 'เพิ่มแหล่งภาพ');
+    menu.innerHTML = '<div class="add-sheet-title">เพิ่มแหล่งภาพ</div>' + groups.map(([label, list]) => `
+      <div class="menu-label">${esc(label)}</div>
+      <div class="add-grid">${list.map(it => `<button role="menuitem" class="add-tile" data-i="${n++}">${icon(it[0])}<span><b>${esc(it[1])}</b><small>${esc(it[2])}</small></span></button>`).join('')}</div>`).join('');
     document.body.appendChild(menu);
     const r = anchor.getBoundingClientRect();
     const mw = menu.offsetWidth, mh = menu.offsetHeight;
@@ -4320,7 +4476,7 @@
       if (!b) return;
       closeMenu();
       audio.ensure();
-      items[+b.dataset.i][2]();
+      items[+b.dataset.i][3]();
     });
     menu.querySelector('button').focus({ preventScroll: true });
     setTimeout(() => document.addEventListener('pointerdown', outsideMenu, true));
@@ -4664,7 +4820,7 @@
       // แจ้งหลังโหลดไฟล์/เปิดกล้องเสร็จ (รอไม่เกิน 5 วินาที) จะได้นับ Input ที่ต้องเชื่อมต่อใหม่ได้ถูกต้อง
       Promise.race([Promise.allSettled(loading), new Promise(r => setTimeout(r, 5000))]).then(() => {
         const missing = inputs.filter(i => i.missing && i.type !== 'wireless' && i.type !== 'guest').length;
-        toast(`เปิดโชว์ “${this.name}” แล้ว — ${inputs.length} Input${missing ? ` (รอเชื่อมต่อ ${missing} — กดปุ่ม 🔗 บนการ์ด)` : ''}`, missing ? 'warn' : 'success', 5000);
+        toast(`เปิดโชว์ “${this.name}” แล้ว — ${inputs.length} แหล่งภาพ${missing ? ` (รอเชื่อมต่อ ${missing} — กดปุ่ม 🔗 บนการ์ด)` : ''}`, missing ? 'warn' : 'success', 5000);
       });
       return waitingMics;
     },
@@ -4770,7 +4926,7 @@
       try { data = JSON.parse(await file.text()); } catch (e) { toast('ไฟล์นี้ไม่ใช่ไฟล์โชว์ของ WebMix', 'error'); return; }
       if (!data || data.app !== 'webmix' || !Array.isArray(data.inputs)) { toast('ไฟล์นี้ไม่ใช่ไฟล์โชว์ของ WebMix', 'error'); return; }
       const ok = await confirmDialog(`เปิดโชว์ “${String(data.name || file.name).slice(0, 60)}”`,
-        `${this.busyWarning() || 'โชว์ปัจจุบันจะถูกแทนที่ (ถ้ายังไม่ได้บันทึกเป็นไฟล์ ให้กดยกเลิกแล้วบันทึกก่อน)'} · ${data.inputs.length} Input`, 'เปิดโชว์');
+        `${this.busyWarning() || 'โชว์ปัจจุบันจะถูกแทนที่ (ถ้ายังไม่ได้บันทึกเป็นไฟล์ ให้กดยกเลิกแล้วบันทึกก่อน)'} · ${data.inputs.length} แหล่งภาพ`, 'เปิดโชว์');
       if (!ok) return;
       this.apply(data);
     },
@@ -4801,7 +4957,7 @@
 
     async startNew() {
       const ok = await confirmDialog('เริ่มโชว์ใหม่',
-        `${this.busyWarning() || 'Input, มิกเซอร์และกราฟิกทั้งหมดจะถูกล้างเป็นค่าเริ่มต้น'} (ค่าเอาต์พุตและปลายทางการสตรีมยังอยู่เหมือนเดิม)`, 'เริ่มใหม่');
+        `${this.busyWarning() || 'แหล่งภาพ มิกเซอร์ และกราฟิกทั้งหมดจะถูกล้างเป็นค่าเริ่มต้น'} (ค่าเอาต์พุตและปลายทางการสตรีมยังอยู่เหมือนเดิม)`, 'เริ่มใหม่');
       if (!ok) return;
       this.ready = false;
       store.set('show', null);
@@ -4819,7 +4975,7 @@
       title: 'โชว์',
       body: `
         <label class="field"><span>ชื่อโชว์</span><input name="showname" class="input" maxlength="60" value="${esc(show.name)}"></label>
-        <p class="note">บันทึกอัตโนมัติในเบราว์เซอร์นี้แล้ว (ล่าสุด ${ago}) — รีเฟรชหรือปิดหน้าแล้วเปิดใหม่ Input, มิกเซอร์ และกราฟิกจะกลับมาครบ
+        <p class="note">บันทึกอัตโนมัติในเบราว์เซอร์นี้แล้ว (ล่าสุด ${ago}) — รีเฟรชหรือปิดหน้าแล้วเปิดใหม่ แหล่งภาพ มิกเซอร์ และกราฟิกจะกลับมาครบ
           กล้อง/ไฟล์ที่ต้องเชื่อมใหม่จะมีปุ่ม <b>🔗</b> บนการ์ด</p>
         <div class="show-actions">
           <button type="button" class="btn" data-show="export">${icon('download')}บันทึกเป็นไฟล์</button>
@@ -4925,6 +5081,10 @@
     setInterval(tickClock, 1000);
     requestAnimationFrame(rafLoop);
     setTimeout(() => { if (shouldOnboard()) openOnboarding(); }, 700);
+    $('#m-gfx').addEventListener('click', quickGfxTap);
+    // หมุนจอ/ย่อหน้าต่างข้ามขนาดมือถือ → สร้างช่องเสียงใหม่ให้ตรงรูปแบบ (แนวตั้ง/แนวนอน)
+    let wasPhone = phoneLayout();
+    addEventListener('resize', () => { if (phoneLayout() !== wasPhone) { wasPhone = phoneLayout(); renderMixer(); } });
 
     // สำหรับดีบัก/ทดสอบอัตโนมัติ
     window.webmix = { playlist, dataSources, timerControl, multiview, renderer, gpu, setRenderer: v => { settings.renderer = v; renderer.resolve(); updateStatus(); }, show, ovl, setChannel, toggleInputOverlay, useRecFolder: dir => { recFolder = dir; }, inputs, state, settings, overlays, audio, rec, streamer, wireless, cut, autoTransition, setPreview, tr, ftb };
