@@ -3758,7 +3758,8 @@
   }
 
   /* ---- มือถือ: จอแคบใช้เลย์เอาต์แบบแท็บ (CSS @media max-width 760px) ---- */
-  const phoneQuery = matchMedia('(max-width: 760px)');
+  // มือถือแนวนอน (จอเตี้ย + นิ้วสัมผัส) ใช้หน้าจอไลฟ์/การยืนยันแบบมือถือเหมือนกัน
+  const phoneQuery = matchMedia('(max-width: 760px), (pointer: coarse) and (orientation: landscape) and (max-height: 500px)');
   const isPhoneUI = () => phoneQuery.matches;
   function setMobileView(view) {
     document.documentElement.dataset.mview = view;

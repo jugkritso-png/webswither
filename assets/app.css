@@ -1198,3 +1198,74 @@ kbd {
   .modal.m-sheet .modal-foot .btn { width: 100%; min-height: 50px; margin: 0; justify-content: center; }
   .modal.m-live .modal-foot { flex-direction: column; }
 }
+
+/* ---------- มือถือแนวนอน (แบบ #5): Program ใหญ่ซ้าย (Preview มุมจอ) · ขวา: แหล่งภาพ → CUT/AUTO → REC/ไลฟ์
+   แถบเมนูย้ายไปขอบซ้าย · หน้าเสียง = มิกเซอร์เต็มจอ · หน้ากราฟิก = Program ซ้าย + Overlay ขวา */
+@media (pointer: coarse) and (orientation: landscape) and (max-height: 500px) {
+  :root { --m-rail: calc(64px + env(safe-area-inset-left)); --m-col: 300px; }
+  html, body { overflow-x: hidden; }
+  .studio { padding: 8px calc(8px + env(safe-area-inset-right)) 8px calc(var(--m-rail) + 8px); gap: 8px; min-height: 100dvh; height: auto; }
+  .statusbar, .topbar .brand, .topbar-center { display: none; }
+  .topbar { display: contents; }
+  .topbar-actions > * { display: none; }
+  .topbar-actions { position: fixed; z-index: 40; left: auto; right: calc(8px + env(safe-area-inset-right)); bottom: 8px; width: var(--m-col);
+    display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 0; background: none; border: 0; }
+  .topbar-actions [data-action=settings] { display: none; }
+  .topbar-actions .btn-rec, .topbar-actions .btn-stream { display: flex; height: 48px; border-radius: 12px; justify-content: center; font-size: 14px; }
+  .topbar-actions .btn-stream { order: 2; }
+
+  /* แถบเมนูขอบซ้าย */
+  .m-tabs { display: flex; flex-direction: column; justify-content: center; position: fixed; z-index: 41; top: 0; bottom: 0; left: 0; width: var(--m-rail);
+    padding: 4px 0 4px env(safe-area-inset-left); background: #0b0d12; border-right: 1px solid var(--line); }
+  .m-tabs button { height: 64px; border: 0; background: none; color: var(--muted); display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 3px; font: 600 10.5px var(--font); cursor: pointer; }
+  .m-tabs button .i { width: 22px; height: 22px; }
+  .m-tabs button[aria-current=page] { color: #7fa6ff; }
+
+  /* หน้าสวิตช์ */
+  html[data-mview=switch] .overlays-panel, html[data-mview=switch] .audio-panel { display: none; }
+  /* Program กับ Preview อยู่ช่องกริดเดียวกัน: ช่องมีขนาดเท่า Program → Preview ติดมุมขวาบนของ Program พอดี */
+  html[data-mview=switch] .stage { position: fixed; top: 0; bottom: 0; left: var(--m-rail); right: calc(var(--m-col) + 16px + env(safe-area-inset-right));
+    display: grid; grid-template-columns: none; grid-template-areas: "mon"; place-content: center; padding: 8px; margin: 0; }
+  html[data-mview=switch] .stage .pgm { grid-area: mon; width: min(calc(100vw - var(--m-rail) - var(--m-col) - 40px), calc((100dvh - 64px) * 16 / 9)); margin: 0; }
+  .monitor-panel.pgm .monitor { border: 2px solid var(--pgm); }
+  html[data-mview=switch] .stage .pvw { grid-area: mon; z-index: 2; align-self: start; justify-self: end; width: 30%; margin: 50px 10px 0 0; padding: 0;
+    box-shadow: 0 4px 18px rgba(0, 0, 0, .6); }
+  html[data-mview=switch] .stage .pvw .panel-head { display: none; }
+  html[data-mview=switch] .stage .pvw .monitor { border: 2px solid var(--pvw, #22c55e); }
+  html[data-mview=switch] .deck > .panel-head, html[data-mview=switch] .deck-options, html[data-mview=switch] .deck-ovl, html[data-mview=switch] .tbar { display: none; }
+  html[data-mview=switch] .deck { display: block; grid-area: auto; position: fixed; z-index: 39; left: auto; right: calc(8px + env(safe-area-inset-right)); bottom: 64px;
+    width: var(--m-col); padding: 0; border: 0; background: none; box-shadow: none; }
+  html[data-mview=switch] .deck-body, html[data-mview=switch] .deck-main { display: block; padding: 0; }
+  html[data-mview=switch] .card-ovl, html[data-mview=switch] .card-actions { display: none; }
+  html[data-mview=switch] .deck-buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  html[data-mview=switch] .deck-buttons .key { min-height: 52px; font-size: 18px; border-radius: 12px; }
+  html[data-mview=switch] .workspace { position: fixed; top: 8px; bottom: 132px; right: calc(8px + env(safe-area-inset-right)); width: var(--m-col);
+    display: block; margin: 0; overflow-y: auto; overscroll-behavior: contain; }
+  html[data-mview=switch] .inputs-panel { height: auto; min-height: 100%; }
+  html[data-mview=switch] .inputs-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+  html[data-mview=switch] .inputs-panel .head-actions .btn-green { display: none; }
+
+  /* หน้าเสียง: มิกเซอร์เต็มพื้นที่ */
+  html[data-mview=audio] .stage, html[data-mview=audio] .inputs-panel, html[data-mview=audio] .overlays-panel { display: none; }
+  html[data-mview=audio] .workspace { display: block; }
+
+  /* หน้ากราฟิก: Program ซ้าย (ติดจอ) · Overlay ขวา */
+  html[data-mview=graphics] .inputs-panel, html[data-mview=graphics] .audio-panel { display: none; }
+  html[data-mview=graphics] .stage > :not(.pgm) { display: none; }
+  html[data-mview=graphics] .studio { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: start; }
+  html[data-mview=graphics] .stage { position: sticky; top: 8px; display: block; }
+  html[data-mview=graphics] .workspace { display: block; }
+
+  /* หน้าเสียง/กราฟิก: REC/ไลฟ์ เป็นแถบล่างเต็มความกว้าง ไม่บังเนื้อหา */
+  html:not([data-mview=switch]) .topbar-actions { left: var(--m-rail); right: 0; bottom: 0; width: auto; padding: 6px calc(8px + env(safe-area-inset-right)) 6px 8px;
+    background: rgba(9, 11, 15, .96); border-top: 1px solid var(--line); }
+  html:not([data-mview=switch]) .topbar-actions .btn-rec, html:not([data-mview=switch]) .topbar-actions .btn-stream { height: 44px; }
+  html:not([data-mview=switch]) .studio { padding-bottom: 66px; }
+
+  .m-alerts:not([hidden]) { display: flex; flex-direction: column; gap: 8px; position: fixed; z-index: 42; left: calc(var(--m-rail) + 10px);
+    width: min(420px, calc(100vw - var(--m-rail) - var(--m-col) - 40px)); bottom: 10px; }
+  .modal { max-height: 96dvh; }
+  .menu { max-height: 90dvh; overflow-y: auto; }
+  .toasts { bottom: 10px; left: calc(var(--m-rail) + 10px); right: auto; }
+}

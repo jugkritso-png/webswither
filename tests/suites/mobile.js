@@ -80,6 +80,30 @@ const results = []; const ok = (n, c, x = '') => results.push(`${c ? 'PASS' : 'F
   await m.tap('.modal-foot .btn-primary'); rx.kill('SIGINT');
   ok('phone: alert container idle when nothing is wrong', await m.evaluate(() => document.querySelector('#m-alerts').hidden));
 
+  // มือถือแนวนอน: Program ซ้าย (Preview ซ้อนมุม) · แหล่งภาพ + CUT/AUTO + REC/ไลฟ์ ด้านขวา · แถบเมนูขอบซ้าย
+  for (const dev of ['iPhone 13 landscape', 'Pixel 7 landscape']) {
+    const lctx = await b.newContext({ ...devices[dev] }); await setup(lctx);
+    const l = await lctx.newPage(); l.on('pageerror', e => errs.push('landscape ' + e.message));
+    await l.goto('http://localhost:8765/index.html'); await l.waitForTimeout(1200);
+    const r = await l.evaluate(() => {
+      const box = s => { const e = document.querySelector(s); if (!e || !e.getClientRects().length) return null; const b = e.getBoundingClientRect(); return { l: b.left, r: b.right, t: b.top, b: b.bottom }; };
+      const pgm = box('#pgm-monitor'), grid = box('.inputs-panel'), cut = box('[data-action=cut]'), rec = box('#btn-rec'), tabs = box('#m-tabs');
+      const inView = x => x && x.t >= 0 && x.b <= innerHeight + 1 && x.l >= 0 && x.r <= innerWidth + 1;
+      return { fit: document.documentElement.scrollWidth === innerWidth && document.documentElement.scrollHeight <= innerHeight + 1,
+        all: [pgm, grid, cut, rec, tabs].every(inView), split: !!(pgm && grid && pgm.r <= grid.l), rail: !!(tabs && tabs.r <= pgm.l), cutRight: !!(cut && cut.l >= pgm.r) };
+    });
+    ok(`${dev}: program left, inputs + CUT/REC right, menu rail`, r.fit && r.all && r.split && r.rail && r.cutRight, JSON.stringify(r));
+    await l.tap('.card >> nth=2'); await l.tap('[data-action=cut]'); await l.waitForTimeout(300);
+    ok(`${dev}: tap source + CUT switches program`, (await l.evaluate(() => window.webmix.inputs.find(i => i.id === window.webmix.state.programId).name)) === 'CLOCK');
+    await l.tap('#btn-stream'); await l.waitForTimeout(400);
+    ok(`${dev}: STREAM opens the pre-flight check`, (await l.locator('.pf-list').count()) === 1); await l.keyboard.press('Escape');
+    await l.tap('#m-tabs [data-mview=audio]'); await l.waitForTimeout(200);
+    const rec2 = await l.evaluate(() => { const a = document.querySelector('.audio-panel').getBoundingClientRect(), r = document.querySelector('#btn-rec').getBoundingClientRect(); return a.height > 100 && r.bottom <= innerHeight + 1; });
+    ok(`${dev}: audio page shows the mixer with REC bar below`, rec2);
+    if (dev.startsWith('iPhone')) await l.screenshot({ path: S + '/m-landscape.png' });
+    await lctx.close();
+  }
+
   // iPad (แนวตั้ง/แนวนอน): พอดีจอ ปุ่มใหญ่พอให้นิ้วกด และเพิ่มลงหน้าจอโฮมได้ (manifest + apple-touch-icon)
   for (const dev of ['iPad Pro 11', 'iPad Pro 11 landscape']) {
     const tctx = await b.newContext({ ...devices[dev] }); await setup(tctx);
