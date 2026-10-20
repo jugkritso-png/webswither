@@ -72,7 +72,9 @@ jobs:
             exe: desktop/target/release/webmix-desktop.exe
           - name: macOS
             os: macos-latest
-            exe: desktop/target/release/webmix-desktop
+            # ไฟล์เดียวใช้ได้ทั้ง Mac ชิป Apple และ Intel
+            target: universal-apple-darwin
+            exe: desktop/target/universal-apple-darwin/release/webmix-desktop
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -80,7 +82,9 @@ jobs:
           node-version: 22
       - name: Rust toolchain
         shell: bash
-        run: rustup toolchain install stable --profile minimal && rustup default stable
+        run: |
+          rustup toolchain install stable --profile minimal && rustup default stable
+          if [ "${{ matrix.target }}" = universal-apple-darwin ]; then rustup target add aarch64-apple-darwin x86_64-apple-darwin; fi
       - name: Linux build dependencies
         if: runner.os == 'Linux'
         run: |
@@ -90,7 +94,7 @@ jobs:
       - name: Build installers
         working-directory: desktop
         shell: bash
-        run: npx --yes @tauri-apps/cli@2 build
+        run: npx --yes @tauri-apps/cli@2 build ${{ matrix.target && format('--target {0}', matrix.target) || '' }}
       - name: Self-test (open the real app)
         shell: bash
         env:
@@ -129,7 +133,7 @@ jobs:
           path: |
             desktop/target/release/bundle/**/*.msi
             desktop/target/release/bundle/**/*.exe
-            desktop/target/release/bundle/**/*.dmg
+            desktop/target/**/release/bundle/**/*.dmg
             desktop/target/release/bundle/**/*.deb
             desktop/target/release/bundle/**/*.rpm
             desktop/target/release/bundle/**/*.AppImage
@@ -255,7 +259,7 @@ jobs:
           | ระบบ | ไฟล์ |
           |---|---|
           | Windows 10/11 | `.msi` หรือ `-setup.exe` |
-          | macOS 11+ (Apple Silicon) | `.dmg` — ครั้งแรกให้คลิกขวาที่แอป → Open (แอปยังไม่ได้ลงนาม) |
+          | macOS 11+ (ชิป Apple และ Intel) | `.dmg` — ลากแอปไป Applications แล้วครั้งแรกให้คลิกขวาที่แอป → Open · ถ้าขึ้นว่า "เสียหาย" รันใน Terminal: `xattr -cr "/Applications/WebMix Pro.app"` (แอปยังไม่ได้รับรองจาก Apple) |
           | Ubuntu / Debian | `.deb` (ติดตั้ง ffmpeg และ GStreamer ให้อัตโนมัติ) |
           | Fedora / openSUSE | `.rpm` |
           | Linux อื่น ๆ | `.AppImage` |

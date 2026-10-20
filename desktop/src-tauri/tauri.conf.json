@@ -20,7 +20,7 @@
     "shortDescription": "Live production switcher",
     "longDescription": "WebMix Pro: switch cameras, overlays and graphics, record, and stream to many destinations at once (RTMP/SRT) with the built-in Stream Gateway.",
     "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"],
-    "macOS": { "entitlements": "entitlements.plist", "minimumSystemVersion": "11.0" },
+    "macOS": { "entitlements": "entitlements.plist", "minimumSystemVersion": "11.0", "signingIdentity": "-" },
     "linux": {
       "deb": { "depends": ["ffmpeg", "gstreamer1.0-plugins-good", "gstreamer1.0-plugins-bad", "gstreamer1.0-libav"] },
       "rpm": { "depends": ["ffmpeg", "gstreamer1-plugins-good", "gstreamer1-plugins-bad-free"] }
