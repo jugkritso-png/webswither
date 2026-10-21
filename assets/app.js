@@ -2273,13 +2273,7 @@
       obj.lastAt = now;
       obj.level = db > obj.level ? db : Math.max(db, obj.level - 26 * dt);
       if (db >= obj.peak || now - obj.peakAt > 1500) { obj.peak = db; obj.peakAt = now; }
-      if (obj.ui && obj.ui.hbar) {
-        obj.ui.hbar.style.width = `${meterPct(obj.level) * 100}%`;
-        obj.ui.hbar.classList.toggle('is-hot', obj.level > -6);
-        obj.ui.hpeak.style.left = `${meterPct(obj.peak) * 100}%`;
-        obj.ui.hpeak.style.opacity = obj.peak > -59 ? '1' : '0';
-        obj.ui.hpeak.style.background = obj.peak > -1 ? '#ef4444' : '#fff';
-      } else if (obj.ui) {
+      if (obj.ui) {
         obj.ui.cover.style.height = `${(1 - meterPct(obj.level)) * 100}%`;
         obj.ui.peak.style.bottom = `${meterPct(obj.peak) * 100}%`;
         obj.ui.peak.style.opacity = obj.peak > -59 ? (obj.peak > -1 ? '1' : '.75') : '0';
@@ -2311,7 +2305,6 @@
   }
 
   function buildStrip(ch, isMaster) {
-    if (phoneLayout()) return buildPhoneStrip(ch, isMaster);
     const el = document.createElement('div');
     el.className = 'strip' + (isMaster ? ' master' : '');
     el.innerHTML = `
@@ -2339,40 +2332,6 @@
         dbEl.textContent = `${fmtDb(ch.db)} dB`;
         isMaster ? audio.applyMaster() : audio.applyGain(ch);
       }
-    });
-    bindStripButtons(el, ch, isMaster);
-    return el;
-  }
-
-  // มือถือ: ช่องเสียงเป็นแถวแนวนอน — แถบเลื่อนยาวเต็มจอ ปุ่มปิดเสียงใหญ่ ไฟระดับเสียงอยู่หลังแถบเลื่อน
-  function phoneLayout() { return matchMedia('(max-width: 760px), (pointer: coarse) and (orientation: landscape) and (max-height: 500px)').matches; }
-  function buildPhoneStrip(ch, isMaster) {
-    const el = document.createElement('div');
-    el.className = 'strip hstrip' + (isMaster ? ' master' : '');
-    el.innerHTML = `
-      <div class="hs-head"><b class="strip-name" title="${esc(ch.name)}">${esc(ch.name)}</b><span class="strip-db mono">${fmtDb(ch.db)} dB</span>
-        <span class="hs-btns">
-          ${isMaster ? `<button class="chip-btn lim ${ch.limiter ? 'is-on' : ''}" title="ลิมิตเตอร์ — กันเสียงแตก">LIM</button>` : ''}
-          ${!isMaster && ch.inputId ? `<button class="chip-btn afv ${ch.afv ? 'is-on' : ''}" title="เปิดเสียงเฉพาะตอนภาพนี้อยู่ใน Program">AFV</button>` : ''}
-          ${!isMaster ? `<button class="chip-btn fx ${fxActive(ch) ? 'is-on' : ''}" title="ดีเลย์ / EQ / คอมเพรสเซอร์">FX</button>` : ''}
-          ${!isMaster && ch.kind === 'mic' ? '<button class="chip-btn rm" title="ลบช่องเสียงนี้">✕</button>' : ''}
-        </span></div>
-      <div class="hs-row">
-        <button class="chip-btn mute hs-mute ${ch.muted ? 'is-on' : ''}" title="ปิดเสียง">${icon('mic')}<span>ปิดเสียง</span></button>
-        <div class="hs-fader"><div class="hs-meter"><div class="hs-level"></div><div class="hs-peak"></div></div>
-          <input type="range" class="hs-range" min="0" max="100" step="0.5" value="${(dbToPos(ch.db) * 100).toFixed(1)}" aria-label="ระดับเสียง ${esc(ch.name)}"></div>
-      </div>`;
-    ch.ui = { hbar: el.querySelector('.hs-level'), hpeak: el.querySelector('.hs-peak'), lim: el.querySelector('.lim'), fxBtn: el.querySelector('.fx') };
-    const dbEl = el.querySelector('.strip-db');
-    el.querySelector('.hs-range').addEventListener('input', e => {
-      ch.db = posToDb(+e.target.value / 100);
-      dbEl.textContent = `${fmtDb(ch.db)} dB`;
-      isMaster ? audio.applyMaster() : audio.applyGain(ch);
-    });
-    // แตะสองครั้งที่แถบเลื่อน = กลับไป 0 dB
-    el.querySelector('.hs-range').addEventListener('dblclick', e => {
-      e.target.value = 75;
-      e.target.dispatchEvent(new Event('input'));
     });
     bindStripButtons(el, ch, isMaster);
     return el;
@@ -5102,9 +5061,6 @@
     $('#m-gfx').addEventListener('click', quickGfxTap);
     document.documentElement.dataset.cards = cardSize();
     $$('#seg-cardsize button').forEach(b => { b.classList.toggle('is-active', b.dataset.size === cardSize()); b.addEventListener('click', () => setCardSize(b.dataset.size)); });
-    // หมุนจอ/ย่อหน้าต่างข้ามขนาดมือถือ → สร้างช่องเสียงใหม่ให้ตรงรูปแบบ (แนวตั้ง/แนวนอน)
-    let wasPhone = phoneLayout();
-    addEventListener('resize', () => { if (phoneLayout() !== wasPhone) { wasPhone = phoneLayout(); renderMixer(); } });
 
     // สำหรับดีบัก/ทดสอบอัตโนมัติ
     window.webmix = { playlist, dataSources, timerControl, multiview, renderer, gpu, setRenderer: v => { settings.renderer = v; renderer.resolve(); updateStatus(); }, show, ovl, setChannel, toggleInputOverlay, useRecFolder: dir => { recFolder = dir; }, inputs, state, settings, overlays, audio, rec, streamer, wireless, cut, autoTransition, setPreview, tr, ftb };

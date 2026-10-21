@@ -93,15 +93,12 @@ async function setup(ctx) {
 
   // เสียงบนมือถือ: แถวแนวนอน แถบเลื่อนยาว ปุ่มปิดเสียงใหญ่
   await m.tap('#m-tabs [data-mview=audio]'); await m.waitForTimeout(250);
-  const hs = await m.evaluate(() => { const s = document.querySelector('.hstrip.master'); const r = s && s.getBoundingClientRect(); const range = s && s.querySelector('.hs-range').getBoundingClientRect(); const mute = s && s.querySelector('.hs-mute').getBoundingClientRect();
-    return s ? { w: Math.round(r.width), iw: innerWidth, range: Math.round(range.width), muteH: Math.round(mute.height), vfader: !!document.querySelector('#mixer .vfader') } : null; });
-  ok('phone audio: full-width rows, long slider, big mute, no vertical faders', hs && hs.w > hs.iw * 0.85 && hs.range > hs.iw * 0.5 && hs.muteH >= 44 && !hs.vfader, JSON.stringify(hs));
-  await m.evaluate(() => { const r = document.querySelector('.hstrip.master .hs-range'); r.value = 50; r.dispatchEvent(new Event('input')); });
-  const db = await m.evaluate(() => window.webmix.audio.masterStrip.db);
-  ok('phone audio: slider sets the level', db < -3 && db > -40, String(db));
-  await m.tap('.hstrip.master .hs-mute');
-  ok('phone audio: mute toggles', await m.evaluate(() => window.webmix.audio.masterStrip.muted));
-  await m.tap('.hstrip.master .hs-mute');
+  const hs = await m.evaluate(() => { const s = document.querySelector('#mixer .strip.master'); const f = s && s.querySelector('.vfader').getBoundingClientRect();
+    return s ? { faderH: Math.round(f.height), mute: !!s.querySelector('.mute'), lim: !!s.querySelector('.lim'), fit: document.documentElement.scrollWidth <= innerWidth } : null; });
+  ok('phone audio: classic mixer strips with vertical faders', hs && hs.faderH >= 120 && hs.mute && hs.lim && hs.fit, JSON.stringify(hs));
+  await m.tap('#mixer .strip.master .mute');
+  ok('phone audio: M mutes', await m.evaluate(() => window.webmix.audio.masterStrip.muted));
+  await m.tap('#mixer .strip.master .mute');
   await m.screenshot({ path: S + '/ez-audio-phone.png' });
 
   // กราฟิกบนมือถือ: การ์ดแตะครั้งเดียว

@@ -1336,30 +1336,6 @@ details.adv[open] { padding-bottom: 12px; }
 .dest-removed { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 8px; border: 1px dashed var(--line-2); color: var(--muted); font-size: 13px; }
 .dest-removed .btn { margin-left: auto; }
 
-/* ---------- มือถือ: ช่องเสียงแนวนอน */
-.strip.hstrip { display: flex; flex-direction: column; align-items: stretch; flex: none; gap: 8px; width: 100%; padding: 12px; border-radius: 14px; border: 1px solid var(--line); background: var(--panel-2); }
-.strip.hstrip.master { border-color: rgba(245, 165, 36, .45); }
-.hs-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.hstrip .hs-head .strip-name { flex: 1; width: auto; text-align: left; font-size: 15px; letter-spacing: .02em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-.hstrip.master .strip-name { color: var(--amber); }
-.hstrip .hs-head .strip-db { flex: none; width: auto; font-size: 13px; color: var(--muted); white-space: nowrap; }
-.hs-btns:empty { display: none; }
-.hs-btns { display: flex; gap: 6px; }
-.hs-btns .chip-btn { height: 36px; min-width: 44px; }
-.hs-row { display: flex; align-items: center; gap: 10px; }
-.hs-mute { flex: none; height: 48px; display: inline-flex; align-items: center; gap: 6px; padding: 0 12px; font-size: 13px; }
-.hs-mute .i { width: 18px; height: 18px; }
-.hs-mute.is-on { background: #3a1416; border-color: #e5484d; color: #ff8a8d; }
-.hs-fader { position: relative; flex: 1; height: 48px; display: flex; align-items: center; }
-.hs-meter { position: absolute; left: 0; right: 0; top: 50%; height: 14px; transform: translateY(-50%); border-radius: 7px; background: #0b0d12; overflow: hidden; }
-.hs-level { height: 100%; width: 0; background: linear-gradient(90deg, #22c55e 0%, #22c55e 70%, #f5a524 85%, #ef4444 100%); background-size: 100vw 100%; opacity: .8; }
-.hs-peak { position: absolute; top: 0; bottom: 0; width: 2px; left: 0; opacity: 0; }
-.hs-range { position: relative; width: 100%; height: 48px; margin: 0; background: transparent; -webkit-appearance: none; appearance: none; touch-action: pan-y; }
-.hs-range::-webkit-slider-runnable-track { height: 48px; background: transparent; }
-.hs-range::-moz-range-track { height: 48px; background: transparent; }
-.hs-range::-webkit-slider-thumb { -webkit-appearance: none; width: 30px; height: 40px; margin-top: 4px; border-radius: 8px; background: #e8ecf1; border: 2px solid #0b0d12; box-shadow: 0 2px 8px rgba(0, 0, 0, .6); }
-.hs-range::-moz-range-thumb { width: 28px; height: 38px; border-radius: 8px; background: #e8ecf1; border: 2px solid #0b0d12; }
-
 /* ---------- มือถือ: การ์ดกราฟิก แตะครั้งเดียว */
 .m-gfx { display: none; }
 .m-gfx-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; margin-bottom: 10px; }
@@ -1379,7 +1355,6 @@ details.adv[open] { padding-bottom: 12px; }
 .gfx-add .i { color: #7fa6ff; }
 
 @media (max-width: 760px), (pointer: coarse) and (orientation: landscape) and (max-height: 500px) {
-  .mixer { display: flex; flex-direction: column; gap: 8px; overflow: visible; height: auto; }
   html[data-mview=graphics] .m-gfx { display: block; padding: 12px; border-bottom: 1px solid var(--line); }
   .add-grid { grid-template-columns: 1fr; }
   .menu.add-sheet { width: auto; max-height: 82vh; border-radius: 20px 20px 0 0; }
