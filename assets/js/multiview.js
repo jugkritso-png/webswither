@@ -21,8 +21,9 @@
     open() {
       if (this.inline) return;
       if (this.win && !this.win.closed) { this.win.focus(); return; }
-      const phone = matchMedia('(max-width: 760px), (pointer: coarse) and (orientation: landscape) and (max-height: 500px)').matches;
-      if ((WM.desktop && WM.desktop.mobile) || phone) { this.openInline(); return; }
+      // จอสัมผัส (มือถือ/แท็บเล็ต): หน้าต่างใหม่กลายเป็นแท็บใหม่ที่บังหน้าหลัก — เปิดเต็มจอในหน้าเดียวกันแทน
+      const touch = matchMedia('(pointer: coarse)').matches && !matchMedia('(any-pointer: fine)').matches;
+      if ((WM.desktop && WM.desktop.mobile) || touch) { this.openInline(); return; }
       const win = window.open('about:blank', 'webmix-multiview', 'width=1280,height=720');
       if (!win) { toast('เบราว์เซอร์บล็อกหน้าต่างใหม่ — เปิด Multiview ในหน้านี้แทน (อนุญาต Pop-up เพื่อลากไปจอที่สอง)', 'warn', 6000); this.openInline(); return; }
       this.ensureCanvas();
@@ -44,11 +45,10 @@
       v.play().catch(() => {});
       this.bindControls(win, v);
       this.win = win;
-      clearInterval(this.timer);
-      this.timer = setInterval(() => {
+      this.startTimer(() => {
         if (!this.win || this.win.closed) { this.close(); return; }
         this.draw();
-      }, 1000 / 15);
+      });
     },
     // ตำแหน่งบนหน้าต่าง → ตำแหน่งบนภาพ 1920×1080 (วิดีโอแสดงแบบ contain จึงอาจมีขอบดำ)
     toCanvas(v, e) {
@@ -110,13 +110,23 @@
       // คีย์ลัดอื่น (1–9, Space, Enter) ใช้ของหน้าหลักอยู่แล้ว — ผูกเฉพาะการแตะ
       this.bindControls(null, this.canvas);
       setTimeout(() => el.querySelector('.mv-hint')?.classList.add('is-hidden'), 5000);
-      clearInterval(this.timer);
-      this.timer = setInterval(() => this.draw(), 1000 / 15);
+      this.startTimer(() => this.draw());
+    },
+    // จับเวลาด้วย Worker: หน้าหลักถูกบัง/อยู่เบื้องหลัง (หน้าต่าง Multiview ทับ หรือเปิดเป็นแท็บใหม่บนแท็บเล็ต)
+    // เบราว์เซอร์จะชะลอ setInterval ของหน้าหลักเหลือ ≤ 1 ครั้ง/วินาที — ภาพ Multiview จะไม่อัปเดตหลังแตะสลับ
+    startTimer(fn) {
+      this.stopTimer();
+      const every = WM.wcrec && WM.wcrec.every;
+      const stop = every ? every(fn, 1000 / 15) : (id => () => clearInterval(id))(setInterval(fn, 1000 / 15));
+      this.timer = stop;
+    },
+    stopTimer() {
+      if (typeof this.timer === 'function') this.timer();
+      this.timer = null;
     },
     close() {
       if (this.inline) { this.inline.remove(); this.inline = null; this.offKey?.(); this.offKey = null; this.canvas = null; this.ctx = null; }
-      clearInterval(this.timer);
-      this.timer = null;
+      this.stopTimer();
       if (this.track) this.track.stop();
       this.track = null;
       this.win = null;

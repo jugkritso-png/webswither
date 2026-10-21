@@ -24,7 +24,12 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Prepare site
-        run: mkdir _site && cp -r index.html assets _site/
+        # ต่อท้าย ?v=<commit> ให้ไฟล์ CSS/JS ของเรา — เบราว์เซอร์โหลดไฟล์ใหม่ทุกครั้งที่อัปเดต ไม่ใช้ไฟล์เก่าที่แคชไว้
+        run: |
+          mkdir _site && cp -r index.html assets _site/
+          v=$(echo "$GITHUB_SHA" | cut -c1-8)
+          sed -i -E "s#(src|href)=\"(assets/[^\"?]+\.(js|css))\"#\1=\"\2?v=$v\"#g" _site/index.html
+          grep -c "?v=$v" _site/index.html
       - uses: actions/configure-pages@v6
       - uses: actions/upload-pages-artifact@v5
         with:

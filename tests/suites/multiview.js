@@ -16,6 +16,7 @@ const results = []; const ok = (n, c, x = '') => results.push(`${c ? 'PASS' : 'F
   const popup = p.waitForEvent('popup'); await p.click('[data-action=multiview]'); const win = await popup;
   await win.waitForTimeout(1500);
   const v = await win.evaluate(() => { const v = document.querySelector('video'); return { w: v.videoWidth, h: v.videoHeight, playing: !v.paused }; });
+  ok('multiview keeps drawing when the main window is in the background (worker timer)', await p.evaluate(() => typeof window.webmix.multiview.timer === 'function'));
   ok('multiview window shows a 1920×1080 feed', v.w === 1920 && v.h === 1080 && v.playing, JSON.stringify(v));
   await win.screenshot({ path: S + '/multiview.png' });
 
@@ -106,6 +107,15 @@ const results = []; const ok = (n, c, x = '') => results.push(`${c ? 'PASS' : 'F
   await m.tap('.mv-close'); await m.waitForTimeout(300);
   ok('phone Multiview: closes and stops drawing', (await m.locator('.mv-inline').count()) === 0 && await m.evaluate(() => window.webmix.multiview.timer === null));
   await mctx.close();
+  // แท็บเล็ต (iPad): หน้าต่างใหม่จะกลายเป็นแท็บที่บังหน้าหลัก → เปิด Multiview ในหน้าเดียวกัน
+  const tctx = await b.newContext({ ...devices['iPad Pro 11 landscape'] });
+  await tctx.route(/fonts\.(googleapis|gstatic)|qrcode|peerjs/, r => r.fulfill({ body: '' }));
+  const t = await tctx.newPage(); t.on('pageerror', e => errs.push('ipad ' + e.message));
+  let popped = false; t.on('popup', () => { popped = true; });
+  await t.goto('http://localhost:8765/index.html'); await t.waitForTimeout(900);
+  await t.tap('[data-action=multiview]'); await t.waitForTimeout(400);
+  ok('iPad: Multiview opens in the same page (no new tab)', await t.isVisible('.mv-inline canvas') && !popped);
+  await tctx.close();
 
   ok('no page errors', errs.length === 0, JSON.stringify(errs));
   console.log(results.join('\n')); await b.close();
