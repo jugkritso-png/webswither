@@ -27,6 +27,8 @@ function makeFixtures() {
   if (!fs.existsSync(f('clip.webm'))) ffmpeg(['-f', 'lavfi', '-i', 'testsrc2=size=640x360:rate=30', '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000', '-t', '4', '-c:v', 'libvpx', '-b:v', '800k', '-c:a', 'libopus', '-shortest', f('clip.webm')]);
   if (!fs.existsSync(f('logo.png'))) ffmpeg(['-f', 'lavfi', '-i', 'testsrc=size=400x400', '-frames:v', '1', f('logo.png')]);
   if (!fs.existsSync(f('green.png'))) ffmpeg(['-f', 'lavfi', '-i', 'color=c=0x00ff00:s=640x360', '-vf', 'drawbox=x=270:y=130:w=100:h=100:color=red:t=fill', '-frames:v', '1', f('green.png')]);
+  // Stinger: ม่วงเต็มจอช่วง 0.7–1.3 วินาที นอกนั้นโปร่งใส (VP9 alpha)
+  if (!fs.existsSync(f('sting.webm'))) ffmpeg(['-f', 'lavfi', '-i', "color=c=0xff00ff:s=320x180:r=30:d=2,format=yuva420p,geq=lum='lum(X,Y)':cb='cb(X,Y)':cr='cr(X,Y)':a='if(between(T,0.7,1.3),255,0)'", '-c:v', 'libvpx-vp9', '-auto-alt-ref', '0', '-b:v', '300k', f('sting.webm')]);
   if (!fs.existsSync(f('loud.webm'))) ffmpeg(['-f', 'lavfi', '-i', 'testsrc2=size=640x360:rate=30', '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000,volume=7', '-t', '20', '-c:v', 'libvpx', '-b:v', '500k', '-c:a', 'libopus', '-b:a', '128k', '-shortest', f('loud.webm')]);
 }
 

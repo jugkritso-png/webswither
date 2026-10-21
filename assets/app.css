@@ -1461,3 +1461,9 @@ html[data-cards=l] .card-num, html[data-cards=l] .card-tally { font-size: 14px; 
   .sc-layouts { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .sc-slots { grid-template-columns: 1fr; }
 }
+
+/* เอฟเฟกต์เปลี่ยนภาพ 5 แบบ — ให้พอดีช่องแคบของแผงกลาง */
+#seg-transition { grid-auto-columns: minmax(0, 1fr); }
+#seg-transition button { padding: 0; letter-spacing: 0; min-width: 0; }
+.st-file { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.st-name { overflow-wrap: anywhere; }

@@ -50,6 +50,8 @@
   const defaults = {
     resolution: '720p', fps: 30, videoKbps: 4500,
     transition: 'mix', duration: 1000,
+    // Stinger: วิดีโอทับระหว่างเปลี่ยนภาพ (ไฟล์เก็บใน mediaStore คีย์ 'stinger') · cutAt = จุดสลับภาพ (สัดส่วนของความยาว)
+    stinger: { name: '', cutAt: 0.5 },
     gateway: store.raw('webmix-gateway-url') || '',
     destinations: [], rememberKey: false,
     // บันทึกสำรองอัตโนมัติเมื่อเริ่มไลฟ์ · บันทึกแยกทุกกล้อง (ISO) พร้อมกับการบันทึก Program
@@ -71,7 +73,9 @@
   };
   if (!RESOLUTIONS[settings.resolution]) settings.resolution = defaults.resolution;
   if (!FRAME_RATES.includes(+settings.fps)) settings.fps = defaults.fps;
-  if (!['mix', 'dip', 'wipe'].includes(settings.transition)) settings.transition = 'mix';
+  const TRANSITIONS = ['mix', 'dip', 'wipe', 'push', 'stinger'];
+  if (!TRANSITIONS.includes(settings.transition)) settings.transition = 'mix';
+  settings.stinger = { name: String(settings.stinger?.name || '').slice(0, 80), cutAt: clamp(+settings.stinger?.cutAt || 0.5, 0.05, 0.95) };
   if (![500, 1000, 2000].includes(+settings.duration)) settings.duration = 1000;
   if (!['auto', 'gpu', 'cpu'].includes(settings.renderer)) settings.renderer = 'auto';
   settings.titlePresets = (Array.isArray(settings.titlePresets) ? settings.titlePresets : [])
@@ -306,6 +310,13 @@
       ctx.restore();
       ctx.fillStyle = 'rgba(255,255,255,.9)';
       ctx.fillRect(x - w / 640, 0, w / 320, h);
+    } else if (settings.transition === 'push') {
+      // ภาพ B ดันภาพ A ออกไปทางซ้าย
+      ctx.save(); ctx.translate(-w * p, 0); drawSource(ctx, A, w, h); ctx.restore();
+      ctx.save(); ctx.translate(w * (1 - p), 0); drawSource(ctx, B, w, h); ctx.restore();
+    } else if (settings.transition === 'stinger') {
+      // สลับภาพตรงจุดตัด — ตัววิดีโอสติงเกอร์วาดทับทีหลัง (drawStinger)
+      drawSource(ctx, p < settings.stinger.cutAt ? A : B, w, h);
     } else {
       // วาดภาพ B (รวมพื้นดำ/ขอบดำของมัน) แยกก่อน แล้วผสมทั้งภาพทีเดียว — ถ้าวาดตรงด้วย globalAlpha
       // พื้นดำของ B จะถูกผสมด้วย ทำให้ภาพกลางทรานซิชันมืดลงผิดปกติ
@@ -706,6 +717,11 @@
       glDrawInput(A, full, full);
       glDrawInput(B, full, { x: 0, y: 0, w: w * p, h });
       gpu.solid({ x: w * p - w / 640, y: 0, w: w / 320, h }, [1, 1, 1, 0.9]);
+    } else if (settings.transition === 'push') {
+      glDrawInput(A, { x: -w * p, y: 0, w, h }, full);
+      glDrawInput(B, { x: w * (1 - p), y: 0, w, h }, full);
+    } else if (settings.transition === 'stinger') {
+      glDrawInput(p < settings.stinger.cutAt ? A : B, full, full);
     } else {
       glDrawInput(A, full, full);
       glDrawInput(B, full, full, p);
@@ -788,6 +804,11 @@
     glProgramBase(W, H);
     for (const c of ovl) if (c.anim > 0) glOverlayChannel(c, W, H, c.anim);
     glClassicOverlays(W, H);
+    if (stingerOn()) {
+      const e = gpu.entry('stinger');
+      if (e.frame !== frameNo && gpu.upload(e, stinger.el, stinger.el.videoWidth, stinger.el.videoHeight)) e.frame = frameNo;
+      if (e.frame === frameNo) gpu.quad(e, { x: 0, y: 0, w: W, h: H }, [0, 0, 1, 1]);
+    }
     if (ftb.level > 0) gpu.solid({ x: 0, y: 0, w: W, h: H }, [0, 0, 0, 1], ftb.level);
     pgmCtx.drawImage(gpu.canvas, 0, 0);
   }
@@ -831,6 +852,7 @@
       drawProgramBase(pgmCtx, W, H);
       drawOverlayChannels(pgmCtx, W, H, false);
       drawOverlays(pgmCtx, W, H);
+      if (stingerOn()) pgmCtx.drawImage(stinger.el, 0, 0, W, H);
       if (ftb.level > 0) { pgmCtx.fillStyle = `rgba(0,0,0,${ftb.level})`; pgmCtx.fillRect(0, 0, W, H); }
 
       drawSource(pvwCtx, byId(state.previewId), PW, PH);
@@ -885,8 +907,65 @@
     state.previewId = p;
   }
 
+  /* ---- Stinger: วิดีโอ (ควรเป็น WebM ที่มีพื้นโปร่งใส) เล่นทับ Program ตอนกด AUTO แล้วสลับภาพตรงจุดตัด
+     ใช้ความยาววิดีโอเป็นความยาวทรานซิชัน · เลื่อน T-Bar เองจะสลับที่จุดตัดโดยไม่เล่นวิดีโอ */
+  const stinger = { el: null, url: '', ready: false, stallMs: 3000 };
+  function loadStinger(file) {
+    if (stinger.el) stinger.el.pause();
+    if (stinger.url) URL.revokeObjectURL(stinger.url);
+    const v = document.createElement('video');
+    v.muted = true; v.playsInline = true; v.preload = 'auto';
+    stinger.url = URL.createObjectURL(file); stinger.ready = false; stinger.el = v;
+    return new Promise(res => {
+      v.onloadeddata = () => { stinger.ready = v.duration > 0 && isFinite(v.duration); res(stinger.ready); };
+      v.onerror = () => { stinger.ready = false; res(false); };
+      v.src = stinger.url;
+    });
+  }
+  const stingerOn = () => tr.stinger && stinger.el && stinger.el.readyState >= 2 && !stinger.el.ended;
+  function stopStinger() {
+    tr.stinger = false;
+    if (stinger.el) stinger.el.pause();
+  }
+  async function openStingerDialog() {
+    let picked = null;
+    const r = await dialog({
+      title: 'Stinger — วิดีโอเปลี่ยนภาพ',
+      body: `
+        <p class="note">เลือกวิดีโอสั้น ๆ (1–3 วินาที) แนะนำ WebM ที่มีพื้นโปร่งใส · กด AUTO แล้ววิดีโอจะเล่นทับจอ และสลับภาพตรงจุดที่วิดีโอปิดจอเต็ม</p>
+        <div class="field"><span>ไฟล์วิดีโอ</span><div class="st-file"><button type="button" class="btn" data-st-pick>เลือกไฟล์…</button> <b class="st-name">${esc(settings.stinger.name || 'ยังไม่ได้เลือก')}</b></div></div>
+        <label class="field"><span>จุดสลับภาพ <b class="st-cut">${Math.round(settings.stinger.cutAt * 100)}%</b> ของความยาววิดีโอ</span><input type="range" name="cutAt" min="5" max="95" step="1" value="${Math.round(settings.stinger.cutAt * 100)}"></label>
+        <p class="note st-len">${stinger.ready ? `ความยาว ${stinger.el.duration.toFixed(1)} วินาที` : ''}</p>`,
+      actions: [{ label: 'ยกเลิก' }, { label: 'ใช้ Stinger', primary: true, value: 'save' }],
+      onOpen(modal) {
+        const cut = $('input[name=cutAt]', modal);
+        cut.addEventListener('input', () => { $('.st-cut', modal).textContent = cut.value + '%'; });
+        $('[data-st-pick]', modal).addEventListener('click', () => {
+          const fi = document.createElement('input');
+          fi.type = 'file'; fi.accept = 'video/*';
+          fi.onchange = () => {
+            picked = fi.files[0] || null;
+            if (picked) { $('.st-name', modal).textContent = picked.name; $('.st-len', modal).textContent = ''; }
+          };
+          fi.click();
+        });
+      }
+    });
+    if (r?.value !== 'save') return false;
+    if (picked) {
+      if (!(await loadStinger(picked))) { toast(`เปิดวิดีโอ “${picked.name}” ไม่ได้ — ลองไฟล์ WebM หรือ MP4`, 'error'); return false; }
+      settings.stinger.name = picked.name.slice(0, 80);
+      mediaStore.put('stinger', picked).then(ok => { if (!ok) toast('พื้นที่ในเบราว์เซอร์ไม่พอเก็บไฟล์ Stinger — เปิดหน้าใหม่แล้วต้องเลือกอีกครั้ง', 'warn', 6000); });
+    }
+    settings.stinger.cutAt = clamp(+r.form.cutAt.value / 100, 0.05, 0.95);
+    saveSettings();
+    if (!stinger.ready) { toast('ยังไม่ได้เลือกวิดีโอ Stinger', 'warn'); return false; }
+    return true;
+  }
+
   function cut() {
     if (!byId(state.previewId)) return;
+    stopStinger();
     tr.auto = false;
     tr.progress = 0;
     swapBuses();
@@ -897,21 +976,38 @@
 
   function autoTransition() {
     if (tr.auto || !byId(state.previewId) || state.previewId === state.programId) return;
+    if (settings.transition === 'stinger') {
+      if (!stinger.ready) { toast('ยังไม่มีวิดีโอ Stinger — เลือกไฟล์ก่อน (กดปุ่ม STING อีกครั้ง)', 'warn'); openStingerDialog(); return; }
+      if (tr.progress >= settings.stinger.cutAt) { completeTransition(); return; }
+      tr.stinger = true;
+      tr.stVt = -1;
+      tr.from = 0;
+      stinger.el.currentTime = 0;
+      stinger.el.play().catch(() => {});
+    } else tr.from = tr.progress;
     tr.auto = true;
     tr.start = performance.now();
-    tr.from = tr.progress;
     $('[data-action="auto"]').classList.add('is-running');
     audio.applyAfv();
   }
 
   function stepTransition(now) {
     if (!tr.auto) return;
-    const p = tr.from + (now - tr.start) / settings.duration;
+    // Stinger: ตามเวลาของวิดีโอจริง (ถ้าวิดีโอกระตุก จุดสลับภาพยังตรงกับภาพที่ปิดจอ)
+    const v = stinger.el;
+    const p = tr.stinger ? (v.ended ? 1 : v.currentTime > 0 ? v.currentTime / v.duration : 0)
+      : tr.from + (now - tr.start) / settings.duration;
+    if (tr.stinger) {
+      // วิดีโอค้าง (ถอดรหัสไม่ได้/ไฟล์เสีย) เกิน 3 วินาที → จบทรานซิชันเลย ไม่ให้ค้างกลางทาง
+      if (v.currentTime !== tr.stVt) { tr.stVt = v.currentTime; tr.stAt = now; }
+      else if (now - tr.stAt > stinger.stallMs) { completeTransition(); return; }
+    }
     if (p >= 1) completeTransition();
     else { tr.progress = p; tbar.set(tr.base === 0 ? p * 100 : 100 - p * 100); }
   }
 
   function completeTransition() {
+    stopStinger();
     swapBuses();
     tr.auto = false;
     tr.progress = 0;
@@ -922,6 +1018,7 @@
   }
 
   function onTbar(v) {
+    stopStinger();
     if (tr.auto) { tr.auto = false; $('[data-action="auto"]').classList.remove('is-running'); }
     const was = tr.progress;
     tr.progress = clamp(tr.base === 0 ? v / 100 : (100 - v) / 100, 0, 1);
@@ -4845,7 +4942,13 @@
 
   function initControls() {
     initOverlayControls();
-    initSeg('#seg-transition', settings.transition, v => { settings.transition = v; });
+    initSeg('#seg-transition', settings.transition, v => {
+      const prev = settings.transition;
+      settings.transition = v;
+      // เลือก STING ครั้งแรก (ยังไม่มีวิดีโอ) หรือกด STING ซ้ำ = เลือกวิดีโอ/จุดตัด
+      if (v === 'stinger' && (prev === 'stinger' || !stinger.ready)) openStingerDialog();
+    });
+    mediaStore.get('stinger').then(f => { if (f) loadStinger(f); });
     initSeg('#seg-duration', settings.duration, v => { settings.duration = +v; });
     initSeg('#seg-pip-pos', settings.pip.position, v => { settings.pip.position = v; });
     initSeg('#seg-pip-size', settings.pip.size, v => { settings.pip.size = +v; });
@@ -5209,7 +5312,7 @@
       if (RESOLUTIONS[o.resolution]) settings.resolution = o.resolution;
       if (FRAME_RATES.includes(+o.fps)) settings.fps = +o.fps;
       if (+o.videoKbps > 0) settings.videoKbps = clamp(Math.round(+o.videoKbps), 500, MAX_KBPS);
-      if (['mix', 'dip', 'wipe'].includes(o.transition)) settings.transition = o.transition;
+      if (TRANSITIONS.includes(o.transition)) settings.transition = o.transition;
       if ([500, 1000, 2000].includes(+o.duration)) settings.duration = +o.duration;
       const g = data.graphics || {};
       if (g.title && typeof g.title === 'object') settings.title = { ...settings.title, ...g.title };
@@ -5344,7 +5447,7 @@
     show.autosave(true);
     setInterval(() => show.autosave(), 1500);
     addEventListener('pagehide', () => show.autosave());
-    mediaStore.prune(new Set([...inputs.filter(i => i.type === 'media' || i.type === 'image').map(i => i.id), ...playlist.keys()]));
+    mediaStore.prune(new Set(['stinger', ...inputs.filter(i => i.type === 'media' || i.type === 'image').map(i => i.id), ...playlist.keys()]));
 
     wireless.init();
     loadRecFolder();
@@ -5358,7 +5461,7 @@
     $$('#seg-cardsize button').forEach(b => { b.classList.toggle('is-active', b.dataset.size === cardSize()); b.addEventListener('click', () => setCardSize(b.dataset.size)); });
 
     // สำหรับดีบัก/ทดสอบอัตโนมัติ
-    window.webmix = { playlist, dataSources, timerControl, multiview, renderer, gpu, setRenderer: v => { settings.renderer = v; renderer.resolve(); updateStatus(); }, show, ovl, setChannel, toggleInputOverlay, useRecFolder: dir => { recFolder = dir; }, inputs, state, settings, overlays, audio, rec, iso, streamer, wireless, cut, autoTransition, setPreview, tr, ftb };
+    window.webmix = { playlist, dataSources, timerControl, multiview, renderer, gpu, setRenderer: v => { settings.renderer = v; renderer.resolve(); updateStatus(); }, show, ovl, setChannel, toggleInputOverlay, useRecFolder: dir => { recFolder = dir; }, inputs, state, settings, overlays, audio, rec, iso, stinger, streamer, wireless, cut, autoTransition, setPreview, tr, ftb };
   }
 
   boot();
