@@ -3927,7 +3927,8 @@
       ['camera', 'บันทึกภาพนิ่งจาก Program', snapshot],
       ['folder', 'โชว์: บันทึก / เปิด / เริ่มใหม่', openShowDialog],
       ['phone', 'เชื่อมกล้องมือถือเครื่องอื่น (QR)', showWirelessDialog],
-      ...(desktop && desktop.mobile ? [] : [['grid', 'Multiview', () => multiview.open()], ['external', 'หน้าต่าง Program Output', openOutputWindow]]),
+      ['grid', 'Multiview — ดูทุกภาพ แตะเพื่อสลับ', () => multiview.open()],
+      ...(desktop && desktop.mobile ? [] : [['external', 'หน้าต่าง Program Output', openOutputWindow]]),
       ['sliders', 'ตั้งค่า', () => openSettings()],
       ['broadcast', 'เริ่มต้นใช้งาน (ตั้งค่าไลฟ์ทีละขั้น)', openOnboarding],
       ['help', 'คู่มือ', openHelp]

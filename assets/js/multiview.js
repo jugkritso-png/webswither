@@ -9,18 +9,23 @@
   // สลับภาพจาก Multiview ได้: แตะแหล่งภาพครั้งแรก = Preview (กรอบเขียว) · แตะแหล่งภาพเดิมอีกครั้ง = ขึ้น Program (กรอบแดง)
   // แตะจอ PREVIEW ใหญ่ = ขึ้น Program · คีย์บอร์ด: 1–9 เลือก Preview, Space = Cut, Enter = Auto
   const createMultiview = ctx => ({
-    canvas: null, ctx: null, win: null, track: null, timer: null, hover: -1, flash: null,
+    canvas: null, ctx: null, win: null, track: null, timer: null, hover: -1, flash: null, inline: null,
     W: 1920, H: 1080,
+    ensureCanvas() {
+      if (this.canvas) return;
+      this.canvas = document.createElement('canvas');
+      this.canvas.width = this.W; this.canvas.height = this.H;
+      this.ctx = this.canvas.getContext('2d');
+    },
+    // มือถือ/แอป Android เปิดหน้าต่างแยกไม่ได้ (หรือเบราว์เซอร์บล็อก pop-up) → เปิด Multiview เต็มจอในหน้าเดียวกัน
     open() {
+      if (this.inline) return;
       if (this.win && !this.win.closed) { this.win.focus(); return; }
-      if (WM.desktop && WM.desktop.mobile) { toast('แอป Android เปิดหน้าต่าง Multiview แยกไม่ได้', 'warn'); return; }
+      const phone = matchMedia('(max-width: 760px), (pointer: coarse) and (orientation: landscape) and (max-height: 500px)').matches;
+      if ((WM.desktop && WM.desktop.mobile) || phone) { this.openInline(); return; }
       const win = window.open('about:blank', 'webmix-multiview', 'width=1280,height=720');
-      if (!win) { toast('เบราว์เซอร์บล็อกหน้าต่างใหม่ — อนุญาต Pop-up สำหรับเว็บนี้ก่อน', 'warn'); return; }
-      if (!this.canvas) {
-        this.canvas = document.createElement('canvas');
-        this.canvas.width = this.W; this.canvas.height = this.H;
-        this.ctx = this.canvas.getContext('2d');
-      }
+      if (!win) { toast('เบราว์เซอร์บล็อกหน้าต่างใหม่ — เปิด Multiview ในหน้านี้แทน (อนุญาต Pop-up เพื่อลากไปจอที่สอง)', 'warn', 6000); this.openInline(); return; }
+      this.ensureCanvas();
       this.draw();
       win.document.open();
       win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>WebMix — Multiview</title>
@@ -76,6 +81,7 @@
         v.style.cursor = h === null || h === 'pgm' ? 'default' : 'pointer';
       });
       v.addEventListener('pointerleave', () => { this.hover = -1; });
+      if (!win) return;
       win.addEventListener('keydown', e => {
         if (e.target.tagName === 'BUTTON' && (e.key === ' ' || e.key === 'Enter')) return;
         if (/^[1-9]$/.test(e.key)) { const inp = ctx.inputs[+e.key - 1]; if (inp && inp.id !== ctx.state.programId) ctx.setPreview(inp.id); }
@@ -86,7 +92,29 @@
         this.draw();
       });
     },
+    openInline() {
+      this.ensureCanvas();
+      this.draw();
+      const el = document.createElement('div');
+      el.className = 'mv-inline';
+      el.setAttribute('role', 'dialog');
+      el.setAttribute('aria-label', 'Multiview');
+      el.innerHTML = '<button type="button" class="btn mv-close">ปิด Multiview</button><p class="mv-hint">แตะแหล่งภาพ = Preview · แตะซ้ำ = ขึ้น Program</p>';
+      el.prepend(this.canvas);
+      document.body.appendChild(el);
+      this.inline = el;
+      const onKey = e => { if (e.key === 'Escape') { e.preventDefault(); this.close(); } };
+      el.querySelector('.mv-close').addEventListener('click', () => this.close());
+      document.addEventListener('keydown', onKey);
+      this.offKey = () => document.removeEventListener('keydown', onKey);
+      // คีย์ลัดอื่น (1–9, Space, Enter) ใช้ของหน้าหลักอยู่แล้ว — ผูกเฉพาะการแตะ
+      this.bindControls(null, this.canvas);
+      setTimeout(() => el.querySelector('.mv-hint')?.classList.add('is-hidden'), 5000);
+      clearInterval(this.timer);
+      this.timer = setInterval(() => this.draw(), 1000 / 15);
+    },
     close() {
+      if (this.inline) { this.inline.remove(); this.inline = null; this.offKey?.(); this.offKey = null; this.canvas = null; this.ctx = null; }
       clearInterval(this.timer);
       this.timer = null;
       if (this.track) this.track.stop();

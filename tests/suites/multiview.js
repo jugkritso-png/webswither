@@ -80,6 +80,33 @@ const results = []; const ok = (n, c, x = '') => results.push(`${c ? 'PASS' : 'F
   // เปิดด้วยคีย์ลัด M
   const popup2 = p.waitForEvent('popup'); await p.keyboard.press('m'); const win2 = await popup2;
   ok('M opens multiview', !!win2); await win2.close();
+  // มือถือ: เปิดจากเมนูเพิ่มเติม → Multiview เต็มจอในหน้าเดียวกัน แตะสลับภาพได้
+  const { devices } = require('playwright');
+  const mctx = await b.newContext({ ...devices['iPhone 13 landscape'] });
+  await mctx.route(/fonts\.(googleapis|gstatic)|qrcode|peerjs/, r => r.fulfill({ body: '' }));
+  const m = await mctx.newPage(); m.on('pageerror', e => errs.push('phone ' + e.message));
+  await m.goto('http://localhost:8765/index.html'); await m.waitForTimeout(900);
+  await m.tap('#m-tabs [data-mmore]'); await m.waitForTimeout(200);
+  await m.tap('.menu button:has-text("Multiview")'); await m.waitForTimeout(400);
+  ok('phone: Multiview opens full screen inside the app', await m.isVisible('.mv-inline canvas') && (await m.evaluate(() => !window.webmix.multiview.win)));
+  const mtap = async i => {
+    const pt = await m.evaluate(i => { const mv = window.webmix.multiview, L = mv.layout(window.webmix.inputs.length), c = document.querySelector('.mv-inline canvas').getBoundingClientRect(), k = Math.min(c.width / 1920, c.height / 1080);
+      const cx = (i % L.cols) * L.tw + L.tw / 2, cy = L.gridTop + Math.floor(i / L.cols) * L.th + L.th / 2;
+      return [c.left + (c.width - 1920 * k) / 2 + cx * k, c.top + (c.height - 1080 * k) / 2 + cy * k]; }, i);
+    await m.touchscreen.tap(pt[0], pt[1]); await m.waitForTimeout(250);
+  };
+  const mbus = () => m.evaluate(() => { const w = window.webmix; return { pgm: w.inputs.findIndex(i => i.id === w.state.programId), pvw: w.inputs.findIndex(i => i.id === w.state.previewId) }; });
+  await mtap(2);
+  let ms = await mbus();
+  ok('phone Multiview: first tap → Preview', ms.pvw === 2, JSON.stringify(ms));
+  await mtap(2);
+  ms = await mbus();
+  ok('phone Multiview: second tap → Program', ms.pgm === 2, JSON.stringify(ms));
+  await m.screenshot({ path: S + '/multiview-phone.png' });
+  await m.tap('.mv-close'); await m.waitForTimeout(300);
+  ok('phone Multiview: closes and stops drawing', (await m.locator('.mv-inline').count()) === 0 && await m.evaluate(() => window.webmix.multiview.timer === null));
+  await mctx.close();
+
   ok('no page errors', errs.length === 0, JSON.stringify(errs));
   console.log(results.join('\n')); await b.close();
 })().catch(e => { console.log(results.join('\n')); console.error('CRASH', e.message); process.exit(1); });
