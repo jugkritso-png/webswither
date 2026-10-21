@@ -16,7 +16,7 @@
 //   client → { type: 'start', destinations: [{ id, name, url }] }   เริ่มเข้ารหัสและส่งไปทุกปลายทาง
 //   client → { type: 'add', destination: { id, name, url } }        เพิ่ม/เริ่มปลายทางระหว่างไลฟ์
 //   client → { type: 'stop', id }                                    หยุดเฉพาะปลายทางนั้น
-//   server → { type: 'status', destinations: [{ id, name, state, message, kbps }] }
+//   server → { type: 'status', destinations: [{ id, name, state, message, kbps, lag }] }  (lag = ms ของข้อมูลที่รอส่งไปปลายทาง)
 //            state: connecting | live | error | stopped
 //   url: rtmp://… rtmps://… หรือ srt://host:port?streamid=…&passphrase=…&latency=… (SRT ส่งเป็น MPEG-TS)
 //   vertical: 'crop' | 'fit' (ไม่ใส่ = แนวนอนตามต้นฉบับ) — ปลายทางนี้ได้ภาพแนวตั้ง 9:16
@@ -455,6 +455,8 @@ wss.on('connection', (ws, req) => {
   // ค่าที่ส่งมาจากหน้าตั้งค่า (มีค่าเริ่มต้นและจำกัดช่วงไว้เสมอ)
   const fps = [24, 25, 30, 50, 60].includes(Number(params.get('fps'))) ? Number(params.get('fps')) : 30;
   const kbps = Math.min(MAX_KBPS, Math.max(500, Number(params.get('vb')) || 4500));
+  // lag = ข้อมูลที่รอส่งให้ ffmpeg ของปลายทาง คิดเป็นมิลลิวินาทีของสตรีม — เพิ่มขึ้นเรื่อย ๆ = เน็ตขาออกไม่พอ (แอปจะลดบิตเรต)
+  const lagOf = d => d.state === 'live' && d.proc && d.proc.stdin ? Math.round(d.proc.stdin.writableLength * 8 / (kbps + 160)) : 0;
   const height = Math.min(4320, Math.max(0, Number(params.get('res')) || 0));
   // vcopy=1: วิดีโอที่ส่งมาเป็น H.264 แล้ว (WebCodecs ด้วยชิปของเครื่อง) — ส่งต่อเลย เข้ารหัสเฉพาะเสียง
   const videoCopy = params.get('vcopy') === '1';
@@ -510,7 +512,7 @@ wss.on('connection', (ws, req) => {
 
   const report = () => send({
     type: 'status',
-    destinations: [...dests.values()].map(d => ({ id: d.id, name: d.name, state: d.state, message: d.message, kbps: d.state === 'live' ? d.kbps : 0 })),
+    destinations: [...dests.values()].map(d => ({ id: d.id, name: d.name, state: d.state, message: d.message, kbps: d.state === 'live' ? d.kbps : 0, lag: lagOf(d) })),
     encoder: encoderStats
   });
 

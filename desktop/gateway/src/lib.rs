@@ -6,7 +6,7 @@
 //!   client → { "type": "start", "destinations": [{ "id", "name", "url" }] }
 //!   client → { "type": "add", "destination": { "id", "name", "url" } }
 //!   client → { "type": "stop", "id": "…" }
-//!   server → { "type": "status", "destinations": [{ "id", "name", "state", "message", "kbps" }], "encoder": { "speed", "fps" } | null }
+//!   server → { "type": "status", "destinations": [{ "id", "name", "state", "message", "kbps", "lag" }], "encoder": { "speed", "fps" } | null }
 //!
 //! พารามิเตอร์ของ URL: fps, vb (kbps), res (ความสูง) · vcopy=1 = วิดีโอที่ส่งมาเป็น H.264 อยู่แล้ว (เช่นจาก WebCodecs
 //! ด้วยชิปของมือถือ) → ใช้ต่อได้เลยไม่เข้ารหัสซ้ำ เข้ารหัสเฉพาะเสียงเป็น AAC
@@ -16,6 +16,7 @@
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::process::Stdio;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -474,6 +475,8 @@ struct Dest {
     vertical: String,
     /// ช่องส่งข้อมูลไปยัง ffmpeg ของปลายทางนี้ (None = ไม่ได้ทำงาน)
     tx: Option<mpsc::Sender<Arc<Vec<u8>>>>,
+    /// ไบต์ที่รอส่งให้ ffmpeg ของปลายทางนี้ — เพิ่มขึ้นเรื่อย ๆ = เน็ตขาออกไปปลายทางไม่พอ
+    queued: Arc<AtomicU64>,
     /// รุ่นของโปรเซส — ใช้แยกโปรเซสเก่าที่ปิดช้าออกจากตัวใหม่
     generation: u64,
 }
@@ -528,7 +531,12 @@ impl Session {
         let dests: Vec<Value> = st
             .dests
             .iter()
-            .map(|d| json!({ "id": d.id, "name": d.name, "state": d.state, "message": d.message, "kbps": if d.state == "live" { d.kbps } else { 0 } }))
+            .map(|d| {
+                let live = d.state == "live";
+                // lag = ข้อมูลที่ค้างอยู่ คิดเป็นมิลลิวินาทีของสตรีม (ให้แอปลดบิตเรตเมื่อค้างมาก)
+                let lag = if live { d.queued.load(Ordering::Relaxed) * 8 / (self.kbps as u64 + 160) } else { 0 };
+                json!({ "id": d.id, "name": d.name, "state": d.state, "message": d.message, "kbps": if live { d.kbps } else { 0 }, "lag": lag })
+            })
             .collect();
         let encoder = st.encoder_stats.map(|(speed, fps)| json!({ "speed": speed, "fps": fps }));
         drop(st);
@@ -655,6 +663,7 @@ impl Session {
                                 if let Some(tx) = &d.tx {
                                     if tx.try_send(chunk.clone()).is_ok() {
                                         d.bytes += n as u64;
+                                        d.queued.fetch_add(n as u64, Ordering::Relaxed);
                                     }
                                 }
                             }
@@ -745,6 +754,7 @@ impl Session {
                                 if let Some(tx) = &d.tx {
                                     if tx.try_send(chunk.clone()).is_ok() {
                                         d.bytes += n as u64;
+                                        d.queued.fetch_add(n as u64, Ordering::Relaxed);
                                     }
                                 }
                             }
@@ -867,10 +877,12 @@ impl Session {
             }
         };
         let (tx, mut rx) = mpsc::channel::<Arc<Vec<u8>>>(DEST_QUEUE);
+        let queued = Arc::new(AtomicU64::new(0));
         {
             let mut st = self.st.lock().unwrap();
             if let Some(d) = st.dests.iter_mut().find(|d| d.id == id) {
                 d.tx = Some(tx);
+                d.queued = queued.clone();
             }
         }
         let mut stdin = child.stdin.take().unwrap();
@@ -879,6 +891,7 @@ impl Session {
                 if stdin.write_all(&chunk).await.is_err() {
                     break;
                 }
+                queued.fetch_sub((chunk.len() as u64).min(queued.load(Ordering::Relaxed)), Ordering::Relaxed);
             }
         });
         // live = ffmpeg เขียนข้อมูลออกไปยังปลายทางได้จริงแล้ว (out_time เริ่มเดิน)

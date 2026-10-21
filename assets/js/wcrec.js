@@ -348,6 +348,10 @@
       frame.close();
     };
 
+    // เปลี่ยนบิตเรตระหว่างเข้ารหัส (ปรับตามความเร็วเน็ต) — เริ่มคีย์เฟรมใหม่ทันที
+    rec.setBitrate = bps => {
+      try { vsel.cfg = { ...vsel.cfg, bitrate: Math.round(bps) }; venc.configure(vsel.cfg); lastKey = -Infinity; return true; } catch (e) { return false; }
+    };
     rec.start = (timeslice = 1000) => {
       if (rec.state !== 'inactive') return;
       rec.state = 'recording';
@@ -401,7 +405,8 @@
       stop() {
         if (inner) inner.stop();
         else stopRequested = true;
-      }
+      },
+      setBitrate(bps) { return !!(inner && inner.setBitrate(bps)); }
     };
     return rec;
   }

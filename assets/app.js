@@ -58,6 +58,8 @@
     destinations: [], rememberKey: false,
     // บันทึกสำรองอัตโนมัติเมื่อเริ่มไลฟ์ · บันทึกแยกทุกกล้อง (ISO) พร้อมกับการบันทึก Program
     autoRec: false, isoRec: false,
+    // ลดบิตเรตเองเมื่อเน็ตส่งไม่ทัน (ข้อมูลค้างส่ง) แทนที่ภาพจะค้าง/หลุด
+    abr: true,
     title: { headline: 'BREAKING NEWS', subtitle: 'รายงานสดจากสตูดิโอ WebMix Pro', color: '#ef4444' },
     pip: { position: 'br', size: 0.32 },
     key: { color: 'green', tolerance: 60 },
@@ -3640,14 +3642,14 @@
       audio.ensure();
       return wcrec.recorder({
         canvas: pgmCanvas, audioNode: audio.post || null, fps: settings.fps,
-        videoBitsPerSecond: settings.videoKbps * 1000, audioBitsPerSecond: 160000,
+        videoBitsPerSecond: (purpose === 'stream' ? streamKbps() : settings.videoKbps) * 1000, audioBitsPerSecond: 160000,
         // H.264 เบากว่า VP8 มากที่ความละเอียดสูง · สตรีมใช้ H.264 เสมอ (Gateway ถอดรหัสได้เร็ว)
         preferAvc: purpose === 'stream' || H >= 1080
       });
     }
     const mime = pickMime(purpose);
     if (mime === null) throw new Error('เบราว์เซอร์นี้ไม่รองรับการบันทึกวิดีโอ (MediaRecorder)');
-    const opts = { videoBitsPerSecond: settings.videoKbps * 1000, audioBitsPerSecond: 160000 };
+    const opts = { videoBitsPerSecond: (purpose === 'stream' ? streamKbps() : settings.videoKbps) * 1000, audioBitsPerSecond: 160000 };
     if (mime) opts.mimeType = mime;
     return new MediaRecorder(output.get(), opts);
   }
@@ -4000,6 +4002,8 @@
 
   function finishStream(byUser, wasLive, reason) {
     cancelReconnect();
+    abrReset(true);
+    streamer.abrSwitch = false;
     Object.assign(streamer, { active: false, state: 'idle', ws: null, recorder: null, kbps: 0, queue: [], encoder: null, reconnecting: false, attempt: 0 });
     streamer.dests.clear();
     setStreamButton();
@@ -4029,7 +4033,7 @@
     const delay = RECONNECT_DELAYS[Math.min(streamer.attempt - 1, RECONNECT_DELAYS.length - 1)];
     Object.assign(streamer, { ws: null, recorder: null, active: false, reconnecting: true, state: 'reconnecting', kbps: 0, encoder: null, queue: [] });
     for (const d of resume) streamer.dests.set(d.id, { state: 'connecting', message: 'กำลังเชื่อมต่อใหม่…', kbps: 0 });
-    if (streamer.attempt === 1) toast('การเชื่อมต่อ Stream Gateway หลุด — กำลังเชื่อมต่อใหม่อัตโนมัติ', 'warn', 6000);
+    if (streamer.attempt === 1 && !streamer.abrSwitch) toast('การเชื่อมต่อ Stream Gateway หลุด — กำลังเชื่อมต่อใหม่อัตโนมัติ', 'warn', 6000);
     setStreamButton();
     refreshLiveDialog();
     updateOnAir();
@@ -4042,6 +4046,69 @@
       connectGateway(list);
     }, delay);
   }
+
+  /* ---- ปรับบิตเรตอัตโนมัติ (Adaptive bitrate) ----
+     ดูข้อมูลที่ค้างส่ง 2 ทาง: แอป → Gateway (ws.bufferedAmount) และ Gateway → ปลายทาง (lag ที่ Gateway รายงาน)
+     ค้างเกิน 2.5 วินาที 2 รอบติด (หรือเกิน 6 วินาที) → ลดบิตเรต 30% (ต่ำสุด 35% ของค่าที่ตั้ง / 800 kbps)
+     เข้ารหัสด้วยชิปของเครื่อง (WebCodecs) → เปลี่ยนได้ทันทีไม่สะดุด และเพิ่มกลับทีละ 15% เมื่อเน็ตดีต่อเนื่อง 30 วินาที
+     ทางอื่น → เชื่อมต่อ Gateway ใหม่ที่บิตเรตใหม่ (ภาพสะดุดสั้น ๆ) ไม่เพิ่มกลับเอง แต่เสนอปุ่ม "คืนคุณภาพเต็ม" เมื่อเน็ตดี 1 นาที */
+  const abr = { kbps: 0, high: 0, lastChange: 0, clearSince: 0, offered: false, log: [] };
+  const streamKbps = () => abr.kbps || settings.videoKbps;
+  function abrReset(all) {
+    abr.high = 0; abr.clearSince = 0;
+    if (all) { abr.kbps = 0; abr.lastChange = 0; abr.offered = false; abr.log = []; }
+  }
+  // ตัดสินใจจากตัวอย่างหนึ่งรอบ — คืน { kbps, dir } หรือ null
+  function abrDecide({ upLag, destLag }, now, seamless) {
+    const target = settings.videoKbps, cur = streamKbps(), lag = Math.max(upLag, destLag);
+    const floor = Math.min(target, Math.max(800, Math.round(target * 0.35 / 100) * 100));
+    abr.high = lag > 2500 ? abr.high + 1 : 0;
+    if ((abr.high >= 2 || lag > 6000) && cur > floor && now - abr.lastChange > (seamless ? 8000 : 30000)) {
+      return { kbps: Math.max(floor, Math.round(cur * 0.7 / 100) * 100), dir: 'down' };
+    }
+    if (lag < 400) { if (!abr.clearSince) abr.clearSince = now; } else abr.clearSince = 0;
+    if (cur < target && abr.clearSince && now - abr.lastChange > 30000) {
+      if (seamless && now - abr.clearSince >= 30000) return { kbps: Math.min(target, Math.round(cur * 1.15 / 100) * 100), dir: 'up' };
+      if (!seamless && now - abr.clearSince >= 60000 && !abr.offered) return { kbps: target, dir: 'offer' };
+    }
+    return null;
+  }
+  function abrApply(kbps, dir) {
+    const ws = streamer.ws, r = streamer.recorder;
+    if (!ws || streamer.state !== 'live') return;
+    abr.kbps = kbps >= settings.videoKbps ? 0 : kbps;
+    abr.lastChange = Date.now();
+    abrReset();
+    abr.log.push({ at: Date.now(), kbps, dir, how: streamer.videoCopy && r && r.setBitrate ? 'live' : 'reconnect' });
+    if (streamer.videoCopy && r && r.setBitrate && r.setBitrate(kbps * 1000)) {
+      if (dir === 'down') toast(`เน็ตส่งไม่ทัน — ลดบิตเรตเป็น ${kbps} kbps ชั่วคราว`, 'warn', 5000);
+      updateStatus();
+      return;
+    }
+    // ตัวเข้ารหัสในเบราว์เซอร์/ใน Gateway เปลี่ยนบิตเรตกลางทางไม่ได้ → เชื่อมต่อใหม่ด้วยค่าใหม่ (ปลายทางเริ่มต่อเองอัตโนมัติ)
+    toast(dir === 'down' ? `เน็ตส่งไม่ทัน — ลดบิตเรตเป็น ${kbps} kbps (ภาพจะสะดุดสั้น ๆ ระหว่างเปลี่ยน)` : `กลับไปคุณภาพเต็ม ${kbps} kbps`, dir === 'down' ? 'warn' : 'info', 6000);
+    streamer.abrSwitch = true;
+    handleDisconnect(ws, 4003, 'ปรับบิตเรต');
+    try { ws.close(); } catch (e) {}
+  }
+  function abrTick() {
+    const ws = streamer.ws;
+    if (!settings.abr || streamer.state !== 'live' || streamer.testing || !ws || ws.readyState !== WebSocket.OPEN) { abrReset(); return; }
+    const cur = streamKbps() + 160;
+    const upLag = ws.bufferedAmount * 8 / cur;
+    const destLag = Math.max(0, ...[...streamer.dests.values()].filter(d => d.state === 'live').map(d => d.lag || 0));
+    const seamless = !!(streamer.videoCopy && streamer.recorder && streamer.recorder.setBitrate);
+    abr.last = { upLag: Math.round(upLag), destLag };
+    const d = abrDecide({ upLag, destLag }, Date.now(), seamless);
+    if (!d) return;
+    if (d.dir === 'offer') {
+      abr.offered = true;
+      toast(`เน็ตกลับมาดีแล้ว — ตอนนี้ส่งที่ ${streamKbps()} kbps`, 'info', 15000, { label: 'คืนคุณภาพเต็ม', run: () => abrApply(settings.videoKbps, 'up') });
+      return;
+    }
+    abrApply(d.kbps, d.dir);
+  }
+  setInterval(abrTick, 2000);
 
   // Watchdog: Gateway ส่งสถานะทุก 2 วินาที ถ้าเงียบเกิน 8 วินาทีถือว่าการเชื่อมต่อค้าง (เช่น เน็ตหลุดแบบไม่ปิด socket)
   setInterval(() => {
@@ -4060,7 +4127,7 @@
         audio.ensure();
         r = window.WebMix.wcrec.recorder({
           canvas: pgmCanvas, audioNode: audio.post || null, fps: settings.fps,
-          videoBitsPerSecond: settings.videoKbps * 1000, audioBitsPerSecond: 160000,
+          videoBitsPerSecond: streamKbps() * 1000, audioBitsPerSecond: 160000,
           requireAvc: true, constantBitrate: true
         });
       } else r = makeRecorder('stream');
@@ -4071,7 +4138,7 @@
     }
     const gw = gatewayUrl();
     const sep = gw.includes('?') ? '&' : '?';
-    const ws = new WebSocket(`${gw}${sep}fps=${settings.fps}&vb=${settings.videoKbps}&res=${H}${vcopy ? '&vcopy=1' : ''}`);
+    const ws = new WebSocket(`${gw}${sep}fps=${settings.fps}&vb=${streamKbps()}&res=${H}${vcopy ? '&vcopy=1' : ''}`);
     const reconnecting = !!streamer.reconnecting;
     Object.assign(streamer, { ws, recorder: r, videoCopy: vcopy, state: reconnecting ? 'reconnecting' : 'connecting', sent: 0, kbps: 0, lastBytes: 0, lastAt: performance.now(), queue: [...initial] });
     // เข้ารหัสด้วยชิปของเครื่องไม่สำเร็จ → เลิกใช้ทางนี้ แล้วเชื่อมต่อใหม่ให้ Gateway เข้ารหัสเอง (ระบบเชื่อมต่อใหม่อัตโนมัติ)
@@ -4102,7 +4169,8 @@
       streamer.lastMsgAt = Date.now();
       Object.assign(streamer, { active: true, state: 'live', reconnecting: false, attempt: 0 });
       if (!reconnecting) streamer.start = Date.now();
-      else toast('เชื่อมต่อ Stream Gateway ใหม่สำเร็จ — กำลังเริ่มปลายทางอีกครั้ง', 'success', 4000);
+      else if (!streamer.abrSwitch) toast('เชื่อมต่อ Stream Gateway ใหม่สำเร็จ — กำลังเริ่มปลายทางอีกครั้ง', 'success', 4000);
+      streamer.abrSwitch = false;
       setStreamButton();
       updateOnAir();
     };
@@ -4137,7 +4205,7 @@
         else if (st.state === 'error') toast(`${label}: ${st.message || 'เชื่อมต่อไม่ได้'} — กำลังลองใหม่อัตโนมัติ`, 'error', 6000);
         else if (st.state === 'stopped') toast(`${label}: หยุดสตรีมแล้ว`, 'info', 2500);
       }
-      streamer.dests.set(st.id, { state: st.state, message: st.message || '', kbps: st.kbps || 0 });
+      streamer.dests.set(st.id, { state: st.state, message: st.message || '', kbps: st.kbps || 0, lag: +st.lag || 0 });
     }
     // ไม่เหลือปลายทางที่ทำงานอยู่ → ปิดการเชื่อมต่อ Gateway เพื่อไม่ส่งข้อมูลเปล่า ๆ
     if (streamer.ws && streamer.active && !destCounts().active) streamer.ws.close(1000, 'all destinations stopped');
@@ -4733,6 +4801,7 @@
             <div class="link-row"><input class="input rec-folder-name" readonly value="${esc(recFolder ? recFolder.name : canPickFolder ? 'ยังไม่ได้เลือก — ดาวน์โหลดไฟล์เมื่อกดหยุด' : 'เบราว์เซอร์นี้เลือกโฟลเดอร์ไม่ได้ — ดาวน์โหลดไฟล์เมื่อกดหยุด')}">
             ${canPickFolder ? `<button type="button" class="btn rec-folder-pick">เลือกโฟลเดอร์</button>${recFolder ? '<button type="button" class="btn btn-ghost rec-folder-clear">ล้าง</button>' : ''}` : ''}</div></div>
           <label class="check"><input type="checkbox" name="autoRec" ${settings.autoRec ? 'checked' : ''}> บันทึกสำรองอัตโนมัติเมื่อเริ่มไลฟ์ — หยุดไลฟ์ครบทุกช่องแล้วหยุดบันทึกให้ (เน็ตหลุดก็ยังมีไฟล์)</label>
+          <label class="check"><input type="checkbox" name="abr" ${settings.abr ? 'checked' : ''}> ปรับบิตเรตอัตโนมัติเมื่อเน็ตส่งไม่ทัน — ลดคุณภาพลงชั่วคราวแทนที่ไลฟ์จะค้างหรือหลุด</label>
           <label class="check"><input type="checkbox" name="isoRec" ${settings.isoRec ? 'checked' : ''}> บันทึกแยกทุกกล้อง (ISO) — ไฟล์ละกล้องพร้อมไฟล์ Program สำหรับตัดต่อทีหลัง (ใช้ CPU และพื้นที่เพิ่มตามจำนวนกล้อง)</label>
           <p class="note">ระหว่างบันทึก ไฟล์ถูกเขียนลง${recFolder ? 'โฟลเดอร์ที่เลือก' : canUseOpfs ? 'ดิสก์ (พื้นที่ชั่วคราวของเบราว์เซอร์) แล้วดาวน์โหลดเมื่อหยุด' : ' RAM — บันทึกนาน ๆ ควรใช้ Chrome หรือ Edge'} จึงบันทึกนานหลายชั่วโมงได้โดยไม่กินหน่วยความจำ</p>
           <p class="note warn res-4k-note" ${RESOLUTIONS[settings.resolution][1] >= 1440 ? '' : 'hidden'}>ความละเอียด 1440p/4K ต้องใช้คอมพิวเตอร์แรง (แนะนำ CPU 8 คอร์ขึ้นไปหรือมีการ์ดจอแยก) และอินเทอร์เน็ตขาขึ้นอย่างน้อย 1.5 เท่าของบิตเรต · Stream Gateway ควรมี 8 vCPU ขึ้นไป · Facebook และ Twitch รับสูงสุด 1080p ส่วน YouTube รับได้ถึง 4K</p>
@@ -4904,6 +4973,7 @@
       settings.rememberKey = f.rememberKey.checked;
       settings.autoRec = f.autoRec.checked;
       settings.isoRec = f.isoRec.checked;
+      settings.abr = f.abr.checked;
       if (['auto', 'gpu', 'cpu'].includes(f.renderer.value)) settings.renderer = f.renderer.value;
       renderer.resolve();
       saveSettings();
@@ -5226,7 +5296,7 @@
       const { live, active, errors } = destCounts();
       const enc = streamer.encoder && streamer.encoder.speed ? ` · ENC ${streamer.encoder.speed.toFixed(2)}x` : '';
       const encSlow = streamer.encoder && streamer.encoder.speed && streamer.encoder.speed < 0.95;
-      setStat('#st-stream', `LIVE ${fmtDuration(Date.now() - streamer.start)} · ${streamer.kbps} kbps · ${live}/${active} ปลายทาง${enc}${slow ? ' · เน็ตช้า' : ''}`, slow || errors || encSlow ? 'warn' : 'live');
+      setStat('#st-stream', `LIVE ${fmtDuration(Date.now() - streamer.start)} · ${streamer.kbps} kbps · ${live}/${active} ปลายทาง${enc}${abr.kbps ? ` · ลดบิตเรต ${abr.kbps}/${settings.videoKbps}` : ''}${slow ? ' · เน็ตช้า' : ''}`, slow || errors || encSlow || abr.kbps ? 'warn' : 'live');
     } else {
       const n = settings.destinations.filter(d => d.enabled).length;
       setStat('#st-stream', streamer.reconnecting ? `RECONNECTING… (ครั้งที่ ${streamer.attempt})` : streamer.state === 'connecting' ? 'CONNECTING…' : gatewayUrl() ? `READY · ${n} ปลายทาง` : 'NOT SET',
@@ -5828,7 +5898,7 @@
     $$('#seg-cardsize button').forEach(b => { b.classList.toggle('is-active', b.dataset.size === cardSize()); b.addEventListener('click', () => setCardSize(b.dataset.size)); });
 
     // สำหรับดีบัก/ทดสอบอัตโนมัติ
-    window.webmix = { playlist, dataSources, timerControl, multiview, renderer, gpu, setRenderer: v => { settings.renderer = v; renderer.resolve(); updateStatus(); }, show, ovl, setChannel, toggleInputOverlay, useRecFolder: dir => { recFolder = dir; }, inputs, state, settings, overlays, audio, rec, iso, stinger, replayCapture, midi, streamer, wireless, cut, autoTransition, setPreview, tr, ftb };
+    window.webmix = { playlist, dataSources, timerControl, multiview, renderer, gpu, setRenderer: v => { settings.renderer = v; renderer.resolve(); updateStatus(); }, show, ovl, setChannel, toggleInputOverlay, useRecFolder: dir => { recFolder = dir; }, inputs, state, settings, overlays, audio, rec, iso, stinger, replayCapture, midi, abr: { state: abr, decide: abrDecide, apply: abrApply, tick: abrTick }, streamer, wireless, cut, autoTransition, setPreview, tr, ftb };
   }
 
   boot();
