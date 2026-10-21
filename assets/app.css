@@ -1467,3 +1467,8 @@ html[data-cards=l] .card-num, html[data-cards=l] .card-tally { font-size: 14px; 
 #seg-transition button { padding: 0; letter-spacing: 0; min-width: 0; }
 .st-file { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .st-name { overflow-wrap: anywhere; }
+
+/* ไฟสถานะ Noise Gate: เขียว = เปิดให้เสียงผ่าน */
+.gate-led { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-left: 6px; vertical-align: middle; background: #3a1d1d; box-shadow: inset 0 0 0 1px #6b2b2b; }
+.gate-led.open { background: var(--green, #22c55e); box-shadow: 0 0 8px rgba(34, 197, 94, .7); }
+.gate-led.off { opacity: .3; }

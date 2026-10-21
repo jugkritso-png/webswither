@@ -2542,6 +2542,7 @@
   const fmtDb = db => db === -Infinity || db <= -59.9 ? '−∞' : `${db > 0 ? '+' : ''}${db.toFixed(1)}`;
   const meterPct = db => clamp((db + 60) / 60, 0, 1);
 
+  const FX_DEFAULT = { delayMs: 0, low: 0, mid: 0, high: 0, comp: false, threshold: -18, ratio: 4, gate: false, gateDb: -50 };
   const audio = {
     ctx: null, master: null, monitor: null, dest: null, analyser: null, buf: null,
     channels: [],
@@ -2578,6 +2579,8 @@
         this.buf = new Float32Array(1024);
         this.applyMaster();
         ctx.onstatechange = updateStatus;
+        // Noise Gate ทำงานใน AudioWorklet (ต้องเป็น https/localhost) — ไม่มีก็ใช้ส่วนอื่นได้ตามปกติ
+        this.gateReady = ctx.audioWorklet ? ctx.audioWorklet.addModule('assets/js/gate-worklet.js').then(() => true, e => { console.warn('gate worklet', e); return false; }) : Promise.resolve(false);
       }
       if (this.ctx.state === 'suspended') this.ctx.resume().catch(() => {});
       return this.ctx;
@@ -2611,7 +2614,7 @@
       const ch = {
         id: uid(), node, input: delay, delay, low, mid, high, comp, fader, afvGain: afv, analyser,
         db: 0, muted: false, afv: false, level: -90, peak: -90, peakAt: 0,
-        fx: { delayMs: 0, low: 0, mid: 0, high: 0, comp: false, threshold: -18, ratio: 4 },
+        fx: { ...FX_DEFAULT },
         ...opts
       };
       const saved = ch.restore || (ch.inputId && this.pending.get(ch.inputId));
@@ -2624,7 +2627,8 @@
         if (saved.fx && typeof saved.fx === 'object') {
           const f = saved.fx;
           ch.fx = { delayMs: clamp(+f.delayMs || 0, 0, 1000), low: clamp(+f.low || 0, -15, 15), mid: clamp(+f.mid || 0, -15, 15), high: clamp(+f.high || 0, -15, 15),
-            comp: !!f.comp, threshold: clamp(+f.threshold || -18, -60, 0), ratio: clamp(+f.ratio || 4, 1, 20) };
+            comp: !!f.comp, threshold: clamp(+f.threshold || -18, -60, 0), ratio: clamp(+f.ratio || 4, 1, 20),
+            gate: !!f.gate, gateDb: clamp(+f.gateDb || FX_DEFAULT.gateDb, -80, -10) };
         }
       }
       this.channels.push(ch);
@@ -2649,6 +2653,28 @@
         try { ch.high.disconnect(); } catch (e) {}
         ch.high.connect(f.comp ? ch.comp : ch.fader);
       }
+      this.applyGate(ch);
+    },
+    // Noise Gate อยู่หลังดีเลย์ ก่อน EQ: ดีเลย์ → (เกต) → EQ
+    async applyGate(ch) {
+      const f = ch.fx;
+      if (ch.gate) ch.gate.parameters.get('threshold').setTargetAtTime(f.gateDb, this.ctx.currentTime, 0.01);
+      if (!!ch.gateOn === !!f.gate) return;
+      if (f.gate && !ch.gate) {
+        if (ch.gateLoading) return;
+        ch.gateLoading = true;
+        const ready = await this.gateReady;
+        ch.gateLoading = false;
+        if (!ready) { ch.gateError = true; return; }
+        ch.gate = new AudioWorkletNode(this.ctx, 'webmix-gate', { parameterData: { threshold: f.gateDb } });
+        ch.gate.port.onmessage = e => { ch.gateOpen = e.data; };
+        if (!ch.fx.gate) return;
+      }
+      ch.gateOn = !!f.gate;
+      try { ch.delay.disconnect(); } catch (e) {}
+      try { ch.gate.disconnect(); } catch (e) {}
+      if (f.gate) { ch.delay.connect(ch.gate); ch.gate.connect(ch.low); }
+      else { ch.delay.connect(ch.low); ch.gateOpen = true; }
     },
     addStream(inp, stream) {
       if (!stream.getAudioTracks().length || !this.ensure()) return;
@@ -2824,7 +2850,7 @@
     });
   }
 
-  const fxActive = ch => ch.fx && (ch.fx.delayMs || ch.fx.low || ch.fx.mid || ch.fx.high || ch.fx.comp);
+  const fxActive = ch => ch.fx && (ch.fx.delayMs || ch.fx.low || ch.fx.mid || ch.fx.high || ch.fx.comp || ch.fx.gate);
 
   // หน้าต่างปรับเสียงต่อช่อง — เปลี่ยนค่าแล้วได้ยินผลทันที
   function openChannelFx(ch) {
@@ -2835,6 +2861,10 @@
     dialog({
       title: `ปรับเสียง — ${ch.name}`,
       body: `
+        <div class="help"><h3>Noise Gate (ตัดเสียงรบกวนตอนไม่ได้พูด)</h3></div>
+        <label class="check"><input type="checkbox" data-fx="gate" ${f.gate ? 'checked' : ''}> เปิด Noise Gate — เสียงที่เบากว่าระดับนี้ถูกปิด (แอร์ พัดลม เสียงห้อง) <b class="gate-led ${f.gate ? '' : 'off'}" aria-hidden="true"></b></label>
+        ${row('gateDb', 'ระดับเปิดเสียง', -80, -10, 1, 'dB')}
+        <p class="note gate-note">${audio.ctx && !audio.ctx.audioWorklet ? 'เบราว์เซอร์นี้ไม่รองรับ Noise Gate (ต้องเปิดผ่าน https)' : 'พูดปกติแล้วไฟเขียวต้องติด — ไฟดับตอนเงียบ ถ้าเสียงพูดขาดหายให้ลดระดับลง'}</p>
         <div class="help"><h3>ดีเลย์ (ให้เสียงตรงกับภาพ)</h3></div>
         ${row('delayMs', 'หน่วงเสียง', 0, 500, 10, 'ms')}
         <div class="help"><h3>EQ</h3></div>
@@ -2854,12 +2884,22 @@
           const label = $(`[data-val="${key}"]`, modal);
           if (label) label.textContent = `${f[key] > 0 && /low|mid|high|threshold/.test(key) ? '+' : ''}${f[key]} ${key === 'delayMs' ? 'ms' : key === 'ratio' ? ': 1' : 'dB'}`;
           audio.applyFx(ch);
+          if (key === 'gate') $('.gate-led', modal).classList.toggle('off', !f.gate);
           ch.ui?.fxBtn?.classList.toggle('is-on', !!fxActive(ch));
         });
+        // ไฟสถานะเกต: เขียว = เปิดให้เสียงผ่าน
+        const led = $('.gate-led', modal);
+        const tick = () => {
+          if (!modal.isConnected) return;
+          led.classList.toggle('open', !!(f.gate && ch.gateOn && ch.gateOpen));
+          if (ch.gateError) $('.gate-note', modal).textContent = 'เปิด Noise Gate ไม่ได้ในเบราว์เซอร์นี้ (ต้องเปิดผ่าน https หรือ localhost)';
+          setTimeout(tick, 100);
+        };
+        tick();
       }
     }).then(r => {
       if (r?.value !== 'reset') return;
-      Object.assign(f, { delayMs: 0, low: 0, mid: 0, high: 0, comp: false, threshold: -18, ratio: 4 });
+      Object.assign(f, FX_DEFAULT);
       audio.applyFx(ch);
       ch.ui?.fxBtn?.classList.toggle('is-on', false);
       toast(`รีเซ็ตการปรับเสียงของ “${ch.name}” แล้ว`);
