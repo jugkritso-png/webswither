@@ -295,8 +295,11 @@
         if (inp.showImg) { fillBlack(ctx, w, h); drawFitColored(ctx, inp, inp.showImg, inp.showImg.naturalWidth, inp.showImg.naturalHeight, w, h); break; }
         // falls through — รายการปัจจุบันเป็นวิดีโอ
       default: {
-        const v = inp.el;
-        if (inp.status === 'live' && v && v.readyState >= 2 && v.videoWidth) {
+        const v = inp.el, bg = bgFrame(inp);
+        if (bg) {
+          fillBlack(ctx, w, h);
+          drawFitColored(ctx, inp, bg, bg.width, bg.height, w, h);
+        } else if (inp.status === 'live' && v && v.readyState >= 2 && v.videoWidth) {
           fillBlack(ctx, w, h);
           drawFitColored(ctx, inp, v, v.videoWidth, v.videoHeight, w, h);
         } else {
@@ -497,8 +500,9 @@
         if (inp.showImg) { drawFitColored(ctx, inp, inp.showImg, inp.showImg.naturalWidth, inp.showImg.naturalHeight, w, h); return; }
         // falls through
       default: {
-        const v = inp.el;
-        if (inp.status === 'live' && v && v.readyState >= 2 && v.videoWidth) drawFitColored(ctx, inp, v, v.videoWidth, v.videoHeight, w, h);
+        const v = inp.el, bg = bgFrame(inp);
+        if (bg) drawFitColored(ctx, inp, bg, bg.width, bg.height, w, h);
+        else if (inp.status === 'live' && v && v.readyState >= 2 && v.videoWidth) drawFitColored(ctx, inp, v, v.videoWidth, v.videoHeight, w, h);
       }
     }
   }
@@ -685,8 +689,9 @@
       default: {
         const v = inp.el;
         if (!(inp.status === 'live' && v && v.readyState >= 2 && v.videoWidth)) return noSignal();
-        const e = gpu.entry('v:' + inp.id);
-        if (e.frame !== frameNo) { if (!gpu.upload(e, v, v.videoWidth, v.videoHeight)) return noSignal(); e.frame = frameNo; }
+        const e = gpu.entry('v:' + inp.id), bg = bgFrame(inp);
+        if (bg) { if (e.stamp !== inp.bgState.version) { gpu.upload(e, bg, bg.width, bg.height); e.stamp = inp.bgState.version; e.frame = -1; } return { e }; }
+        if (e.frame !== frameNo) { if (!gpu.upload(e, v, v.videoWidth, v.videoHeight)) return noSignal(); e.frame = frameNo; e.stamp = null; }
         return { e };
       }
     }
@@ -847,6 +852,7 @@
 
     stepTransition(now);
     stepOverlays(dt);
+    stepBackgrounds(now);
     if (ftb.level !== ftb.target) {
       const step = dt / settings.duration;
       ftb.level = ftb.target > ftb.level ? Math.min(ftb.target, ftb.level + step) : Math.max(ftb.target, ftb.level - step);
@@ -1319,6 +1325,7 @@
     inputs.splice(Math.min(was.at, inputs.length), 0, made);
     if (raw.layout) made.layout = sanitizeLayout(raw.layout);
     if (raw.color) made.color = sanitizeColor(raw.color);
+    if (raw.bg) made.bg = sanitizeBg(raw.bg);
     if (was.data) made.data = { ...was.data };
     for (const i of was.ovl) if (!ovl[i].inputId) ovl[i].inputId = made.id;
     if (was.pip) overlays.pip.sourceId = made.id;
@@ -1356,6 +1363,7 @@
     if (inp.type === 'slides' && inp.pdf) { try { inp.pdf.destroy(); } catch (e) {} inp.pdf = null; }
     if (inp.type === 'playlist') playlist.dispose(inp, forget);
     if (inp.type === 'replay') replayStop(inp);
+    bgStop(inp);
     inp.removed = true;
     if (gpu) gpu.drop(inp.id);
     audio.removeForInput(inp.id);
@@ -1395,6 +1403,10 @@
     const hasColor = COLOR_TYPES.includes(inp.type);
     const before = inp.color ? { ...inp.color } : null;
     const cc = { ...NEUTRAL_COLOR, ...(inp.color || {}) };
+    const hasBg = BG_TYPES.includes(inp.type);
+    const bgBefore = sanitizeBg(inp.bg);
+    const bgSources = inputs.filter(x => x.id !== inp.id && (x.type === 'image' || x.type === 'media'));
+    const bgError = inp.bgState?.error || '';
     const slider = (k, label, min, max, step, fmt) => `
       <label class="field cc-row"><span>${label} <b class="mono" data-cc-val="${k}">${fmt(cc[k])}</b></span>
         <input class="range" type="range" data-cc="${k}" min="${min}" max="${max}" step="${step}" value="${cc[k]}"></label>`;
@@ -1407,9 +1419,22 @@
         ${hasColor ? `<div class="help"><h3>ปรับสีภาพ <small class="muted">(เห็นผลทันที — ให้กล้องหลายตัวสีตรงกัน)</small></h3></div>
           ${slider('b', 'ความสว่าง', 0.3, 2, 0.01, pct)}${slider('c', 'คอนทราสต์', 0.3, 2, 0.01, pct)}
           ${slider('s', 'ความอิ่มสี', 0, 2.5, 0.01, pct)}${slider('t', 'อุณหภูมิสี', -1, 1, 0.01, temp)}
-          <button type="button" class="btn btn-sm cc-reset">คืนค่าสีเดิม</button>` : ''}`,
+          <button type="button" class="btn btn-sm cc-reset">คืนค่าสีเดิม</button>` : ''}
+        ${hasBg ? `<div class="help"><h3>พื้นหลังด้วย AI <small class="muted">(ไม่ต้องใช้ฉากเขียว — ตัดคนออกจากพื้นหลัง)</small></h3></div>
+          <label class="field"><span>พื้นหลัง</span><select name="bgmode" class="select">${Object.entries(BG_MODES).map(([k, v]) => `<option value="${k}" ${k === bgBefore.mode ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
+          <label class="field bg-img" ${bgBefore.mode === 'image' ? '' : 'hidden'}><span>ภาพพื้นหลัง (แหล่งภาพนิ่งหรือวิดีโอ)</span><select name="bgimg" class="select">${bgSources.length ? bgSources.map(x => `<option value="${x.id}" ${x.id === bgBefore.imageId ? 'selected' : ''}>${esc(x.name)}</option>`).join('') : '<option value="">— เพิ่มภาพนิ่ง/วิดีโอก่อน —</option>'}</select></label>
+          <p class="note bg-note">ทำงานในเครื่อง (ภาพไม่ถูกส่งออกไปไหน) · ครั้งแรกต้องต่อเน็ตเพื่อโหลดโมเดล AI · เหมาะกับคนนั่ง/ยืนหน้ากล้อง ใช้ CPU/GPU เพิ่มต่อกล้อง${bgError ? `<br><b>${esc(bgError)}</b>` : ''}</p>` : ''}`,
       actions: [{ label: 'ยกเลิก' }, { label: 'บันทึก', primary: true, value: 'save' }],
       onOpen(modal) {
+        if (hasBg) {
+          const f = $('form', modal);
+          const apply = () => {
+            $('.bg-img', modal).hidden = f.bgmode.value !== 'image';
+            inp.bg = sanitizeBg({ mode: f.bgmode.value, imageId: f.bgimg.value });
+          };
+          f.bgmode.addEventListener('change', apply);
+          f.bgimg.addEventListener('change', apply);
+        }
         if (!hasColor) return;
         const fmt = { b: pct, c: pct, s: pct, t: temp };
         const apply = () => {
@@ -1422,7 +1447,8 @@
         $('.cc-reset', modal).addEventListener('click', () => { $$('[data-cc]', modal).forEach(r => { r.value = NEUTRAL_COLOR[r.dataset.cc]; }); apply(); });
       }
     });
-    if (result?.value !== 'save') { inp.color = before; return; }
+    if (result?.value !== 'save') { inp.color = before; if (hasBg) inp.bg = bgBefore.mode === 'none' ? null : bgBefore; return; }
+    if (hasBg && inp.bg && inp.bg.mode === 'none') inp.bg = null;
     const name = result.form.name.value.trim();
     if (name) inp.name = name;
     if (hasText) inp.text = result.form.text.value.trim();
@@ -1992,6 +2018,126 @@
     setPreview(made.id);
     toast(`สร้าง “${name}” แล้ว — อยู่ใน Preview กด CUT เพื่อขึ้นจอ`, 'success');
     return made;
+  }
+
+  /* ---- พื้นหลังด้วย AI (MediaPipe Image Segmenter, โมเดล selfie แนวนอน 256×144) ----
+     ตัดคนออกจากพื้นหลังทุกเฟรมในเครื่อง แล้ว เบลอพื้นหลัง / ใส่ภาพอื่นแทน / ทำโปร่งใส (ใช้ซ้อนบนสไลด์)
+     โหลดตัวประมวลผลและโมเดลครั้งแรกจาก CDN (ต้องต่อเน็ต) — หลังจากนั้นเบราว์เซอร์เก็บไว้ */
+  const BG_MODES = { none: 'ไม่ใช้', blur: 'เบลอพื้นหลัง', image: 'เปลี่ยนเป็นภาพ / วิดีโออื่น', remove: 'ลบพื้นหลัง (โปร่งใส — ใช้ซ้อนบนสไลด์หรือภาพอื่น)' };
+  const BG_TYPES = ['camera', 'wireless', 'guest', 'srt', 'media'];
+  const MP_BASE = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.21';
+  const MP_MODEL = 'https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter_landscape/float16/1/selfie_segmenter_landscape.tflite';
+  const sanitizeBg = b => ({ mode: BG_MODES[b?.mode] ? b.mode : 'none', imageId: typeof b?.imageId === 'string' ? b.imageId.slice(0, 40) : '' });
+  let visionLoading = null;
+  function loadVision() {
+    if (!visionLoading) {
+      visionLoading = (async () => {
+        const mod = await import(`${MP_BASE}/vision_bundle.mjs`);
+        return { mod, fileset: await mod.FilesetResolver.forVisionTasks(`${MP_BASE}/wasm`) };
+      })();
+      visionLoading.catch(() => { visionLoading = null; });
+    }
+    return visionLoading;
+  }
+  async function makeSegmenter() {
+    const { mod, fileset } = await loadVision();
+    const opts = delegate => ({ baseOptions: { modelAssetPath: MP_MODEL, delegate }, runningMode: 'VIDEO', outputConfidenceMasks: true, outputCategoryMask: false });
+    try { return await mod.ImageSegmenter.createFromOptions(fileset, opts('GPU')); }
+    catch (e) { return mod.ImageSegmenter.createFromOptions(fileset, opts('CPU')); }
+  }
+  const bgActive = inp => inp.bg && inp.bg.mode !== 'none' && BG_TYPES.includes(inp.type);
+  const bgFrame = inp => bgActive(inp) && inp.status === 'live' && inp.bgState && inp.bgState.ready ? inp.bgState.out : null;
+  function bgStop(inp) {
+    const st = inp.bgState;
+    if (!st) return;
+    inp.bgState = null;
+    if (st.seg) { try { st.seg.close(); } catch (e) {} }
+  }
+  function stepBackgrounds(now) {
+    for (const inp of inputs) {
+      if (!bgActive(inp)) { if (inp.bgState && !inp.bgState.loading) bgStop(inp); continue; }
+      const v = inp.el;
+      if (inp.status !== 'live' || !v || v.readyState < 2 || !v.videoWidth) continue;
+      const st = inp.bgState || (inp.bgState = { seg: null, loading: false, ready: false, error: '', last: 0, ts: 0, version: 0 });
+      if (!st.seg) {
+        if (st.loading || st.error) continue;
+        st.loading = true;
+        makeSegmenter().then(seg => {
+          st.loading = false;
+          if (inp.bgState !== st || inp.removed) { seg.close(); return; }
+          st.seg = seg;
+        }).catch(e => {
+          st.loading = false;
+          st.error = 'โหลด AI ตัดพื้นหลังไม่สำเร็จ — ต้องต่ออินเทอร์เน็ตครั้งแรก (' + (e.message || e) + ')';
+          toast(`${inp.name}: ${st.error}`, 'error', 8000);
+        });
+        continue;
+      }
+      // ไม่เกินเฟรมเรตของเอาต์พุต และไม่กินเวลาวาดภาพเกิน ~1/3 (เครื่องช้า = อัปเดตมาสก์ห่างขึ้น แต่ภาพหลักยังลื่น)
+      if (now - st.last < Math.max(1000 / Math.min(30, settings.fps) - 2, (st.cost || 0) * 3)) continue;
+      st.last = now;
+      const t0 = performance.now();
+      try { bgProcess(inp, st, v, now); } catch (e) { console.warn('background', e); }
+      st.cost = (st.cost || 0) * 0.8 + (performance.now() - t0) * 0.2;
+    }
+  }
+  function bgProcess(inp, st, v, now) {
+    const MW = 256, MH = 144;
+    if (!st.small) {
+      st.small = Object.assign(document.createElement('canvas'), { width: MW, height: MH });
+      st.sctx = st.small.getContext('2d', { willReadFrequently: false });
+      st.mask = Object.assign(document.createElement('canvas'), { width: MW, height: MH });
+      st.mctx = st.mask.getContext('2d');
+      st.img = st.mctx.createImageData(MW, MH);
+      st.out = document.createElement('canvas');
+      st.octx = st.out.getContext('2d');
+    }
+    st.sctx.drawImage(v, 0, 0, MW, MH);
+    st.ts = Math.max(st.ts + 1, Math.round(now));
+    const res = st.seg.segmentForVideo(st.small, st.ts);
+    const masks = res.confidenceMasks || [];
+    // โมเดล selfie: มาสก์สุดท้าย = ความมั่นใจว่าเป็นคน
+    const m = masks.length ? masks[masks.length - 1].getAsFloat32Array() : null;
+    if (m) {
+      const d = st.img.data;
+      for (let i = 0, j = 3; i < m.length; i++, j += 4) {
+        const a = (m[i] - 0.25) * 2;
+        d[j - 3] = d[j - 2] = d[j - 1] = 255;
+        d[j] = a <= 0 ? 0 : a >= 1 ? 255 : a * 255;
+      }
+      st.mctx.putImageData(st.img, 0, 0);
+    }
+    res.close && res.close();
+    if (!m) return;
+    const ow = Math.min(v.videoWidth, 1280), oh = Math.round(ow * v.videoHeight / v.videoWidth);
+    const o = st.out, c = st.octx;
+    if (o.width !== ow || o.height !== oh) { o.width = ow; o.height = oh; }
+    c.save();
+    c.clearRect(0, 0, ow, oh);
+    c.imageSmoothingEnabled = true;
+    c.filter = 'blur(2px)';
+    c.drawImage(st.mask, 0, 0, ow, oh);
+    c.filter = 'none';
+    c.globalCompositeOperation = 'source-in';
+    c.drawImage(v, 0, 0, ow, oh);
+    c.globalCompositeOperation = 'destination-over';
+    if (inp.bg.mode === 'blur') {
+      c.filter = `blur(${Math.round(ow / 80)}px)`;
+      c.drawImage(v, -ow * 0.03, -oh * 0.03, ow * 1.06, oh * 1.06);
+      c.filter = 'none';
+    } else if (inp.bg.mode === 'image') {
+      const src = byId(inp.bg.imageId);
+      const el = src && src.status === 'live' && src.el;
+      const sw = el && (el.videoWidth || el.naturalWidth), sh = el && (el.videoHeight || el.naturalHeight);
+      if (sw && sh) {
+        // เต็มกรอบแบบครอปขอบ
+        const k = Math.max(ow / sw, oh / sh);
+        c.drawImage(el, (ow - sw * k) / 2, (oh - sh * k) / 2, sw * k, sh * k);
+      } else { c.fillStyle = '#000'; c.fillRect(0, 0, ow, oh); }
+    }
+    c.restore();
+    st.ready = true;
+    st.version++;
   }
 
   /* ---- สไลด์ PDF: เปิดด้วย pdf.js (อยู่ในแอป ใช้ได้แม้ไม่มีเน็ต) วาดทีละหน้าเป็นภาพตามความละเอียดเอาต์พุต
@@ -5841,6 +5987,7 @@
           if (i.type === 'slides') o.slides = { page: i.slides.page, file: i.fileName || '' };
           if (i.layout) o.layout = JSON.parse(JSON.stringify(i.layout));
           if (i.color) o.color = { ...i.color };
+          if (i.bg && i.bg.mode !== 'none') o.bg = { ...i.bg };
           return o;
         }),
         program: state.programId, preview: state.previewId,
@@ -5880,6 +6027,7 @@
         const made = byId(id);
         if (made && raw.layout) made.layout = sanitizeLayout(raw.layout);
         if (made && raw.color) made.color = sanitizeColor(raw.color);
+        if (made && raw.bg) made.bg = sanitizeBg(raw.bg);
         if (made && GRAPHIC_TYPES.includes(made.type) && raw.data && /^https?:\/\//i.test(raw.data.url || '')) {
           made.data = { url: String(raw.data.url), header: raw.data.header !== false, row: Math.max(0, +raw.data.row || 0), rows: [], error: '', fetchedAt: 0 };
         }
