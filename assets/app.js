@@ -52,6 +52,8 @@
     transition: 'mix', duration: 1000,
     // Stinger: วิดีโอทับระหว่างเปลี่ยนภาพ (ไฟล์เก็บใน mediaStore คีย์ 'stinger') · cutAt = จุดสลับภาพ (สัดส่วนของความยาว)
     stinger: { name: '', cutAt: 0.5 },
+    // MIDI: on = เปิดใช้ · map = การกระทำ → ปุ่ม/ปุ่มหมุนบนคอนโทรลเลอร์ ("note:ช่อง:เลข" หรือ "cc:ช่อง:เลข")
+    midi: { on: false, map: {} },
     gateway: store.raw('webmix-gateway-url') || '',
     destinations: [], rememberKey: false,
     // บันทึกสำรองอัตโนมัติเมื่อเริ่มไลฟ์ · บันทึกแยกทุกกล้อง (ISO) พร้อมกับการบันทึก Program
@@ -75,6 +77,7 @@
   if (!FRAME_RATES.includes(+settings.fps)) settings.fps = defaults.fps;
   const TRANSITIONS = ['mix', 'dip', 'wipe', 'push', 'stinger'];
   if (!TRANSITIONS.includes(settings.transition)) settings.transition = 'mix';
+  settings.midi = { on: !!settings.midi?.on, map: Object.fromEntries(Object.entries(settings.midi?.map || {}).filter(([k, v]) => /^[a-z0-9]{2,12}$/.test(k) && /^(note|cc):\d{1,2}:\d{1,3}$/.test(v))) };
   settings.stinger = { name: String(settings.stinger?.name || '').slice(0, 80), cutAt: clamp(+settings.stinger?.cutAt || 0.5, 0.05, 0.95) };
   if (![500, 1000, 2000].includes(+settings.duration)) settings.duration = 1000;
   if (!['auto', 'gpu', 'cpu'].includes(settings.renderer)) settings.renderer = 'auto';
@@ -2134,6 +2137,138 @@
     renderInputs(); refreshSourceSelects();
   }
 
+  /* ---- ควบคุมภายนอกด้วย MIDI (คอนโทรลเลอร์ USB / ปุ่มกด / เฟดเดอร์) ----
+     ตั้งค่า → ควบคุม: กด "สอน" ข้างคำสั่ง แล้วกดปุ่มหรือขยับเฟดเดอร์บนคอนโทรลเลอร์ — จำไว้ในเครื่องนี้
+     ปุ่ม (Note / CC ≥ 64) = สั่งงาน · เฟดเดอร์/ปุ่มหมุน (CC 0–127) = T-Bar, เสียง Master, เสียงช่อง 1–8 */
+  const midi = { access: null, learn: null, onLearn: null, last: '', ccHigh: new Map(), error: '' };
+  const MIDI_ACTIONS = () => {
+    const pick = (n, take) => { const inp = inputs[n - 1]; if (!inp || inp.id === state.programId) return; audio.ensure(); if (take) { state.previewId = inp.id; cut(); } else setPreview(inp.id); };
+    const strip = n => n === 0 ? audio.masterStrip : audio.channels[n - 1];
+    const fade = n => v => {
+      const ch = strip(n);
+      if (!ch) return;
+      ch.db = posToDb(v);
+      n === 0 ? audio.applyMaster() : audio.applyGain(ch);
+      ch.ui?.fader?.set(v * 100);
+      if (ch.ui?.db) ch.ui.db.textContent = `${fmtDb(ch.db)} dB`;
+    };
+    const nums = [1, 2, 3, 4, 5, 6, 7, 8];
+    return [
+      ['cut', 'CUT', cut], ['auto', 'AUTO', autoTransition], ['ftb', 'FTB (จอดำ)', toggleFtb],
+      ['tbar', 'T-Bar', null, v => { onTbar(v * 100); tbar.set(tr.base === 0 ? tr.progress * 100 : 100 - tr.progress * 100); }],
+      ['replay', 'Instant Replay', () => replayCapture()],
+      ['rec', 'เริ่ม / หยุดบันทึก', toggleRecord],
+      ...nums.map(n => [`pvw${n}`, `Preview ${n}`, () => pick(n, false)]),
+      ...nums.map(n => [`pgm${n}`, `ตัดเข้า Program ${n}`, () => pick(n, true)]),
+      ...ovl.map((c, i) => [`ovl${i + 1}`, `Overlay ${c.n}`, () => setChannel(i, !ovl[i].on)]),
+      ['master', 'เสียง Master', null, fade(0)],
+      ...nums.map(n => [`vol${n}`, `เสียงช่อง ${n}`, null, fade(n)])
+    ];
+  };
+  function midiMessage(e) {
+    const [st, d1 = 0, d2 = 0] = e.data;
+    const kind = st & 0xf0, ch = (st & 0x0f) + 1;
+    let id, on = false, value = null;
+    if (kind === 0x90 && d2 > 0) { id = `note:${ch}:${d1}`; on = true; }
+    else if (kind === 0xb0) {
+      id = `cc:${ch}:${d1}`; value = d2 / 127;
+      const high = d2 >= 64, was = midi.ccHigh.get(id);
+      midi.ccHigh.set(id, high);
+      on = high && !was;
+    } else return;
+    midi.last = id;
+    if (midi.learn) {
+      // ปุ่ม CC ส่งค่า 0 ตอนปล่อย — สอนจากค่าที่กดเท่านั้น ยกเว้นคำสั่งแบบเฟดเดอร์
+      const act = MIDI_ACTIONS().find(a => a[0] === midi.learn);
+      if (!act || (!act[3] && !on)) return;
+      for (const [k, v] of Object.entries(settings.midi.map)) if (v === id) delete settings.midi.map[k];
+      settings.midi.map[midi.learn] = id;
+      saveSettings();
+      const done = midi.learn;
+      midi.learn = null;
+      if (midi.onLearn) midi.onLearn(done, id);
+      return;
+    }
+    const key = Object.keys(settings.midi.map).find(k => settings.midi.map[k] === id);
+    if (!key) return;
+    const act = MIDI_ACTIONS().find(a => a[0] === key);
+    if (!act) return;
+    if (act[3] && value !== null) act[3](value);
+    else if (act[2] && on) { audio.ensure(); act[2](); }
+  }
+  const midiDevices = () => midi.access ? [...midi.access.inputs.values()].filter(i => i.state !== 'disconnected').map(i => i.name || 'MIDI') : [];
+  async function midiEnable() {
+    if (midi.access) return true;
+    if (!navigator.requestMIDIAccess) { midi.error = 'เบราว์เซอร์นี้ไม่รองรับ MIDI (ใช้ Chrome / Edge)'; return false; }
+    try {
+      midi.access = await navigator.requestMIDIAccess({ sysex: false });
+    } catch (e) { midi.error = 'ไม่ได้รับอนุญาตให้ใช้ MIDI'; return false; }
+    const hook = () => { for (const i of midi.access.inputs.values()) i.onmidimessage = midiMessage; if (midi.onDevices) midi.onDevices(); };
+    midi.access.onstatechange = hook;
+    hook();
+    return true;
+  }
+  function midiDisable() {
+    if (!midi.access) return;
+    for (const i of midi.access.inputs.values()) i.onmidimessage = null;
+    midi.access.onstatechange = null;
+    midi.access = null;
+  }
+  const midiLabel = id => {
+    if (!id) return '—';
+    const [k, ch, n] = id.split(':');
+    return `${k === 'note' ? 'Note' : 'CC'} ${n}${ch !== '1' ? ` · ch${ch}` : ''}`;
+  };
+  function midiPaneHtml() {
+    return `
+          <label class="check"><input type="checkbox" class="midi-on" ${settings.midi.on ? 'checked' : ''}> ใช้คอนโทรลเลอร์ MIDI (เสียบ USB แล้วเปิดตัวเลือกนี้)</label>
+          <p class="note midi-dev"></p>
+          <div class="midi-list">${MIDI_ACTIONS().map(([k, label, , cont]) => `
+            <div class="midi-row" data-midi="${k}"><span>${label}${cont ? ' <small>(เฟดเดอร์/ปุ่มหมุน)</small>' : ''}</span>
+              <b class="mono midi-map">${midiLabel(settings.midi.map[k])}</b>
+              <button type="button" class="btn btn-sm midi-learn">สอน</button>
+              <button type="button" class="btn btn-sm btn-ghost midi-clear" ${settings.midi.map[k] ? '' : 'hidden'} title="ลบการจับคู่">✕</button></div>`).join('')}</div>
+          <p class="note">กด “สอน” แล้วกดปุ่ม หรือขยับเฟดเดอร์บนคอนโทรลเลอร์ · ใช้ได้ทันทีและจำไว้ในเครื่องนี้ (ไม่ต้องกดบันทึก)<br>
+          Stream Deck / ปุ่มกดอื่น ๆ: ตั้งให้ส่งคีย์ลัด เช่น Space = CUT, Enter = AUTO, 1–9 = Preview, Shift+1–9 = ตัดเข้า Program, I = Replay (ดูทั้งหมดในคู่มือ)</p>`;
+  }
+  function bindMidiPane(modal) {
+    const pane = $('[data-mpane=control]', modal);
+    if (!pane) return;
+    const devs = () => {
+      const el = $('.midi-dev', pane);
+      if (!settings.midi.on) { el.textContent = 'ปิดอยู่'; return; }
+      if (midi.error && !midi.access) { el.textContent = midi.error; return; }
+      const d = midiDevices();
+      el.textContent = d.length ? `เชื่อมต่อแล้ว: ${d.join(', ')}` : 'ยังไม่พบอุปกรณ์ MIDI — เสียบสาย USB แล้วรอสักครู่';
+    };
+    midi.onDevices = devs;
+    const paint = () => $$('.midi-row', pane).forEach(r => {
+      const k = r.dataset.midi, id = settings.midi.map[k];
+      $('.midi-map', r).textContent = midi.learn === k ? 'กดปุ่มบนคอนโทรลเลอร์…' : midiLabel(id);
+      r.classList.toggle('is-learning', midi.learn === k);
+      $('.midi-clear', r).hidden = !id;
+    });
+    midi.onLearn = (k, id) => { paint(); toast(`จับคู่ “${MIDI_ACTIONS().find(a => a[0] === k)[1]}” กับ ${midiLabel(id)} แล้ว`, 'success', 2500); };
+    $('.midi-on', pane).addEventListener('change', async e => {
+      settings.midi.on = e.target.checked;
+      saveSettings();
+      if (settings.midi.on) await midiEnable(); else { midi.learn = null; midiDisable(); }
+      devs(); paint();
+    });
+    pane.addEventListener('click', async e => {
+      const row = e.target.closest('.midi-row');
+      if (!row) return;
+      const k = row.dataset.midi;
+      if (e.target.closest('.midi-clear')) { delete settings.midi.map[k]; saveSettings(); if (midi.learn === k) midi.learn = null; paint(); return; }
+      if (!e.target.closest('.midi-learn')) return;
+      if (!settings.midi.on) { $('.midi-on', pane).checked = true; settings.midi.on = true; saveSettings(); }
+      if (!(await midiEnable())) { devs(); toast(midi.error, 'error'); return; }
+      midi.learn = midi.learn === k ? null : k;
+      devs(); paint();
+    });
+    devs(); paint();
+  }
+
   function addTitleInput() {
     const n = inputs.filter(i => i.type === 'title').length + 1;
     const inp = addInput({ type: 'title', name: `TITLE ${n}`, title: { headline: 'ชื่อ นามสกุล', subtitle: 'ตำแหน่ง / หน่วยงาน', color: TITLE_COLORS[0], style: 'lower' } });
@@ -2811,8 +2946,8 @@
         ${!isMaster && ch.kind === 'mic' ? '<button class="chip-btn rm" title="ลบช่องเสียงนี้">✕</button>' : ''}
       </div>`;
     ch.ui = { cover: el.querySelector('.meter-cover'), peak: el.querySelector('.meter-peak'), lim: el.querySelector('.lim'), fxBtn: el.querySelector('.fx') };
-    const dbEl = el.querySelector('.strip-db');
-    makeFader(el.querySelector('.vfader'), {
+    const dbEl = ch.ui.db = el.querySelector('.strip-db');
+    ch.ui.fader = makeFader(el.querySelector('.vfader'), {
       value: dbToPos(ch.db) * 100,
       defaultValue: 75,
       label: `${ch.name} volume`,
@@ -4487,6 +4622,7 @@
       ['grid', 'Multiview — ดูทุกภาพ แตะเพื่อสลับ', () => multiview.open()],
       ...(desktop && desktop.mobile ? [] : [['external', 'หน้าต่าง Program Output', openOutputWindow]]),
       ['sliders', 'ตั้งค่า', () => openSettings()],
+      ['sliders', 'ควบคุมด้วย MIDI / Stream Deck', () => openSettings('control')],
       ['broadcast', 'เริ่มต้นใช้งาน (ตั้งค่าไลฟ์ทีละขั้น)', openOnboarding],
       ['help', 'คู่มือ', openHelp]
     ];
@@ -4570,7 +4706,7 @@
       title: 'ตั้งค่า',
       wide: true,
       body: `
-        <div class="modal-tabs"><button type="button" data-mtab="output">เอาต์พุต</button><button type="button" data-mtab="stream">การสตรีม</button></div>
+        <div class="modal-tabs"><button type="button" data-mtab="output">เอาต์พุต</button><button type="button" data-mtab="stream">การสตรีม</button><button type="button" data-mtab="control">ควบคุม</button></div>
         <div class="modal-pane" data-mpane="output">
           ${live ? '<p class="note warn">กำลังบันทึกหรือสตรีมอยู่ — เปลี่ยนความละเอียดและเฟรมเรตได้หลังหยุดก่อน</p>' : ''}
           <div class="field"><span>คุณภาพการไลฟ์และบันทึก</span>${qualityHtml(qualityOf(settings.resolution, settings.fps, settings.videoKbps)?.id)}</div>
@@ -4621,6 +4757,8 @@
         </div>`,
       actions: [{ label: 'ยกเลิก' }, { label: 'บันทึก', primary: true, value: 'save' }],
       onOpen(modal) {
+        $('.modal-body', modal).insertAdjacentHTML('beforeend', `<div class="modal-pane" data-mpane="control">${midiPaneHtml()}</div>`);
+        bindMidiPane(modal);
         const showTab = name => {
           $$('[data-mtab]', modal).forEach(b => b.classList.toggle('is-active', b.dataset.mtab === name));
           $$('[data-mpane]', modal).forEach(p => p.classList.toggle('is-active', p.dataset.mpane === name));
@@ -5648,6 +5786,7 @@
   /* ------------------------------------------------------------ boot */
   function boot() {
     initControls();
+    if (settings.midi.on) midiEnable();
     ticker.init();
     applyResolution();
     renderer.resolve();
@@ -5689,7 +5828,7 @@
     $$('#seg-cardsize button').forEach(b => { b.classList.toggle('is-active', b.dataset.size === cardSize()); b.addEventListener('click', () => setCardSize(b.dataset.size)); });
 
     // สำหรับดีบัก/ทดสอบอัตโนมัติ
-    window.webmix = { playlist, dataSources, timerControl, multiview, renderer, gpu, setRenderer: v => { settings.renderer = v; renderer.resolve(); updateStatus(); }, show, ovl, setChannel, toggleInputOverlay, useRecFolder: dir => { recFolder = dir; }, inputs, state, settings, overlays, audio, rec, iso, stinger, replayCapture, streamer, wireless, cut, autoTransition, setPreview, tr, ftb };
+    window.webmix = { playlist, dataSources, timerControl, multiview, renderer, gpu, setRenderer: v => { settings.renderer = v; renderer.resolve(); updateStatus(); }, show, ovl, setChannel, toggleInputOverlay, useRecFolder: dir => { recFolder = dir; }, inputs, state, settings, overlays, audio, rec, iso, stinger, replayCapture, midi, streamer, wireless, cut, autoTransition, setPreview, tr, ftb };
   }
 
   boot();

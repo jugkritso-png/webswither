@@ -15,6 +15,7 @@
     ['Shift + Q W E R', 'เปิด / ปิด Overlay 5 – 8'],
     ['M', 'เปิดหน้าต่าง Multiview'],
     ['I', 'Instant Replay — จับภาพย้อนหลังใส่ Preview (ต้องเพิ่มแหล่งภาพ Instant Replay ก่อน)'],
+    ['MIDI', 'คอนโทรลเลอร์ MIDI: ตั้งค่า → ควบคุม แล้วกด “สอน” ข้างคำสั่ง (Chrome / Edge)'],
     ['Esc', 'ปิดหน้าต่าง / ออกจากเต็มจอ']
   ];
   const MANUAL = [
