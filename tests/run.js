@@ -29,6 +29,20 @@ function makeFixtures() {
   if (!fs.existsSync(f('green.png'))) ffmpeg(['-f', 'lavfi', '-i', 'color=c=0x00ff00:s=640x360', '-vf', 'drawbox=x=270:y=130:w=100:h=100:color=red:t=fill', '-frames:v', '1', f('green.png')]);
   // Stinger: ม่วงเต็มจอช่วง 0.7–1.3 วินาที นอกนั้นโปร่งใส (VP9 alpha)
   if (!fs.existsSync(f('sting.webm'))) ffmpeg(['-f', 'lavfi', '-i', "color=c=0xff00ff:s=320x180:r=30:d=2,format=yuva420p,geq=lum='lum(X,Y)':cb='cb(X,Y)':cr='cr(X,Y)':a='if(between(T,0.7,1.3),255,0)'", '-c:v', 'libvpx-vp9', '-auto-alt-ref', '0', '-b:v', '300k', f('sting.webm')]);
+  // สไลด์ PDF 3 หน้า (16:9): แดง เขียว น้ำเงิน — เขียนไฟล์ PDF เองทีละไบต์ (ไม่ต้องพึ่งโปรแกรมอื่น)
+  if (!fs.existsSync(f('slides.pdf'))) {
+    const colors = ['1 0 0', '0 1 0', '0 0 1'];
+    const objs = ['<< /Type /Catalog /Pages 2 0 R >>', `<< /Type /Pages /Kids [${colors.map((c, i) => `${3 + i * 2} 0 R`).join(' ')}] /Count ${colors.length} >>`];
+    colors.forEach((c, i) => {
+      const stream = `${c} rg 0 0 1600 900 re f`;
+      objs.push(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 1600 900] /Contents ${4 + i * 2} 0 R >>`, `<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`);
+    });
+    let pdf = '%PDF-1.4\n';
+    const offs = objs.map((o, i) => { const at = pdf.length; pdf += `${i + 1} 0 obj\n${o}\nendobj\n`; return at; });
+    const xref = pdf.length;
+    pdf += `xref\n0 ${objs.length + 1}\n0000000000 65535 f \n${offs.map(o => `${String(o).padStart(10, '0')} 00000 n \n`).join('')}trailer\n<< /Size ${objs.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+    fs.writeFileSync(f('slides.pdf'), pdf);
+  }
   if (!fs.existsSync(f('loud.webm'))) ffmpeg(['-f', 'lavfi', '-i', 'testsrc2=size=640x360:rate=30', '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000,volume=7', '-t', '20', '-c:v', 'libvpx', '-b:v', '500k', '-c:a', 'libopus', '-b:a', '128k', '-shortest', f('loud.webm')]);
 }
 

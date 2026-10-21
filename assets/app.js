@@ -245,7 +245,8 @@
     ticker: { icon: 'type', label: 'TICKER' },
     playlist: { icon: 'film', label: 'PLAYLIST' },
     scene: { icon: 'grid', label: 'SCENE' },
-    replay: { icon: 'restart', label: 'REPLAY' }
+    replay: { icon: 'restart', label: 'REPLAY' },
+    slides: { icon: 'image', label: 'SLIDES' }
   };
   // กราฟิกที่วาดบนพื้นโปร่งใส (ซ้อนเป็น Overlay ได้ทันที)
   const GRAPHIC_TYPES = ['title', 'timer', 'score', 'ticker'];
@@ -278,6 +279,13 @@
       case 'clock': drawClock(ctx, w, h, inp); break;
       case 'title': case 'timer': case 'score': case 'ticker': fillBlack(ctx, w, h); drawGraphic(ctx, inp, w, h); break;
       case 'scene': drawScene(ctx, inp, w, h); break;
+      case 'slides': {
+        const c = slideCanvas(inp);
+        if (inp.status !== 'live' || !c) { drawNoSignal(ctx, w, h, inp); break; }
+        fillBlack(ctx, w, h);
+        drawFitColored(ctx, inp, c, c.width, c.height, w, h);
+        break;
+      }
       case 'image':
         if (inp.status !== 'live') { drawNoSignal(ctx, w, h, inp); break; }
         fillBlack(ctx, w, h);
@@ -652,6 +660,13 @@
         // ตัววิ่งเลื่อนทุกเฟรม: วาดและส่งขึ้น GPU เฉพาะแถบ ไม่ใช่ทั้งจอ
         const bh = Math.round(H * TICKER_BAR.h);
         return { e: genTexture('g:' + inp.id, frameNo, W, bh, (c, w, h) => drawTickerBar(c, w, h, inp)), region: TICKER_BAR, under: transparent ? null : [0, 0, 0, 1] };
+      }
+      case 'slides': {
+        const c = slideCanvas(inp);
+        if (inp.status !== 'live' || !c) return noSignal();
+        const e = gpu.entry('s:' + inp.id);
+        if (e.stamp !== c) { gpu.upload(e, c, c.width, c.height); e.stamp = c; }
+        return { e };
       }
       case 'image': {
         if (inp.status !== 'live' || !inp.el.naturalWidth) return noSignal();
@@ -1162,7 +1177,7 @@
     inputs.forEach((inp, i) => {
       const meta = TYPE_META[inp.type];
       const isMedia = inp.type === 'media' && !inp.missing;
-      const canRelink = ['camera', 'screen', 'media', 'image'].includes(inp.type) && (inp.missing || inp.status !== 'live');
+      const canRelink = ['camera', 'screen', 'media', 'image', 'slides'].includes(inp.type) && (inp.missing || inp.status !== 'live');
       const card = document.createElement('div');
       card.className = 'card' + (inp.status !== 'live' ? ' no-signal' : '');
       card.dataset.id = inp.id;
@@ -1182,6 +1197,9 @@
               <button class="mini" data-card="play" title="เล่น / หยุดชั่วคราว">${icon(inp.el.paused ? 'play' : 'pause')}</button>
               <button class="mini" data-card="restart" title="เล่นใหม่ตั้งแต่ต้น">${icon('restart')}</button>
               <button class="mini ${inp.el.loop ? 'is-on' : ''}" data-card="loop" title="เล่นวนซ้ำ">${icon('repeat')}</button>` : ''}
+            ${inp.type === 'slides' && inp.slides.count ? `
+              <button class="mini txt" data-card="slprev" title="หน้าก่อนหน้า (← / Page Up)">‹</button>
+              <button class="mini txt" data-card="slnext" title="หน้าถัดไป (→ / Page Down)">›</button>` : ''}
             ${inp.type === 'replay' ? `
               <button class="mini txt rp-cap" data-card="rcap" title="จับภาพ ${inp.replay.len} วินาทีล่าสุด แล้วใส่ใน Preview (ปุ่มลัด I)">⟲ ${inp.replay.len}s</button>
               <button class="mini txt" data-card="rspd" title="ความเร็วเล่นซ้ำ">${speedLabel(inp.replay.speed)}</button>` : ''}
@@ -1235,6 +1253,7 @@
       else if (act === 'restart') { inp.el.currentTime = 0; inp.el.play().catch(() => {}); }
       else if (act === 'loop') { inp.el.loop = !inp.el.loop; actionBtn.classList.toggle('is-on', inp.el.loop); }
       else if (act === 'rcap') replayCapture(inp);
+      else if (act === 'slprev' || act === 'slnext') slideGo(inp, inp.slides.page + (act === 'slnext' ? 1 : -1));
       else if (act === 'rspd') { const i = REPLAY_SPEEDS.indexOf(inp.replay.speed); inp.replay.speed = REPLAY_SPEEDS[(i + 1) % REPLAY_SPEEDS.length]; inp.el.playbackRate = inp.replay.speed; actionBtn.textContent = speedLabel(inp.replay.speed); }
       return;
     }
@@ -1333,7 +1352,8 @@
       audio.dropMixMinus(inp.id);
     }
     if (inp.type === 'srt') closeSrtInput(inp);
-    if (forget && (inp.type === 'media' || inp.type === 'image')) mediaStore.del(inp.id);
+    if (forget && (inp.type === 'media' || inp.type === 'image' || inp.type === 'slides')) mediaStore.del(inp.id);
+    if (inp.type === 'slides' && inp.pdf) { try { inp.pdf.destroy(); } catch (e) {} inp.pdf = null; }
     if (inp.type === 'playlist') playlist.dispose(inp, forget);
     if (inp.type === 'replay') replayStop(inp);
     inp.removed = true;
@@ -1364,6 +1384,7 @@
     if (inp.type === 'playlist') return playlist.edit(inp);
     if (inp.type === 'scene') return openSceneDialog(inp);
     if (inp.type === 'replay') return openReplayDialog(inp);
+    if (inp.type === 'slides') return openSlidesDialog(inp);
     if (inp.type === 'srt' && inp.srt.mode === 'rtsp') return openRtspDialog(inp);
     if (inp.type === 'srt' && inp.srt.mode === 'rtmp') return showRtmpSenderInfo(inp);
     if (inp.type === 'title') return openTitleDialog(inp);
@@ -1613,6 +1634,7 @@
       return openCameraDialog(inp);
     }
     if (inp.type === 'screen') return addScreen(inp);
+    if (inp.type === 'slides') return pickFiles('application/pdf,.pdf', files => { if (!inp.removed) loadSlides(inp, files[0], true); });
     if (inp.type === 'media' || inp.type === 'image') {
       const el = document.createElement('input');
       el.type = 'file'; el.accept = inp.type === 'media' ? 'video/*,audio/*' : 'image/*';
@@ -1972,6 +1994,124 @@
     return made;
   }
 
+  /* ---- สไลด์ PDF: เปิดด้วย pdf.js (อยู่ในแอป ใช้ได้แม้ไม่มีเน็ต) วาดทีละหน้าเป็นภาพตามความละเอียดเอาต์พุต
+     เตรียมหน้าถัดไป/ก่อนหน้าไว้ล่วงหน้า กดเปลี่ยนหน้าแล้วภาพเปลี่ยนทันที · PowerPoint / Keynote / Google Slides → บันทึกเป็น PDF ก่อน */
+  let pdfjsLoading = null;
+  function loadPdfjs() {
+    if (window.pdfjsLib) return Promise.resolve(window.pdfjsLib);
+    if (!pdfjsLoading) {
+      pdfjsLoading = new Promise((resolve, reject) => {
+        const el = document.createElement('script');
+        el.src = 'assets/vendor/pdfjs-3.11.174.min.js';
+        el.onload = () => { window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'assets/vendor/pdfjs-3.11.174.worker.min.js'; resolve(window.pdfjsLib); };
+        el.onerror = () => { pdfjsLoading = null; reject(new Error('โหลดตัวเปิด PDF ไม่สำเร็จ')); };
+        document.head.appendChild(el);
+      });
+    }
+    return pdfjsLoading;
+  }
+  const slideCanvas = inp => inp.slideCache && inp.slideCache.get(inp.slides.page) || inp.slideShown || null;
+  function createSlidesInput(props, page = 1) {
+    return addInput({ type: 'slides', status: 'nosignal', ...props, slides: { page, count: 0 }, slideCache: new Map(), slideShown: null });
+  }
+  async function loadSlides(inp, file, store) {
+    try {
+      const lib = await loadPdfjs();
+      const data = new Uint8Array(await file.arrayBuffer());
+      const pdf = await lib.getDocument({ data, isEvalSupported: false }).promise;
+      if (inp.removed) { pdf.destroy(); return; }
+      if (inp.pdf) { try { inp.pdf.destroy(); } catch (e) {} }
+      inp.pdf = pdf;
+      inp.slideCache = new Map();
+      inp.slides.count = pdf.numPages;
+      inp.slides.page = clamp(inp.slides.page, 1, pdf.numPages);
+      if (file.name && file.name !== inp.id) inp.fileName = file.name;
+      inp.missing = false;
+      await renderSlide(inp, inp.slides.page);
+      inp.slideShown = inp.slideCache.get(inp.slides.page) || null;
+      setInputStatus(inp, 'live');
+      renderInputs();
+      prefetchSlides(inp);
+      if (store) mediaStore.put(inp.id, file).then(ok => { if (!ok && !inp.removed) toast(`พื้นที่ในเบราว์เซอร์ไม่พอเก็บ “${inp.fileName}” — เปิดหน้าใหม่แล้วต้องเลือกไฟล์นี้อีกครั้ง`, 'warn', 7000); });
+      return true;
+    } catch (e) {
+      toast(`เปิด “${file.name || inp.name}” ไม่ได้: ${/password/i.test(e.name || e.message) ? 'PDF มีรหัสผ่าน' : 'ไม่ใช่ไฟล์ PDF ที่อ่านได้'}`, 'error', 6000);
+      return false;
+    }
+  }
+  // วาดหน้าเป็นภาพขนาดพอดีเอาต์พุต (สูงสุด 1080p — ตัวอักษรคมพอและไม่กินหน่วยความจำ)
+  async function renderSlide(inp, n) {
+    if (!inp.pdf || inp.slideCache.has(n)) return;
+    const busy = inp.slideBusy || (inp.slideBusy = new Map());
+    if (busy.has(n)) return busy.get(n);
+    const job = (async () => {
+      const page = await inp.pdf.getPage(n);
+      const base = page.getViewport({ scale: 1 });
+      const tw = Math.min(W, 1920), th = Math.round(tw * H / W);
+      const vp = page.getViewport({ scale: Math.min(tw / base.width, th / base.height) });
+      const c = document.createElement('canvas');
+      c.width = Math.max(1, Math.round(vp.width)); c.height = Math.max(1, Math.round(vp.height));
+      const cx = c.getContext('2d');
+      cx.fillStyle = '#fff'; cx.fillRect(0, 0, c.width, c.height);
+      await page.render({ canvasContext: cx, viewport: vp }).promise;
+      page.cleanup();
+      inp.slideCache.set(n, c);
+    })().finally(() => busy.delete(n));
+    busy.set(n, job);
+    return job;
+  }
+  // เก็บไว้เฉพาะหน้าใกล้ ๆ หน้าปัจจุบัน
+  function prefetchSlides(inp) {
+    const p = inp.slides.page;
+    for (const k of inp.slideCache.keys()) if (Math.abs(k - p) > 2) inp.slideCache.delete(k);
+    for (const n of [p + 1, p - 1, p + 2]) if (n >= 1 && n <= inp.slides.count) renderSlide(inp, n).catch(() => {});
+  }
+  async function slideGo(inp, n) {
+    if (!inp.pdf) return;
+    n = clamp(n, 1, inp.slides.count);
+    if (n === inp.slides.page) return;
+    inp.slides.page = n;
+    if (!inp.slideCache.has(n)) await renderSlide(inp, n).catch(() => {});
+    if (inp.slides.page !== n || inp.removed) return;
+    inp.slideShown = inp.slideCache.get(n) || inp.slideShown;
+    const sub = $(`#inputs-grid .card[data-id="${inp.id}"] .card-sub`);
+    if (sub) sub.textContent = cardSub(inp);
+    prefetchSlides(inp);
+  }
+  function slideStep(d) {
+    const on = byId(state.programId), pv = byId(state.previewId);
+    const inp = on && on.type === 'slides' && on.pdf ? on : pv && pv.type === 'slides' && pv.pdf ? pv : inputs.find(i => i.type === 'slides' && i.pdf && onOverlay(i.id));
+    if (!inp) return false;
+    slideGo(inp, inp.slides.page + d);
+    return true;
+  }
+  function addSlidesFiles(files) {
+    for (const file of files.slice(0, 4)) {
+      const inp = createSlidesInput({ name: baseName(file.name || 'SLIDES') });
+      loadSlides(inp, file, true).then(ok => {
+        if (ok) toast(`เปิดสไลด์ ${inp.slides.count} หน้าแล้ว — กด ‹ › บนการ์ด, ลูกศร ← → หรือรีโมตพรีเซนต์เพื่อเปลี่ยนหน้า`, 'success', 5000);
+        else { disposeInput(inp, true); resetAfterRemoval(inp.id); renderInputs(); refreshSourceSelects(); }
+      });
+    }
+  }
+  async function openSlidesDialog(inp) {
+    const r = await dialog({
+      title: `สไลด์ — ${inp.name}`,
+      body: `
+        <label class="field"><span>ชื่อแหล่งภาพ</span><input name="name" class="input" maxlength="40" value="${esc(inp.name)}"></label>
+        <label class="field"><span>ไปที่หน้า (1–${inp.slides.count || 1})</span><input name="page" class="input mono" type="number" min="1" max="${inp.slides.count || 1}" value="${inp.slides.page}"></label>
+        <p class="note">ไฟล์: ${esc(inp.fileName || '—')}${inp.slides.count ? ` · ${inp.slides.count} หน้า` : ''}<br>
+        PowerPoint / Keynote / Google Slides: บันทึกหรือดาวน์โหลดเป็น PDF แล้วเปิดไฟล์นั้น (แอนิเมชันในสไลด์จะไม่ขยับ)<br>
+        เปลี่ยนหน้า: ‹ › บนการ์ด · ปุ่มลูกศร ← → หรือ Page Up/Down (รีโมตพรีเซนต์ส่วนใหญ่ใช้ปุ่มเหล่านี้) · ตั้งปุ่ม MIDI ได้</p>`,
+      actions: [{ label: 'เปลี่ยนไฟล์…', value: 'file' }, { label: 'ยกเลิก' }, { label: 'บันทึก', primary: true, value: 'save' }]
+    });
+    if (r?.value === 'file') { relinkInput(inp); return; }
+    if (r?.value !== 'save') return;
+    inp.name = String(r.form.name.value || '').trim().slice(0, 40) || inp.name;
+    renderInputs(); refreshSourceSelects();
+    await slideGo(inp, +r.form.page.value || 1);
+  }
+
   /* ---- Instant Replay: บัฟเฟอร์ภาพย้อนหลังตลอดเวลา กด ⟲ (หรือ I) แล้วได้คลิป N วินาทีล่าสุดใน Preview
      ตัดขึ้นจอแล้วเล่น (สโลว์ได้) จบคลิปแล้วกลับภาพเดิมให้อัตโนมัติ
      บัฟเฟอร์: MediaRecorder 2 ตัวสลับกันเริ่มใหม่ทุก N วินาที → ตัวเก่ามีภาพย้อนหลัง N–2N วินาทีเสมอ (หน่วยความจำคงที่)
@@ -2161,6 +2301,7 @@
       ['cut', 'CUT', cut], ['auto', 'AUTO', autoTransition], ['ftb', 'FTB (จอดำ)', toggleFtb],
       ['tbar', 'T-Bar', null, v => { onTbar(v * 100); tbar.set(tr.base === 0 ? tr.progress * 100 : 100 - tr.progress * 100); }],
       ['replay', 'Instant Replay', () => replayCapture()],
+      ['slnext', 'สไลด์ถัดไป', () => slideStep(1)], ['slprev', 'สไลด์ก่อนหน้า', () => slideStep(-1)],
       ['rec', 'เริ่ม / หยุดบันทึก', toggleRecord],
       ...nums.map(n => [`pvw${n}`, `Preview ${n}`, () => pick(n, false)]),
       ...nums.map(n => [`pgm${n}`, `ตัดเข้า Program ${n}`, () => pick(n, true)]),
@@ -5374,7 +5515,8 @@
     ['ไฟล์', [
       ['film', 'ไฟล์วิดีโอ', 'MP4 / WebM จากเครื่องนี้', () => pickFiles('video/*', addVideoFiles)],
       ['repeat', 'Playlist', 'วิดีโอและรูปหลายไฟล์เล่นต่อกัน', addPlaylist],
-      ['image', 'ภาพนิ่ง / โลโก้', 'PNG พื้นโปร่งใสใช้เป็นโลโก้มุมจอได้', () => pickFiles('image/*', addImageFiles)]]],
+      ['image', 'ภาพนิ่ง / โลโก้', 'PNG พื้นโปร่งใสใช้เป็นโลโก้มุมจอได้', () => pickFiles('image/*', addImageFiles)],
+      ['type', 'สไลด์ PDF / PowerPoint', 'เปลี่ยนหน้าด้วย ‹ › ปุ่มลูกศร หรือรีโมตพรีเซนต์', () => pickFiles('application/pdf,.pdf', addSlidesFiles)]]],
     ['เชื่อมต่อจากที่อื่น', [
       ['phone', 'กล้องมือถือไร้สาย', 'สแกน QR ด้วยมือถืออีกเครื่อง แล้วใช้เป็นกล้อง', showWirelessDialog],
       ['headphones', 'แขกรับเชิญทางไกล', 'ส่งลิงก์ให้แขก คุยกันได้ทั้งภาพและเสียง', addGuest],
@@ -5473,6 +5615,7 @@
     if (inp.status !== 'live') return 'ไม่มีสัญญาณ';
     if (inp.data && inp.data.error) return 'DATA ERROR';
     if (inp.type === 'title' && inp.data && inp.data.rows && inp.data.rows.length) return `${inp.data.row + 1}/${inp.data.rows.length}`;
+    if (inp.type === 'slides') return inp.slides.count ? `SLIDES · หน้า ${inp.slides.page}/${inp.slides.count}` : 'SLIDES';
     if (inp.type === 'playlist') return inp.list.items.length ? `${inp.list.index + 1}/${inp.list.items.length}` : 'ว่าง';
     const meta = TYPE_META[inp.type];
     const tag = inp.type === 'srt' ? netLabel(inp) : meta.label;
@@ -5632,6 +5775,9 @@
         e.preventDefault();
         return;
       }
+      // รีโมตพรีเซนต์ (ส่ง Page Up/Down หรือลูกศร) — เปลี่ยนหน้าสไลด์ที่อยู่บน Program (ถ้าไม่มี ใช้ตัวใน Preview)
+      const slideKey = { PageDown: 1, ArrowRight: 1, PageUp: -1, ArrowLeft: -1 }[e.key];
+      if (slideKey && slideStep(slideKey)) { e.preventDefault(); return; }
       const k = e.key.toLowerCase();
       const map = { ' ': cut, enter: autoTransition, f: toggleFtb, t: actions.title, l: actions.title, p: actions.pip, k: actions.key, m: () => multiview.open(), i: () => replayCapture() };
       const oi = OVL_KEYS.indexOf(k);
@@ -5660,7 +5806,7 @@
      - ไฟล์วิดีโอ/รูปเก็บสำเนาไว้ในพื้นที่ของเบราว์เซอร์ (OPFS) จึงไม่ต้องเลือกไฟล์ใหม่
      - บันทึกเป็นไฟล์ .webmix.json เพื่อย้ายเครื่องหรือเก็บหลายรายการ (ไฟล์สื่อไม่ได้รวมอยู่ในไฟล์ ต้องเลือกใหม่บนเครื่องอื่น) */
 
-  const SHOW_TYPES = ['bars', 'black', 'slate', 'clock', 'image', 'media', 'camera', 'screen', 'wireless', 'srt', 'title', 'guest', 'timer', 'score', 'ticker', 'playlist', 'scene', 'replay'];
+  const SHOW_TYPES = ['bars', 'black', 'slate', 'clock', 'image', 'media', 'camera', 'screen', 'wireless', 'srt', 'title', 'guest', 'timer', 'score', 'ticker', 'playlist', 'scene', 'replay', 'slides'];
   const show = {
     ready: false, last: '', savedAt: 0,
     get name() { return store.get('showName', '') || 'โชว์ใหม่'; },
@@ -5692,6 +5838,7 @@
           if (i.type === 'guest') o.guest = i.guest;
           if (i.type === 'scene') o.scene = { ...i.scene, slots: [...i.scene.slots] };
           if (i.type === 'replay') o.replay = { ...i.replay };
+          if (i.type === 'slides') o.slides = { page: i.slides.page, file: i.fileName || '' };
           if (i.layout) o.layout = JSON.parse(JSON.stringify(i.layout));
           if (i.color) o.color = { ...i.color };
           return o;
@@ -5787,6 +5934,10 @@
         case 'replay':
           createReplayInput({ ...base, replay: raw.replay });
           break;
+        case 'slides': {
+          const inp = createSlidesInput({ ...base, fileName: String(raw.slides?.file || '').slice(0, 120), missing: true }, Math.max(1, +raw.slides?.page || 1));
+          return mediaStore.get(base.id).then(file => { if (file && !inp.removed) return loadSlides(inp, file, false); });
+        }
         case 'timer': {
           const t = raw.timer || {};
           addInput({ type: 'timer', ...base, timer: { mode: TIMER_MODES[t.mode] ? t.mode : 'down', duration: clamp(+t.duration || 300, 1, 86400), target: /^\d{1,2}:\d{2}$/.test(t.target || '') ? t.target : '19:00',
@@ -6030,7 +6181,7 @@
     show.autosave(true);
     setInterval(() => show.autosave(), 1500);
     addEventListener('pagehide', () => show.autosave());
-    mediaStore.prune(new Set(['stinger', ...inputs.filter(i => i.type === 'media' || i.type === 'image').map(i => i.id), ...playlist.keys()]));
+    mediaStore.prune(new Set(['stinger', ...inputs.filter(i => i.type === 'media' || i.type === 'image' || i.type === 'slides').map(i => i.id), ...playlist.keys()]));
 
     wireless.init();
     loadRecFolder();
@@ -6044,7 +6195,7 @@
     $$('#seg-cardsize button').forEach(b => { b.classList.toggle('is-active', b.dataset.size === cardSize()); b.addEventListener('click', () => setCardSize(b.dataset.size)); });
 
     // สำหรับดีบัก/ทดสอบอัตโนมัติ
-    window.webmix = { playlist, dataSources, timerControl, multiview, renderer, gpu, setRenderer: v => { settings.renderer = v; renderer.resolve(); updateStatus(); }, show, ovl, setChannel, toggleInputOverlay, useRecFolder: dir => { recFolder = dir; }, inputs, state, settings, overlays, audio, rec, iso, stinger, replayCapture, midi, abr: { state: abr, decide: abrDecide, apply: abrApply, tick: abrTick }, streamer, wireless, cut, autoTransition, setPreview, tr, ftb };
+    window.webmix = { playlist, dataSources, timerControl, multiview, renderer, gpu, setRenderer: v => { settings.renderer = v; renderer.resolve(); updateStatus(); }, show, ovl, setChannel, toggleInputOverlay, useRecFolder: dir => { recFolder = dir; }, inputs, state, settings, overlays, audio, rec, iso, stinger, replayCapture, slideGo, midi, abr: { state: abr, decide: abrDecide, apply: abrApply, tick: abrTick }, streamer, wireless, cut, autoTransition, setPreview, tr, ftb };
   }
 
   boot();
