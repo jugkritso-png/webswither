@@ -49,6 +49,8 @@
     transition: 'mix', duration: 1000,
     gateway: store.raw('webmix-gateway-url') || '',
     destinations: [], rememberKey: false,
+    // บันทึกสำรองอัตโนมัติเมื่อเริ่มไลฟ์ · บันทึกแยกทุกกล้อง (ISO) พร้อมกับการบันทึก Program
+    autoRec: false, isoRec: false,
     title: { headline: 'BREAKING NEWS', subtitle: 'รายงานสดจากสตูดิโอ WebMix Pro', color: '#ef4444' },
     pip: { position: 'br', size: 0.32 },
     key: { color: 'green', tolerance: 60 },
@@ -3225,7 +3227,8 @@
     try { r = makeRecorder(); } catch (e) { toast('เริ่มบันทึกไม่ได้: ' + e.message, 'error'); return; }
     rec.starting = true;
     const type = r.mimeType || 'video/webm';
-    const name = `WebMix-${stamp()}.${type.includes('mp4') ? 'mp4' : 'webm'}`;
+    const when = stamp();
+    const name = `WebMix-${when}.${type.includes('mp4') ? 'mp4' : 'webm'}`;
     const sink = await openRecordingSink(name);
     rec.starting = false;
     Object.assign(rec, { recorder: r, sink, chain: Promise.resolve(), bytes: 0, start: Date.now(), active: true, warnedRam: false, failed: false });
@@ -3255,6 +3258,8 @@
     };
     r.onstop = async () => {
       rec.active = false;
+      rec.auto = false;
+      stopIso();
       rec.last = { name, bytes: rec.bytes, duration: Date.now() - rec.start, where: sink.kind === 'folder' ? sink.label : sink.label || '' };
       setRecButton();
       updateOnAir();
@@ -3289,8 +3294,97 @@
     };
     r.onerror = e => toast('การบันทึกผิดพลาด: ' + (e.error?.message || 'unknown'), 'error');
     r.start(1000);
+    if (settings.isoRec) startIso(when);
     setRecButton();
     updateOnAir();
+  }
+
+  /* ---- ไฟล์บันทึกแยกจากการบันทึก Program (ใช้กับ ISO) — เขียนลงที่เดียวกัน (โฟลเดอร์/ดิสก์/RAM) ---- */
+  async function openRecordFile(name, type) {
+    const sink = await openRecordingSink(name);
+    const fix = !type.includes('mp4') && window.WebmSeek ? new WebmSeek.WebmSeekFix() : null;
+    let written = 0, bytes = 0, failed = false, chain = Promise.resolve();
+    const put = data => {
+      written += data.byteLength;
+      if (sink.kind === 'memory') { sink.chunks.push(data); return Promise.resolve(); }
+      return sink.writable.write(data);
+    };
+    return {
+      sink,
+      get bytes() { return bytes; },
+      push(blob) {
+        bytes += blob.size;
+        chain = chain.then(async () => {
+          if (!fix) return put(blob);
+          for (const part of fix.push(new Uint8Array(await blob.arrayBuffer()))) await put(part);
+        }).catch(() => { failed = true; });
+      },
+      async finish() {
+        await chain;
+        const done = fix && !failed ? fix.finish(written) : null;
+        if (done) {
+          if (done.tail.length) await put(done.tail);
+          if (sink.kind !== 'memory') for (const pt of done.patches) await sink.writable.write({ type: 'write', position: pt.position, data: pt.data });
+        }
+        if (sink.kind === 'memory') { downloadBlob(new Blob(sink.chunks, { type }), name); sink.chunks = []; }
+        else {
+          await sink.writable.close();
+          if (sink.kind !== 'folder') {
+            downloadBlob(await sink.handle.getFile(), name);
+            setTimeout(() => sink.root.removeEntry(name).catch(() => {}), 180000);
+          }
+        }
+        return { failed, bytes };
+      }
+    };
+  }
+
+  /* ---- ISO: บันทึกแยกทุกกล้อง (กล้อง / หน้าจอ / มือถือ / แขก) เป็นไฟล์ละแหล่งภาพ สำหรับตัดต่อทีหลัง ----
+     เริ่ม-หยุดพร้อมการบันทึก Program และใช้ชื่อเวลาเดียวกัน · แหล่งภาพที่เพิ่มระหว่างบันทึกจะไม่ถูกบันทึกแยก */
+  const iso = { list: [] };
+  const isoSources = () => inputs.filter(i => i.stream && i.status === 'live' && i.stream.getVideoTracks().some(t => t.readyState === 'live'));
+  async function startIso(when) {
+    if (window.WebMix.wcrec && window.WebMix.wcrec.preferred()) { toast('เครื่องนี้บันทึกแยกทุกกล้องไม่ได้ (ใช้ตัวบันทึก WebCodecs) — บันทึกเฉพาะ Program', 'warn', 6000); return; }
+    const mime = pickMime('record');
+    const list = isoSources();
+    if (!list.length) return;
+    const safe = n => String(n).replace(/[\\/:*?"<>|\s]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 30) || 'CAM';
+    for (const [k, inp] of list.entries()) {
+      try {
+        const r = new MediaRecorder(inp.stream, { ...(mime ? { mimeType: mime } : {}), videoBitsPerSecond: settings.videoKbps * 1000, audioBitsPerSecond: 160000 });
+        const type = r.mimeType || 'video/webm';
+        const name = `WebMix-${when}-ISO${k + 1}-${safe(inp.name)}.${type.includes('mp4') ? 'mp4' : 'webm'}`;
+        const file = await openRecordFile(name, type);
+        const item = { inp, r, file, name, done: null };
+        r.ondataavailable = e => { if (e.data.size) file.push(e.data); };
+        item.done = new Promise(res => { r.onstop = () => file.finish().then(res, () => res({ failed: true, bytes: file.bytes })); });
+        if (!rec.active) { file.finish().catch(() => {}); return; }
+        r.start(1000);
+        iso.list.push(item);
+      } catch (e) {
+        toast(`บันทึกแยก “${inp.name}” ไม่ได้: ${e.message}`, 'warn', 6000);
+      }
+    }
+    if (iso.list.length) toast(`บันทึกแยก ${iso.list.length} กล้อง (ISO) พร้อม Program`, 'info', 4000);
+  }
+  async function stopIso() {
+    const list = iso.list.splice(0);
+    if (!list.length) return;
+    for (const it of list) { try { if (it.r.state !== 'inactive') it.r.stop(); } catch (e) {} }
+    const res = await Promise.all(list.map(it => it.done));
+    const bytes = res.reduce((a, r) => a + (r.bytes || 0), 0), bad = res.filter(r => r.failed).length;
+    iso.last = { files: list.map(it => it.name), bytes };
+    toast(bad ? `บันทึกแยกกล้องเสร็จ แต่มี ${bad} ไฟล์ที่เขียนไม่สำเร็จ` : `บันทึกแยก ${list.length} กล้องแล้ว (${fmtBytes(bytes)})`, bad ? 'warn' : 'success', 6000);
+  }
+
+  /* ---- บันทึกสำรองอัตโนมัติ: เริ่มไลฟ์แล้วเริ่มบันทึกให้ (ถ้ายังไม่ได้บันทึก) หยุดไลฟ์ครบทุกช่องแล้วหยุดให้ ---- */
+  async function autoRecStart() {
+    if (!settings.autoRec || rec.active || rec.starting || streamer.testing) return;
+    await toggleRecord();
+    if (rec.active) { rec.auto = true; toast('บันทึกสำรองอัตโนมัติระหว่างไลฟ์', 'info', 4000); }
+  }
+  function autoRecStop() {
+    if (rec.active && rec.auto && rec.recorder) rec.recorder.stop();
   }
 
   function setRecButton() {
@@ -3347,6 +3441,7 @@
       }
     } else {
       connectGateway(list);
+      autoRecStart();
     }
     setStreamButton();
     refreshLiveDialog();
@@ -3397,6 +3492,7 @@
     refreshLiveDialog();
     updateOnAir();
     output.reset();
+    autoRecStop();
     // ทดสอบปลายทาง: ไม่แสดงสรุป/แจ้งเตือน — ผลไปแสดงที่ปุ่มทดสอบแทน
     if (streamer.testing) { liveStats.end(); streamer.lastError = byUser ? '' : reason || ''; return; }
     if (wasLive && liveStats.session) { const sess = liveStats.end(); if (isPhoneUI()) { closeLiveDialog?.(); openSummary(sess, byUser ? '' : reason); } }
@@ -3860,6 +3956,7 @@
         add(hours < 0.5 ? 'warn' : 'ok', 'พื้นที่บันทึก', `บันทึกได้อีกราว ${hours >= 10 ? '10+ ชม.' : hours.toFixed(1) + ' ชม.'}`);
       }
     } catch (e) {}
+    add(settings.autoRec || rec.active ? 'ok' : 'warn', 'บันทึกสำรอง', rec.active ? 'กำลังบันทึกอยู่' : settings.autoRec ? 'เริ่มบันทึกอัตโนมัติพร้อมไลฟ์' : 'ปิดอยู่ — เปิดได้ที่ ตั้งค่า → เอาต์พุต (เน็ตหลุดก็ยังมีไฟล์)');
     if (desktop && desktop.mobile) add('ok', 'ไลฟ์เบื้องหลัง', 'ปิดจอหรือสลับแอประหว่างไลฟ์ได้ — ดูสถานะที่แจ้งเตือน');
     const blocked = items.some(i => i.state === 'error');
     const mark = { ok: '✓', warn: '!', error: '✕' };
@@ -4120,6 +4217,8 @@
           <div class="field"><span>โฟลเดอร์บันทึกวิดีโอ (REC)</span>
             <div class="link-row"><input class="input rec-folder-name" readonly value="${esc(recFolder ? recFolder.name : canPickFolder ? 'ยังไม่ได้เลือก — ดาวน์โหลดไฟล์เมื่อกดหยุด' : 'เบราว์เซอร์นี้เลือกโฟลเดอร์ไม่ได้ — ดาวน์โหลดไฟล์เมื่อกดหยุด')}">
             ${canPickFolder ? `<button type="button" class="btn rec-folder-pick">เลือกโฟลเดอร์</button>${recFolder ? '<button type="button" class="btn btn-ghost rec-folder-clear">ล้าง</button>' : ''}` : ''}</div></div>
+          <label class="check"><input type="checkbox" name="autoRec" ${settings.autoRec ? 'checked' : ''}> บันทึกสำรองอัตโนมัติเมื่อเริ่มไลฟ์ — หยุดไลฟ์ครบทุกช่องแล้วหยุดบันทึกให้ (เน็ตหลุดก็ยังมีไฟล์)</label>
+          <label class="check"><input type="checkbox" name="isoRec" ${settings.isoRec ? 'checked' : ''}> บันทึกแยกทุกกล้อง (ISO) — ไฟล์ละกล้องพร้อมไฟล์ Program สำหรับตัดต่อทีหลัง (ใช้ CPU และพื้นที่เพิ่มตามจำนวนกล้อง)</label>
           <p class="note">ระหว่างบันทึก ไฟล์ถูกเขียนลง${recFolder ? 'โฟลเดอร์ที่เลือก' : canUseOpfs ? 'ดิสก์ (พื้นที่ชั่วคราวของเบราว์เซอร์) แล้วดาวน์โหลดเมื่อหยุด' : ' RAM — บันทึกนาน ๆ ควรใช้ Chrome หรือ Edge'} จึงบันทึกนานหลายชั่วโมงได้โดยไม่กินหน่วยความจำ</p>
           <p class="note warn res-4k-note" ${RESOLUTIONS[settings.resolution][1] >= 1440 ? '' : 'hidden'}>ความละเอียด 1440p/4K ต้องใช้คอมพิวเตอร์แรง (แนะนำ CPU 8 คอร์ขึ้นไปหรือมีการ์ดจอแยก) และอินเทอร์เน็ตขาขึ้นอย่างน้อย 1.5 เท่าของบิตเรต · Stream Gateway ควรมี 8 vCPU ขึ้นไป · Facebook และ Twitch รับสูงสุด 1080p ส่วน YouTube รับได้ถึง 4K</p>
         </div>
@@ -4281,6 +4380,8 @@
       if (gatewayChanged) wireless.restart();
       if (readDests) settings.destinations = readDests();
       settings.rememberKey = f.rememberKey.checked;
+      settings.autoRec = f.autoRec.checked;
+      settings.isoRec = f.isoRec.checked;
       if (['auto', 'gpu', 'cpu'].includes(f.renderer.value)) settings.renderer = f.renderer.value;
       renderer.resolve();
       saveSettings();
@@ -4608,7 +4709,7 @@
       setStat('#st-stream', streamer.reconnecting ? `RECONNECTING… (ครั้งที่ ${streamer.attempt})` : streamer.state === 'connecting' ? 'CONNECTING…' : gatewayUrl() ? `READY · ${n} ปลายทาง` : 'NOT SET',
         streamer.reconnecting || streamer.state === 'connecting' ? 'warn' : '');
     }
-    setStat('#st-rec', rec.active ? `${fmtDuration(Date.now() - rec.start)} · ${fmtBytes(rec.bytes)} → ${rec.sink.kind === 'folder' ? 'โฟลเดอร์ ' + rec.sink.label : rec.sink.label}` : 'OFF',
+    setStat('#st-rec', rec.active ? `${fmtDuration(Date.now() - rec.start)} · ${fmtBytes(rec.bytes)} → ${rec.sink.kind === 'folder' ? 'โฟลเดอร์ ' + rec.sink.label : rec.sink.label}${iso.list.length ? ` · ISO ${iso.list.length}` : ''}${rec.auto ? ' · สำรองอัตโนมัติ' : ''}` : 'OFF',
       rec.active ? (rec.sink.kind === 'memory' && rec.bytes > 1.5e9 ? 'warn' : 'live') : '');
     const ws = wireless.status;
     const count = wireless.connectedCount();
@@ -5190,7 +5291,7 @@
     $$('#seg-cardsize button').forEach(b => { b.classList.toggle('is-active', b.dataset.size === cardSize()); b.addEventListener('click', () => setCardSize(b.dataset.size)); });
 
     // สำหรับดีบัก/ทดสอบอัตโนมัติ
-    window.webmix = { playlist, dataSources, timerControl, multiview, renderer, gpu, setRenderer: v => { settings.renderer = v; renderer.resolve(); updateStatus(); }, show, ovl, setChannel, toggleInputOverlay, useRecFolder: dir => { recFolder = dir; }, inputs, state, settings, overlays, audio, rec, streamer, wireless, cut, autoTransition, setPreview, tr, ftb };
+    window.webmix = { playlist, dataSources, timerControl, multiview, renderer, gpu, setRenderer: v => { settings.renderer = v; renderer.resolve(); updateStatus(); }, show, ovl, setChannel, toggleInputOverlay, useRecFolder: dir => { recFolder = dir; }, inputs, state, settings, overlays, audio, rec, iso, streamer, wireless, cut, autoTransition, setPreview, tr, ftb };
   }
 
   boot();
