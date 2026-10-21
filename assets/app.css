@@ -1385,3 +1385,77 @@ details.adv[open] { padding-bottom: 12px; }
   .menu.add-sheet { width: auto; max-height: 82vh; border-radius: 20px 20px 0 0; }
   .menu .add-tile { min-height: 60px; }
 }
+
+/* ---------- การ์ดแหล่งภาพ: ใหญ่และอ่านง่ายขึ้น · เลือกขนาดได้ (เล็ก/กลาง/ใหญ่) */
+:root { --card-min: 190px; }
+html[data-cards=s] { --card-min: 150px; }
+html[data-cards=l] { --card-min: 290px; }
+.inputs-grid { grid-template-columns: repeat(auto-fill, minmax(min(var(--card-min), 100%), 1fr)); gap: 10px; }
+.card { border-radius: 10px; border-width: 2px; }
+.card.is-pvw { box-shadow: 0 0 0 1px var(--pvw), 0 0 18px var(--pvw-glow); }
+.card.is-pgm { box-shadow: 0 0 0 1px var(--pgm), 0 0 20px var(--pgm-glow); }
+.card-num { top: 8px; left: 8px; min-width: 24px; text-align: center; font-size: 13px; padding: 2px 7px; border-radius: 5px; }
+.card-tally { top: 8px; right: 8px; font-size: 12px; letter-spacing: .08em; padding: 3px 9px; border-radius: 5px; box-shadow: 0 2px 8px rgba(0, 0, 0, .5); }
+.card.is-pgm .card-num { background: var(--pgm); border-color: transparent; }
+.card.is-pvw .card-num { background: #16a34a; border-color: transparent; }
+.card-nosig { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); display: inline-flex; align-items: center; gap: 6px; max-width: 90%;
+  padding: 5px 10px; border-radius: 99px; background: rgba(42, 20, 22, .9); border: 1px solid rgba(248, 113, 113, .6); color: #fca5a5;
+  font-size: 12px; font-weight: 700; white-space: nowrap; pointer-events: none; }
+.card-nosig .i { width: 13px; height: 13px; }
+.card-foot { gap: 8px; padding: 8px 10px; }
+.card-foot .i { width: 16px; height: 16px; color: var(--muted); }
+.card-name { font-size: 14px; }
+.card-sub { font-size: 10.5px; color: var(--muted); }
+/* เมาส์: ปุ่มบนการ์ดใหญ่ขึ้น (จอสัมผัสมีขนาดของตัวเองที่ใหญ่กว่านี้อยู่แล้ว) */
+@media (hover: hover) and (pointer: fine) {
+  .mini { width: 30px; height: 30px; border-radius: 6px; }
+  .mini .i { width: 15px; height: 15px; }
+  .card-ovl { gap: 4px; padding: 0 8px 8px; grid-template-columns: repeat(4, 1fr) 30px; }
+  .card-ovl button { height: 22px; font-size: 11px; border-radius: 5px; }
+}
+html[data-cards=s] .card-name { font-size: 12.5px; }
+html[data-cards=s] .card-foot { padding: 6px 8px; }
+html[data-cards=l] .card-name { font-size: 15.5px; }
+html[data-cards=l] .card-num, html[data-cards=l] .card-tally { font-size: 14px; }
+.seg-cardsize button { min-width: 40px; padding: 0 8px; font-size: 12px; }
+.panel-head .seg-cardsize { height: 30px; }
+@media (max-width: 760px) {
+  .inputs-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  html[data-cards=s] .inputs-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  html[data-cards=l] .inputs-grid { grid-template-columns: minmax(0, 1fr); }
+  .card-nosig { font-size: 11px; padding: 4px 8px; }
+}
+/* จอสัมผัส: ปุ่มแก้ไข/ลบ ไว้มุมขวาล่างของภาพ (กลางภาพว่างไว้ให้แตะเลือก) · ป้ายไม่มีสัญญาณบอกที่ชื่อการ์ดแทน */
+@media (hover: none) {
+  .card-actions { top: auto; bottom: 6px; right: 6px; }
+  .card-nosig { display: none; }
+  .card.no-signal .card-thumb canvas { opacity: .45; }
+  .card.no-signal .card-sub { font-weight: 700; }
+}
+@media (max-width: 760px) {
+  /* มือถือ: ปุ่ม Overlay 1–8 ใต้การ์ดแสดงเฉพาะขนาดใหญ่ (ขึ้นกราฟิกใช้แท็บกราฟิกได้) · ชื่อเต็มบรรทัด */
+  html:not([data-cards=l]) .card-ovl { display: none; }
+  .card:not(.no-signal) .card-sub { display: none; }
+  .card .mini { width: 36px; height: 36px; }
+}
+.foot-actions { display: flex; gap: 4px; margin-left: auto; flex: none; }
+.foot-actions .mini { background: #0f1218; }
+@media (hover: none) {
+  .card-foot { padding-top: 6px; padding-bottom: 6px; }
+}
+@media (max-width: 760px) {
+  .card-foot { gap: 5px; padding-left: 8px; padding-right: 6px; }
+  .card-foot > .i { display: none; }
+  .card .card-name { min-width: 0; }
+  .foot-actions .mini { width: 34px; height: 34px; }
+}
+@media (max-width: 760px) {
+  /* ขนาดเล็กบนมือถือ (3 คอลัมน์): ชื่อเต็มบรรทัด ปุ่มแก้ไข/ลบอยู่บรรทัดล่าง · ป้ายเล็กลงไม่บังภาพ */
+  html[data-cards=s] .card-foot { flex-wrap: wrap; row-gap: 4px; }
+  html[data-cards=s] .card-name { flex: 1 0 100%; font-size: 12px; }
+  html[data-cards=s] .foot-actions { margin-left: auto; }
+  html[data-cards=s] .foot-actions .mini { width: 32px; height: 30px; }
+  html[data-cards=s] .card-num, html[data-cards=s] .card-tally { font-size: 10.5px; padding: 1px 5px; top: 5px; }
+  html[data-cards=s] .card-num { left: 5px; }
+  html[data-cards=s] .card-tally { right: 5px; }
+}

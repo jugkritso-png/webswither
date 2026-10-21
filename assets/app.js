@@ -783,7 +783,7 @@
       lastThumbs = now;
       for (const inp of inputs) {
         const ctx = thumbs.get(inp.id);
-        if (ctx) drawSource(ctx, inp, 256, 144);
+        if (ctx) drawSource(ctx, inp, ctx.canvas.width, ctx.canvas.height);
       }
     }
     audio.tick(now);
@@ -966,6 +966,17 @@
     return addInput({ type, ...defs[type] });
   }
 
+  // ขนาดการ์ดแหล่งภาพ (เล็ก/กลาง/ใหญ่) — จำไว้ในเครื่องนี้
+  const THUMB_SIZE = { s: [256, 144], m: [384, 216], l: [512, 288] };
+  const cardSize = () => { const v = store.get('cardSize', 'm'); return THUMB_SIZE[v] ? v : 'm'; };
+  function setCardSize(v) {
+    if (!THUMB_SIZE[v]) return;
+    store.set('cardSize', v);
+    document.documentElement.dataset.cards = v;
+    $$('#seg-cardsize button').forEach(b => b.classList.toggle('is-active', b.dataset.size === v));
+    renderInputs();
+  }
+
   function renderInputs() {
     queueMicrotask(renderQuickGfx);
     const grid = $('#inputs-grid');
@@ -975,6 +986,11 @@
     if (!inputs.length) {
       grid.innerHTML = '<div class="empty-state">ยังไม่มีแหล่งภาพ — กด “เพิ่มแหล่งภาพ” เพื่อเพิ่มกล้อง ไฟล์วิดีโอ หรือแหล่งภาพอื่น</div>';
     }
+    // ขนาดการ์ด: ภาพตัวอย่างละเอียดขึ้นตามขนาด (ไม่เบลอเมื่อการ์ดใหญ่)
+    const [tw, th] = THUMB_SIZE[cardSize()];
+    // จอสัมผัส: ปุ่มแก้ไข/ลบ อยู่แถวชื่อใต้ภาพ — แตะตรงภาพได้ทั้งภาพโดยไม่โดนปุ่ม
+    const touch = matchMedia('(hover: none)').matches;
+    const editBtns = `<button class="mini" data-card="rename" title="แก้ไขชื่อ / ข้อความ">${icon('edit')}</button><button class="mini danger" data-card="remove" title="ลบแหล่งภาพ">${icon('x')}</button>`;
     inputs.forEach((inp, i) => {
       const meta = TYPE_META[inp.type];
       const isMedia = inp.type === 'media' && !inp.missing;
@@ -984,9 +1000,10 @@
       card.dataset.id = inp.id;
       card.innerHTML = `
         <div class="card-thumb">
-          <canvas width="256" height="144"></canvas>
+          <canvas width="${tw}" height="${th}"></canvas>
           <span class="card-num">${i + 1}</span>
           <span class="card-tally"></span>
+          ${inp.status !== 'live' ? `<span class="card-nosig">${icon('link')}${inp.type === 'wireless' || inp.type === 'guest' ? 'รอเชื่อมต่อ' : 'ไม่มีสัญญาณ'}</span>` : ''}
           <div class="card-actions">
             ${inp.type === 'playlist' && inp.list.items.length ? `
               <button class="mini txt" data-card="pprev" title="รายการก่อนหน้า">‹</button>
@@ -1007,16 +1024,15 @@
               <button class="mini" data-card="treset" title="รีเซ็ตเวลา">${icon('restart')}</button>` : ''}
             ${inp.type === 'title' && inp.data && inp.data.rows && inp.data.rows.length > 1 ? `
               <button class="mini txt" data-card="dprev" title="แถวก่อนหน้า">‹</button><button class="mini txt" data-card="dnext" title="แถวถัดไป">›</button>` : ''}
-            <button class="mini" data-card="rename" title="แก้ไขชื่อ / ข้อความ">${icon('edit')}</button>
-            <button class="mini danger" data-card="remove" title="ลบแหล่งภาพ">${icon('x')}</button>
+            ${touch ? '' : editBtns}
           </div>
         </div>
-        <div class="card-foot">${icon(meta.icon)}<span class="card-name">${esc(inp.name)}</span><span class="card-sub">${esc(cardSub(inp))}</span></div>
+        <div class="card-foot">${icon(meta.icon)}<span class="card-name">${esc(inp.name)}</span><span class="card-sub">${esc(cardSub(inp))}</span>${touch ? `<span class="foot-actions">${editBtns}</span>` : ''}</div>
         <div class="card-ovl">${ovl.map((c, k) => `<button type="button" data-card-ovl="${k}" title="ซ้อนเข้า Overlay ${c.n}">${c.n}</button>`).join('')}<button type="button" class="ovl-pos ${inp.layout ? 'is-set' : ''}" data-card="layout" title="ตำแหน่ง / ขนาด / ครอป / คีย์ฉาก">⧉</button></div>`;
       grid.appendChild(card);
       const ctx = card.querySelector('canvas').getContext('2d');
       thumbs.set(inp.id, ctx);
-      drawSource(ctx, inp, 256, 144);
+      drawSource(ctx, inp, tw, th);
     });
     updateTally();
   }
@@ -4530,8 +4546,8 @@
   }
   // ข้อความเล็กใต้ชื่อบนการ์ด: สถานะสัญญาณ, ข้อมูลจากชีต, หรือชนิด + ความละเอียดจริง
   function cardSub(inp) {
-    if (inp.type === 'srt' && inp.status !== 'live') return `SRT · ${SRT_IN_STATES[inp.srtState] || 'NO SIGNAL'}`;
-    if (inp.status !== 'live') return 'NO SIGNAL';
+    if (inp.type === 'srt' && inp.status !== 'live') return `SRT · ${SRT_IN_STATES[inp.srtState] || 'ไม่มีสัญญาณ'}`;
+    if (inp.status !== 'live') return 'ไม่มีสัญญาณ';
     if (inp.data && inp.data.error) return 'DATA ERROR';
     if (inp.type === 'title' && inp.data && inp.data.rows && inp.data.rows.length) return `${inp.data.row + 1}/${inp.data.rows.length}`;
     if (inp.type === 'playlist') return inp.list.items.length ? `${inp.list.index + 1}/${inp.list.items.length}` : 'ว่าง';
@@ -5082,6 +5098,8 @@
     requestAnimationFrame(rafLoop);
     setTimeout(() => { if (shouldOnboard()) openOnboarding(); }, 700);
     $('#m-gfx').addEventListener('click', quickGfxTap);
+    document.documentElement.dataset.cards = cardSize();
+    $$('#seg-cardsize button').forEach(b => { b.classList.toggle('is-active', b.dataset.size === cardSize()); b.addEventListener('click', () => setCardSize(b.dataset.size)); });
     // หมุนจอ/ย่อหน้าต่างข้ามขนาดมือถือ → สร้างช่องเสียงใหม่ให้ตรงรูปแบบ (แนวตั้ง/แนวนอน)
     let wasPhone = phoneLayout();
     addEventListener('resize', () => { if (phoneLayout() !== wasPhone) { wasPhone = phoneLayout(); renderMixer(); } });

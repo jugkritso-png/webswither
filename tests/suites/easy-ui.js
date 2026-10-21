@@ -19,6 +19,21 @@ async function setup(ctx) {
   ok('panel titles and tabs are Thai', ['แหล่งภาพ', 'เสียง', 'เปลี่ยนภาพ', 'ซ้อนภาพ', 'ป้ายชื่อ'].every(t => titles.includes(t)) && !titles.some(t => /^(INPUTS|AUDIO|TRANSITION|OVERLAY)$/.test(t)), JSON.stringify(titles));
   ok('add button says เพิ่มแหล่งภาพ', /เพิ่มแหล่งภาพ/.test(await p.textContent('[data-action=add-menu]')));
 
+  // การ์ดแหล่งภาพ: เลือกขนาดได้ ภาพตัวอย่างละเอียดตามขนาด จำค่าไว้
+  const cols = () => p.evaluate(() => getComputedStyle(document.querySelector('.inputs-grid')).gridTemplateColumns.split(' ').length);
+  const thumbW = () => p.evaluate(() => document.querySelector('.card canvas').width);
+  ok('cards default to medium (fewer, bigger columns than small)', await p.evaluate(() => document.documentElement.dataset.cards) === 'm' && await thumbW() === 384);
+  const cm = await cols();
+  await p.click('#seg-cardsize [data-size=s]'); await p.waitForTimeout(200);
+  const cs = await cols();
+  await p.click('#seg-cardsize [data-size=l]'); await p.waitForTimeout(200);
+  const cl = await cols();
+  ok('size switch changes columns and thumbnail detail', cs > cm && cm > cl && await thumbW() === 512, JSON.stringify({ cs, cm, cl }));
+  await p.reload(); await p.waitForTimeout(900);
+  ok('card size is remembered', await p.evaluate(() => document.documentElement.dataset.cards) === 'l' && await p.isVisible('#seg-cardsize [data-size=l].is-active'));
+  await p.click('#seg-cardsize [data-size=m]'); await p.waitForTimeout(200);
+  ok('tally badges are readable', await p.evaluate(() => parseFloat(getComputedStyle(document.querySelector('.card.is-pgm .card-tally')).fontSize) >= 12 && parseFloat(getComputedStyle(document.querySelector('.card-name')).fontSize) >= 14));
+
   // เพิ่มแหล่งภาพ: การ์ดไอคอน + คำอธิบาย เป็นหมวด
   await p.click('[data-action=add-menu]'); await p.waitForSelector('.add-sheet');
   const sheet = await p.evaluate(() => ({ tiles: document.querySelectorAll('.add-sheet .add-tile').length, groups: document.querySelectorAll('.add-sheet .menu-label').length,

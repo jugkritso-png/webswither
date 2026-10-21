@@ -20,8 +20,11 @@ const results = []; const ok = (n, c, x = '') => results.push(`${c ? 'PASS' : 'F
   const [sw, iw] = await m.evaluate(() => [document.documentElement.scrollWidth, innerWidth]);
   ok('phone layout fits the screen', sw === iw, `${sw} / ${iw}`);
   await m.screenshot({ path: S + '/m1.png', fullPage: true });
+  // การ์ด 2 คอลัมน์: การ์ดที่ 3 อยู่แถวที่สอง — เลื่อนขึ้นมากลางจอก่อน (ไม่ให้แถบ REC/ไลฟ์ด้านล่างบัง)
+  await m.evaluate(() => document.querySelectorAll('.card')[2].scrollIntoView({ block: 'center' }));
   await m.tap('.card >> nth=2'); await m.tap('.card >> nth=2'); 
   ok('double tap → program', (await m.evaluate(() => window.webmix.inputs.find(i => i.id === window.webmix.state.programId).name)) === 'CLOCK');
+  await m.evaluate(() => document.querySelector('[data-action=add-menu]').scrollIntoView({ block: 'center' }));
   await m.tap('[data-action=add-menu]'); await m.waitForTimeout(200); await m.screenshot({ path: S + '/m2.png' });
   await m.tap('.menu button:has-text("Slate")'); ok('add input from menu on phone', (await m.evaluate(() => window.webmix.inputs.length)) === 5);
 
@@ -160,4 +163,4 @@ const results = []; const ok = (n, c, x = '') => results.push(`${c ? 'PASS' : 'F
   ok('no page errors', errs.length === 0, JSON.stringify(errs));
   console.log(results.join('\n'));
   await b.close();
-})().catch(e => { console.log(results.join('\n')); console.error('CRASH', e.message); process.exit(1); });
+})().catch(e => { console.log(results.join('\n')); console.error('CRASH', e.message.split('\n').slice(0, 6).join(' | ')); process.exit(1); });
