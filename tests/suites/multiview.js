@@ -37,6 +37,38 @@ const results = []; const ok = (n, c, x = '') => results.push(`${c ? 'PASS' : 'F
     const d = g.getImageData(tx + tw - 14, ty + 8 + mh * 0.9, 1, 1).data; return d[1] > 120 || d[0] > 200;
   }, L);
   ok('audio meter moves for an input with sound', meterLit);
+  // สลับภาพจาก Multiview: แตะครั้งแรก = Preview (เขียว) · แตะซ้ำ = Program (แดง)
+  const at = async ([cx, cy]) => {
+    const pt = await win.evaluate(([cx, cy]) => { const v = document.querySelector('video'), r = v.getBoundingClientRect(), k = Math.min(r.width / 1920, r.height / 1080);
+      return [r.left + (r.width - 1920 * k) / 2 + cx * k, r.top + (r.height - 1080 * k) / 2 + cy * k]; }, [cx, cy]);
+    await win.mouse.click(pt[0], pt[1]); await win.waitForTimeout(250);
+  };
+  const center = i => [Math.round((i % L.cols) * L.tw + L.tw / 2), Math.round(L.gridTop + Math.floor(i / L.cols) * L.th + L.th / 2)];
+  const bus = () => p.evaluate(() => { const w = window.webmix; return { pgm: w.inputs.findIndex(i => i.id === w.state.programId), pvw: w.inputs.findIndex(i => i.id === w.state.previewId) }; });
+  await at(center(3));
+  let s = await bus();
+  ok('multiview: first tap puts the source on Preview', s.pvw === 3 && s.pgm === 1, JSON.stringify(s));
+  await p.waitForTimeout(200);
+  ok('multiview: tapped tile turns green', near(await px(...tile(3)), [34, 197, 94]), JSON.stringify(await px(...tile(3))));
+  await at(center(3));
+  s = await bus();
+  ok('multiview: second tap on the same source takes it to Program', s.pgm === 3 && s.pvw === 1, JSON.stringify(s));
+  await p.waitForTimeout(200);
+  ok('multiview: it turns red', near(await px(...tile(3)), [239, 68, 68]), JSON.stringify(await px(...tile(3))));
+  await at(center(3));
+  s = await bus();
+  ok('multiview: tapping the on-air source changes nothing', s.pgm === 3 && s.pvw === 1, JSON.stringify(s));
+  await at([480, 300]);
+  s = await bus();
+  ok('multiview: tapping the big PREVIEW takes it to Program', s.pgm === 1 && s.pvw === 3, JSON.stringify(s));
+  await win.keyboard.press('1'); await win.waitForTimeout(150);
+  s = await bus();
+  ok('multiview: number key picks Preview', s.pvw === 0, JSON.stringify(s));
+  await win.keyboard.press(' '); await win.waitForTimeout(150);
+  s = await bus();
+  ok('multiview: Space cuts', s.pgm === 0, JSON.stringify(s));
+  await win.screenshot({ path: S + '/multiview-pick.png' });
+
   // แสดงได้ถึง 24 Input
   for (let i = 0; i < 18; i++) { await p.click('[data-action=add-menu]'); await p.click('.menu button:has-text("Black")'); }
   await p.waitForTimeout(300);

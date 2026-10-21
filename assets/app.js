@@ -3642,6 +3642,7 @@
   const multiview = createMultiview({
     get inputs() { return inputs; }, get state() { return state; }, get ovl() { return ovl; }, get streamer() { return streamer; }, get rec() { return rec; },
     get audio() { return audio; }, get H() { return H; }, get fps() { return settings.fps; }, pvwCanvas, pgmCanvas, byId, drawSource, meterPct, formatTag,
+    setPreview, cut, auto: autoTransition,
     onAirText: () => $('#onair-timer').textContent
   });
 

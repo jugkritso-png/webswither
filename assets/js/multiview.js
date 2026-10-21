@@ -5,9 +5,11 @@
 
   /* ------------------------------------------------------------ multiview */
   // จอรวมสำหรับผู้ควบคุม/ทีมงาน: Preview + Program ด้านบน, ทุก Input ด้านล่างพร้อม tally และมิเตอร์เสียง
-  // วาดเฉพาะตอนเปิดหน้าต่าง Multiview ที่ 15 fps แล้วส่งภาพไปหน้าต่างนั้น (ลากไปจอที่สองแล้วดับเบิลคลิกเต็มจอ)
+  // วาดเฉพาะตอนเปิดหน้าต่าง Multiview ที่ 15 fps แล้วส่งภาพไปหน้าต่างนั้น (ลากไปจอที่สองแล้วกดปุ่มเต็มจอ)
+  // สลับภาพจาก Multiview ได้: แตะแหล่งภาพครั้งแรก = Preview (กรอบเขียว) · แตะแหล่งภาพเดิมอีกครั้ง = ขึ้น Program (กรอบแดง)
+  // แตะจอ PREVIEW ใหญ่ = ขึ้น Program · คีย์บอร์ด: 1–9 เลือก Preview, Space = Cut, Enter = Auto
   const createMultiview = ctx => ({
-    canvas: null, ctx: null, win: null, track: null, timer: null,
+    canvas: null, ctx: null, win: null, track: null, timer: null, hover: -1, flash: null,
     W: 1920, H: 1080,
     open() {
       if (this.win && !this.win.closed) { this.win.focus(); return; }
@@ -23,20 +25,66 @@
       win.document.open();
       win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>WebMix — Multiview</title>
         <style>html,body{margin:0;height:100%;background:#000;overflow:hidden}video{width:100%;height:100%;object-fit:contain;display:block}
-        p{position:fixed;left:0;right:0;bottom:12px;margin:0;text-align:center;font:12px system-ui;color:#666;transition:opacity 1s}</style></head>
-        <body><video autoplay muted playsinline></video><p>ดับเบิลคลิกเพื่อเต็มจอ</p>
-        <script>document.addEventListener('dblclick',()=>{document.fullscreenElement?document.exitFullscreen():document.documentElement.requestFullscreen()});setTimeout(()=>document.querySelector('p').style.opacity=0,3000)<\/script></body></html>`);
+        video{cursor:pointer;touch-action:manipulation}
+        p{position:fixed;left:0;right:0;bottom:12px;margin:0;text-align:center;font:13px system-ui;color:#8b94a7;transition:opacity 1s;pointer-events:none}
+        button{position:fixed;bottom:10px;right:10px;padding:8px 14px;border-radius:8px;border:1px solid #3a4250;background:rgba(15,18,24,.85);color:#e8ecf1;font:600 13px system-ui;cursor:pointer;opacity:0;transition:opacity .3s}
+        body:hover button,button:focus-visible{opacity:1}</style></head>
+        <body><video autoplay muted playsinline></video><button type="button">เต็มจอ</button>
+        <p>แตะแหล่งภาพ = Preview · แตะซ้ำ = ขึ้น Program · คีย์ 1–9 / Space / Enter</p>
+        <script>document.querySelector('button').addEventListener('click',()=>{document.fullscreenElement?document.exitFullscreen():document.documentElement.requestFullscreen()});setTimeout(()=>document.querySelector('p').style.opacity=0,6000)<\/script></body></html>`);
       win.document.close();
       this.track = this.canvas.captureStream(15).getVideoTracks()[0];
       const v = win.document.querySelector('video');
       v.srcObject = new MediaStream([this.track]);
       v.play().catch(() => {});
+      this.bindControls(win, v);
       this.win = win;
       clearInterval(this.timer);
       this.timer = setInterval(() => {
         if (!this.win || this.win.closed) { this.close(); return; }
         this.draw();
       }, 1000 / 15);
+    },
+    // ตำแหน่งบนหน้าต่าง → ตำแหน่งบนภาพ 1920×1080 (วิดีโอแสดงแบบ contain จึงอาจมีขอบดำ)
+    toCanvas(v, e) {
+      const r = v.getBoundingClientRect();
+      const k = Math.min(r.width / this.W, r.height / this.H);
+      return { x: (e.clientX - r.left - (r.width - this.W * k) / 2) / k, y: (e.clientY - r.top - (r.height - this.H * k) / 2) / k };
+    },
+    hit(x, y) {
+      const L = this.layout(ctx.inputs.length);
+      if (y >= L.top && y < L.top + L.mainH) return x < 960 ? 'pvw' : 'pgm';
+      if (y < L.gridTop || x < 0 || x >= this.W) return null;
+      const i = Math.floor(x / L.tw) + Math.floor((y - L.gridTop) / L.th) * L.cols;
+      return i >= 0 && i < ctx.inputs.length ? i : null;
+    },
+    pick(target) {
+      if (target === 'pvw') { if (ctx.state.previewId) ctx.cut(); return; }
+      if (typeof target !== 'number') return;
+      const inp = ctx.inputs[target];
+      if (!inp) return;
+      if (inp.id === ctx.state.programId) { this.flash = { i: target, at: performance.now() }; return; }
+      if (inp.id === ctx.state.previewId) ctx.cut();
+      else ctx.setPreview(inp.id);
+      this.draw();
+    },
+    bindControls(win, v) {
+      v.addEventListener('click', e => { const p = this.toCanvas(v, e); this.pick(this.hit(p.x, p.y)); });
+      v.addEventListener('pointermove', e => {
+        const p = this.toCanvas(v, e), h = this.hit(p.x, p.y);
+        this.hover = typeof h === 'number' ? h : -1;
+        v.style.cursor = h === null || h === 'pgm' ? 'default' : 'pointer';
+      });
+      v.addEventListener('pointerleave', () => { this.hover = -1; });
+      win.addEventListener('keydown', e => {
+        if (e.target.tagName === 'BUTTON' && (e.key === ' ' || e.key === 'Enter')) return;
+        if (/^[1-9]$/.test(e.key)) { const inp = ctx.inputs[+e.key - 1]; if (inp && inp.id !== ctx.state.programId) ctx.setPreview(inp.id); }
+        else if (e.key === ' ') ctx.cut();
+        else if (e.key === 'Enter') ctx.auto();
+        else return;
+        e.preventDefault();
+        this.draw();
+      });
     },
     close() {
       clearInterval(this.timer);
@@ -91,8 +139,17 @@
         g.restore();
         const isPgm = inp.id === ctx.state.programId, ov = ctx.ovl.findIndex(c => c.on && c.inputId === inp.id), isPvw = inp.id === ctx.state.previewId;
         const color = isPgm || ov >= 0 ? '#ef4444' : isPvw ? '#22c55e' : '#2f3644';
-        g.strokeStyle = color; g.lineWidth = isPgm || ov >= 0 || isPvw ? 5 : 2;
+        g.strokeStyle = color; g.lineWidth = isPgm || ov >= 0 || isPvw ? 6 : 2;
         g.strokeRect(tx + g.lineWidth / 2, ty + g.lineWidth / 2, tw - g.lineWidth, th - g.lineWidth);
+        // เมาส์ชี้อยู่ (ยังไม่ได้เลือก): กรอบประสีขาว บอกว่าแตะได้
+        if (i === this.hover && !isPgm && !isPvw) {
+          g.save(); g.setLineDash([12, 8]); g.strokeStyle = 'rgba(255,255,255,.8)'; g.lineWidth = 3;
+          g.strokeRect(tx + 4, ty + 4, tw - 8, th - 8); g.restore();
+        }
+        // แตะภาพที่ออกอากาศอยู่แล้ว: กะพริบสั้น ๆ ให้รู้ว่าเป็น Program อยู่แล้ว
+        if (this.flash && this.flash.i === i && performance.now() - this.flash.at < 500) {
+          g.fillStyle = 'rgba(239,68,68,.25)'; g.fillRect(tx, ty, tw, th);
+        }
         const lh = Math.max(22, th * 0.15);
         g.fillStyle = 'rgba(0,0,0,.7)'; g.fillRect(tx + 5, ty + th - lh - 5, tw - 10, lh);
         g.textAlign = 'left'; g.fillStyle = '#fff';
