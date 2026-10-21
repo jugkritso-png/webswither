@@ -23,7 +23,7 @@
         attribute vec2 a;uniform vec4 rect;uniform vec4 uv;uniform vec2 res;varying vec2 v;
         void main(){vec2 p=rect.xy+a*rect.zw;vec2 c=p/res*2.0-1.0;gl_Position=vec4(c.x,-c.y,0.0,1.0);v=mix(uv.xy,uv.zw,a);}`));
       gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, `precision mediump float;
-        uniform sampler2D tex;uniform float alpha;uniform float key;uniform float hard;uniform float soft;uniform float solid;uniform vec4 color;varying vec2 v;
+        uniform sampler2D tex;uniform float alpha;uniform float key;uniform float hard;uniform float soft;uniform float solid;uniform vec4 color;uniform vec4 cc;varying vec2 v;
         void main(){
           if(solid>0.5){gl_FragColor=vec4(color.rgb,color.a*alpha);return;}
           vec4 c=texture2D(tex,v);
@@ -34,7 +34,13 @@
             float d=k-o;
             if(d>0.0){c.a*=1.0-smoothstep(soft,hard,d);if(blue>0.5){c.b=o;}else{c.g=o;}}
           }
-          gl_FragColor=vec4(c.rgb,c.a*alpha);
+          // ปรับสี: ความสว่าง (คูณ) · คอนทราสต์ (รอบ 0.5) · ความอิ่มสี · อุณหภูมิสี (อุ่น +, เย็น −) — เหมือน CSS filter
+          c.rgb*=cc.x;
+          c.rgb=(c.rgb-0.5)*cc.y+0.5;
+          float l=dot(c.rgb,vec3(0.2126,0.7152,0.0722));
+          c.rgb=mix(vec3(l),c.rgb,cc.z);
+          c.rgb+=vec3(0.08,0.02,-0.08)*cc.w;
+          gl_FragColor=vec4(clamp(c.rgb,0.0,1.0),c.a*alpha);
         }`));
       gl.linkProgram(prog);
       if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) return null;
@@ -47,7 +53,7 @@
     gl.enableVertexAttribArray(aLoc);
     gl.vertexAttribPointer(aLoc, 2, gl.FLOAT, false, 0, 0);
     const U = {};
-    for (const n of ['rect', 'uv', 'res', 'tex', 'alpha', 'key', 'hard', 'soft', 'solid', 'color']) U[n] = gl.getUniformLocation(prog, n);
+    for (const n of ['rect', 'uv', 'res', 'tex', 'alpha', 'key', 'hard', 'soft', 'solid', 'color', 'cc']) U[n] = gl.getUniformLocation(prog, n);
     gl.uniform1i(U.tex, 0);
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
@@ -93,9 +99,11 @@
         return true;
       },
       // วาด texture ลงสี่เหลี่ยม r โดยใช้ส่วน uv ของภาพ
-      quad(e, r, uv, alpha = 1, key = null) {
+      // cc = { b: ความสว่าง, c: คอนทราสต์, s: ความอิ่มสี, t: อุณหภูมิสี } (ไม่ส่ง = ไม่ปรับ)
+      quad(e, r, uv, alpha = 1, key = null, cc = null) {
         if (r.w <= 0 || r.h <= 0 || alpha <= 0) return;
         gl.bindTexture(gl.TEXTURE_2D, e.tex);
+        gl.uniform4f(U.cc, cc ? cc.b : 1, cc ? cc.c : 1, cc ? cc.s : 1, cc ? cc.t : 0);
         gl.uniform1f(U.solid, 0);
         gl.uniform4f(U.rect, r.x, r.y, r.w, r.h);
         gl.uniform4f(U.uv, uv[0], uv[1], uv[2], uv[3]);

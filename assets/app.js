@@ -271,16 +271,16 @@
       case 'image':
         if (inp.status !== 'live') { drawNoSignal(ctx, w, h, inp); break; }
         fillBlack(ctx, w, h);
-        drawFit(ctx, inp.el, inp.el.naturalWidth, inp.el.naturalHeight, w, h);
+        drawFitColored(ctx, inp, inp.el, inp.el.naturalWidth, inp.el.naturalHeight, w, h);
         break;
       case 'playlist':
-        if (inp.showImg) { fillBlack(ctx, w, h); drawFit(ctx, inp.showImg, inp.showImg.naturalWidth, inp.showImg.naturalHeight, w, h); break; }
+        if (inp.showImg) { fillBlack(ctx, w, h); drawFitColored(ctx, inp, inp.showImg, inp.showImg.naturalWidth, inp.showImg.naturalHeight, w, h); break; }
         // falls through — รายการปัจจุบันเป็นวิดีโอ
       default: {
         const v = inp.el;
         if (inp.status === 'live' && v && v.readyState >= 2 && v.videoWidth) {
           fillBlack(ctx, w, h);
-          drawFit(ctx, v, v.videoWidth, v.videoHeight, w, h);
+          drawFitColored(ctx, inp, v, v.videoWidth, v.videoHeight, w, h);
         } else {
           drawNoSignal(ctx, w, h, inp);
         }
@@ -411,6 +411,34 @@
   const onOverlay = id => !!id && ovl.some(c => c.on && c.inputId === id);
   const isOnAir = id => !!id && (id === state.programId || onOverlay(id) || sceneHas(state.programId, id));
 
+  // ปรับสีต่อแหล่งภาพ (กล้อง/วิดีโอ/รูป): b ความสว่าง ×, c คอนทราสต์ ×, s ความอิ่มสี ×, t อุณหภูมิสี (−1 เย็น … +1 อุ่น)
+  const COLOR_TYPES = ['camera', 'screen', 'wireless', 'guest', 'media', 'image', 'playlist', 'srt'];
+  const NEUTRAL_COLOR = { b: 1, c: 1, s: 1, t: 0 };
+  function sanitizeColor(cc) {
+    if (!cc || typeof cc !== 'object') return null;
+    const n = (v, a, b, d) => Number.isFinite(+v) ? clamp(+v, a, b) : d;
+    const out = { b: n(cc.b, 0.3, 2, 1), c: n(cc.c, 0.3, 2, 1), s: n(cc.s, 0, 2.5, 1), t: n(cc.t, -1, 1, 0) };
+    return out.b === 1 && out.c === 1 && out.s === 1 && out.t === 0 ? null : out;
+  }
+  const colorOf = inp => (inp && inp.color && COLOR_TYPES.includes(inp.type) ? inp.color : null);
+  // 2D: ใช้ CSS filter ของ canvas · อุณหภูมิสีใช้สีส้ม/ฟ้าทับแบบ soft-light
+  function drawFitColored(ctx, inp, src, sw, sh, w, h) {
+    const cc = colorOf(inp);
+    if (!cc) { drawFit(ctx, src, sw, sh, w, h); return; }
+    ctx.save();
+    ctx.filter = `brightness(${cc.b}) contrast(${cc.c}) saturate(${cc.s})`;
+    drawFit(ctx, src, sw, sh, w, h);
+    ctx.restore();
+    if (cc.t) {
+      const k = Math.min(1, sw && sh ? Math.min(w / sw, h / sh) : 1), dw = sw * k, dh = sh * k;
+      ctx.save();
+      ctx.globalCompositeOperation = 'soft-light';
+      ctx.fillStyle = cc.t > 0 ? `rgba(255,140,40,${cc.t * 0.55})` : `rgba(60,140,255,${-cc.t * 0.55})`;
+      ctx.fillRect((w - dw) / 2, (h - dh) / 2, dw, dh);
+      ctx.restore();
+    }
+  }
+
   const DEFAULT_LAYOUT = { x: 0.5, y: 0.5, scale: 1, crop: { l: 0, r: 0, t: 0, b: 0 }, opacity: 1, key: 'none', tolerance: 60, border: false };
   const layoutOf = inp => inp.layout || DEFAULT_LAYOUT;
   function sanitizeLayout(l) {
@@ -438,14 +466,14 @@
   function drawSourceT(ctx, inp, w, h) {
     switch (inp.type) {
       case 'title': case 'timer': case 'score': case 'ticker': drawGraphic(ctx, inp, w, h); return;
-      case 'image': if (inp.status === 'live') drawFit(ctx, inp.el, inp.el.naturalWidth, inp.el.naturalHeight, w, h); return;
+      case 'image': if (inp.status === 'live') drawFitColored(ctx, inp, inp.el, inp.el.naturalWidth, inp.el.naturalHeight, w, h); return;
       case 'bars': case 'black': case 'slate': case 'clock': case 'scene': drawSource(ctx, inp, w, h); return;
       case 'playlist':
-        if (inp.showImg) { drawFit(ctx, inp.showImg, inp.showImg.naturalWidth, inp.showImg.naturalHeight, w, h); return; }
+        if (inp.showImg) { drawFitColored(ctx, inp, inp.showImg, inp.showImg.naturalWidth, inp.showImg.naturalHeight, w, h); return; }
         // falls through
       default: {
         const v = inp.el;
-        if (inp.status === 'live' && v && v.readyState >= 2 && v.videoWidth) drawFit(ctx, v, v.videoWidth, v.videoHeight, w, h);
+        if (inp.status === 'live' && v && v.readyState >= 2 && v.videoWidth) drawFitColored(ctx, inp, v, v.videoWidth, v.videoHeight, w, h);
       }
     }
   }
@@ -645,7 +673,7 @@
     const f = t.region ? { x: box.x, y: box.y + box.h * t.region.y, w: box.w, h: box.h * t.region.h } : t.full ? box : fitRect(t.e.w, t.e.h, box);
     const r = intersect(f, clip);
     if (r.w <= 0 || r.h <= 0) return;
-    gpu.quad(t.e, r, [(r.x - f.x) / f.w, (r.y - f.y) / f.h, (r.x + r.w - f.x) / f.w, (r.y + r.h - f.y) / f.h], alpha, opts.key || null);
+    gpu.quad(t.e, r, [(r.x - f.x) / f.w, (r.y - f.y) / f.h, (r.x + r.w - f.x) / f.w, (r.y + r.h - f.y) / f.h], alpha, opts.key || null, t.full || t.region ? null : colorOf(inp));
   }
 
   // ซีน: วาดแต่ละช่องด้วยแหล่งภาพของช่องนั้น (เต็มช่องแบบครอปขอบ) บนพื้นสีเข้ม
@@ -1158,6 +1186,7 @@
     inputs.splice(inputs.indexOf(made), 1);
     inputs.splice(Math.min(was.at, inputs.length), 0, made);
     if (raw.layout) made.layout = sanitizeLayout(raw.layout);
+    if (raw.color) made.color = sanitizeColor(raw.color);
     if (was.data) made.data = { ...was.data };
     for (const i of was.ovl) if (!ovl[i].inputId) ovl[i].inputId = made.id;
     if (was.pip) overlays.pip.sourceId = made.id;
@@ -1225,14 +1254,37 @@
     if (inp.type === 'score') return openScoreDialog(inp);
     if (inp.type === 'ticker') return openTickerDialog(inp);
     const hasText = inp.type === 'slate' || inp.type === 'clock';
+    const hasColor = COLOR_TYPES.includes(inp.type);
+    const before = inp.color ? { ...inp.color } : null;
+    const cc = { ...NEUTRAL_COLOR, ...(inp.color || {}) };
+    const slider = (k, label, min, max, step, fmt) => `
+      <label class="field cc-row"><span>${label} <b class="mono" data-cc-val="${k}">${fmt(cc[k])}</b></span>
+        <input class="range" type="range" data-cc="${k}" min="${min}" max="${max}" step="${step}" value="${cc[k]}"></label>`;
+    const pct = v => `${v >= 1 ? '+' : ''}${Math.round((v - 1) * 100)}%`, temp = v => (v > 0 ? 'อุ่น +' : v < 0 ? 'เย็น ' : '') + Math.round(v * 100);
     const result = await dialog({
       title: 'แก้ไขแหล่งภาพ',
       body: `
         <label class="field"><span>ชื่อแหล่งภาพ</span><input name="name" class="input" maxlength="40" value="${esc(inp.name)}"></label>
-        ${hasText ? `<label class="field"><span>${inp.type === 'slate' ? 'ข้อความบนจอ' : 'หัวข้อเหนือนาฬิกา'}</span><input name="text" class="input" maxlength="80" value="${esc(inp.text)}"></label>` : ''}`,
-      actions: [{ label: 'ยกเลิก' }, { label: 'บันทึก', primary: true, value: 'save' }]
+        ${hasText ? `<label class="field"><span>${inp.type === 'slate' ? 'ข้อความบนจอ' : 'หัวข้อเหนือนาฬิกา'}</span><input name="text" class="input" maxlength="80" value="${esc(inp.text)}"></label>` : ''}
+        ${hasColor ? `<div class="help"><h3>ปรับสีภาพ <small class="muted">(เห็นผลทันที — ให้กล้องหลายตัวสีตรงกัน)</small></h3></div>
+          ${slider('b', 'ความสว่าง', 0.3, 2, 0.01, pct)}${slider('c', 'คอนทราสต์', 0.3, 2, 0.01, pct)}
+          ${slider('s', 'ความอิ่มสี', 0, 2.5, 0.01, pct)}${slider('t', 'อุณหภูมิสี', -1, 1, 0.01, temp)}
+          <button type="button" class="btn btn-sm cc-reset">คืนค่าสีเดิม</button>` : ''}`,
+      actions: [{ label: 'ยกเลิก' }, { label: 'บันทึก', primary: true, value: 'save' }],
+      onOpen(modal) {
+        if (!hasColor) return;
+        const fmt = { b: pct, c: pct, s: pct, t: temp };
+        const apply = () => {
+          $$('[data-cc]', modal).forEach(r => { cc[r.dataset.cc] = +r.value; $(`[data-cc-val="${r.dataset.cc}"]`, modal).textContent = fmt[r.dataset.cc](+r.value); });
+          inp.color = sanitizeColor(cc);
+        };
+        modal.addEventListener('input', e => { if (e.target.dataset.cc) apply(); });
+        // ดับเบิลคลิกแถบเลื่อน = ค่าเดิม
+        modal.addEventListener('dblclick', e => { const k = e.target.dataset.cc; if (k) { e.target.value = NEUTRAL_COLOR[k]; apply(); } });
+        $('.cc-reset', modal).addEventListener('click', () => { $$('[data-cc]', modal).forEach(r => { r.value = NEUTRAL_COLOR[r.dataset.cc]; }); apply(); });
+      }
     });
-    if (result?.value !== 'save') return;
+    if (result?.value !== 'save') { inp.color = before; return; }
     const name = result.form.name.value.trim();
     if (name) inp.name = name;
     if (hasText) inp.text = result.form.text.value.trim();
@@ -4960,6 +5012,7 @@
           if (i.type === 'guest') o.guest = i.guest;
           if (i.type === 'scene') o.scene = { ...i.scene, slots: [...i.scene.slots] };
           if (i.layout) o.layout = JSON.parse(JSON.stringify(i.layout));
+          if (i.color) o.color = { ...i.color };
           return o;
         }),
         program: state.programId, preview: state.previewId,
@@ -4998,6 +5051,7 @@
         try { const job = this.restoreInput(raw, base); if (job) loading.push(job); } catch (e) { console.warn('restore input', e); }
         const made = byId(id);
         if (made && raw.layout) made.layout = sanitizeLayout(raw.layout);
+        if (made && raw.color) made.color = sanitizeColor(raw.color);
         if (made && GRAPHIC_TYPES.includes(made.type) && raw.data && /^https?:\/\//i.test(raw.data.url || '')) {
           made.data = { url: String(raw.data.url), header: raw.data.header !== false, row: Math.max(0, +raw.data.row || 0), rows: [], error: '', fetchedAt: 0 };
         }
