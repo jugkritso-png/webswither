@@ -198,6 +198,12 @@
     const url = `${info.gateway.url}&fps=30&vb=2500&res=720${vcopy ? '&vcopy=1' : ''}`;
     const statuses = [];
     let live = false, error = '', encoder = null, mimeUsed = type;
+    // บันทึกเหตุการณ์ระหว่างค้างสตรีม (ทดสอบไลฟ์เบื้องหลัง) — ถ้าสตรีมหยุดก่อนเวลา CI จะได้รู้ว่าฝั่งไหนหยุด
+    const t0 = performance.now(), sec = () => ((performance.now() - t0) / 1000).toFixed(1);
+    const events = [];
+    let lastSend = 0, sentBytes = 0;
+    const note = e => { if (events.length < 40) events.push(`${sec()}s ${e}`); };
+    if (hold) document.addEventListener('visibilitychange', () => note('visibility=' + document.visibilityState));
     await new Promise(resolve => {
       let rec = null;
       const ws = new WebSocket(url);
@@ -215,7 +221,8 @@
         rec = useWc
           ? WM.wcrec.recorder({ canvas, audioNode: osc, fps: 30, videoBitsPerSecond: 2500000, audioBitsPerSecond: 128000, preferAvc: true, requireAvc: vcopy, constantBitrate: vcopy })
           : new MediaRecorder(stream, { mimeType: type, videoBitsPerSecond: 2500000 });
-        rec.ondataavailable = e => { if (e.data.size && ws.readyState === 1) ws.send(e.data); };
+        rec.ondataavailable = e => { if (e.data.size && ws.readyState === 1) { ws.send(e.data); lastSend = performance.now(); sentBytes += e.data.size; } };
+        if (rec.addEventListener) { rec.addEventListener('stop', () => note('recorder stop')); rec.addEventListener('error', ev => note('recorder error ' + (ev.error && ev.error.message || ''))); }
         rec.start(1000);
       };
       ws.onmessage = ev => {
@@ -224,6 +231,7 @@
         if (m.encoder) encoder = m.encoder;
         if (m.type === 'error') error = m.message;
         for (const d of m.destinations || []) {
+          if (hold && d.state !== statuses[statuses.length - 1]) note(`dest ${d.state}${d.message ? ' ' + d.message.slice(0, 120) : ''}`);
           statuses.push(d.state);
           if (d.state === 'error') error = d.message;
           // LIVE แล้วส่งต่ออีก 8 วินาทีให้ปลายทางได้ไฟล์ที่ตรวจได้ (หรือค้างไว้ตาม selftestHold พร้อมเปิดบริการเบื้องหน้า
@@ -234,13 +242,14 @@
           }
         }
       };
-      ws.onclose = ev => { if (!live && !error) error = `gateway ปิดการเชื่อมต่อ (${ev.code} ${ev.reason || ''})`; };
+      ws.onclose = ev => { note(`ws close ${ev.code} ${ev.reason || ''}`); if (!live && !error) error = `gateway ปิดการเชื่อมต่อ (${ev.code} ${ev.reason || ''})`; };
     });
     stopDraw();
     if (hold && desktop.mobile) desktop.setLive(false, '');
     if (stream) stream.getTracks().forEach(t => t.stop());
     if (actx) actx.close().catch(() => {});
-    const speed = encoder ? ` · encoder ${encoder.speed}x ${encoder.fps} fps` : '';
+    const speed = (encoder ? ` · encoder ${encoder.speed}x ${encoder.fps} fps` : '')
+      + (hold ? ` · hold ${hold}s · ส่ง ${(sentBytes / 1e6).toFixed(1)} MB ครั้งสุดท้ายที่ ${lastSend ? ((lastSend - t0) / 1000).toFixed(1) : '-'}s · ${events.join(' | ')}` : '');
     add('stream', live, live ? `LIVE ผ่าน ${vcopy ? 'H.264 จาก WebCodecs (ไม่เข้ารหัสซ้ำ)' : info.encoder} (${mimeUsed}${useWc ? ' · WebCodecs' : ''})${speed}` : (error || `ไม่ขึ้น LIVE (${statuses.slice(-5).join(',')})`));
   }
 

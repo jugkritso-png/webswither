@@ -111,7 +111,8 @@ for _ in $(seq 1 60); do
   sleep 1
 done
 adb shell setprop debug.webmix.selftest 0
-adb logcat -d -v brief | grep -E 'WebMix|LiveService|chromium|AndroidRuntime' | tail -300 > "$OUT/logcat-bg.txt" || true
+adb logcat -d -v time > "$OUT/logcat-bg-all.txt" || true
+grep -E 'WebMix|LiveService|chromium|AndroidRuntime' "$OUT/logcat-bg-all.txt" | tail -300 > "$OUT/logcat-bg.txt" || true
 adb logcat -d -v brief -s WebMix:* > "$OUT/logcat-bg-webmix.txt" || true
 sleep 3
 pkill -INT -f "0.0.0.0:[0-9]*/live/bg" 2>/dev/null || true
@@ -127,7 +128,14 @@ node -e '
   console.log(`ไลฟ์เบื้องหลัง: ${dur.toFixed(1)} วินาที · ${t.length} เฟรม (${fps.toFixed(1)} fps) · ช่วงขาดนานสุด ${gap.toFixed(2)} วินาที`);
   if (dur < 35) { console.log("สตรีมหยุดก่อนเวลา (ปิดจอแล้วสตรีมหลุด)"); process.exit(1); }
   if (fps < 20 || gap > 1) { console.log("ภาพค้าง/เฟรมหายระหว่างปิดจอ"); process.exit(1); }
-' "$OUT/android-bg-pts.txt" "$BG_DUR"
+' "$OUT/android-bg-pts.txt" "$BG_DUR" || {
+  # ไม่ผ่าน: พิมพ์สิ่งที่ต้องใช้หาสาเหตุลง log ของงานเลย (ไฟล์ artifact ดาวน์โหลดไม่ได้ทุกที่)
+  echo "--- ผลทดสอบในแอป (สตรีม + เหตุการณ์ระหว่างค้าง)"
+  adb logcat -d -v raw -s WebMix:I | awk '/^WEBMIX_SELFTEST /{f=1} f' | tr -d '\n' | grep -o '"stream"[^}]*}' | head -c 4000; echo
+  echo "--- logcat ที่เกี่ยวข้อง"
+  grep -iE "webmix|gateway|ffmpeg|LiveService|ActivityManager.*(kill|died|Process)|lowmemory|chromium.*(crash|renderer|gone)|freez|cached app" "$OUT/logcat-bg-all.txt" | grep -vE "glBindAttrib|s_gl|Non-monotonic|backward in time" | tail -80
+  exit 1
+}
 
 # RTMPS ไปเซิร์ฟเวอร์จริงของ Facebook ด้วย ffmpeg ตัวเดียวกับในแอป (คีย์ปลอม): ต้องผ่าน DNS และ TLS
 # แล้วไปติดที่ Facebook ปฏิเสธคีย์ — ถ้าติดที่ DNS หรือ TLS แปลว่าการสตรีมไป Facebook/YouTube จากมือถือจะใช้ไม่ได้
