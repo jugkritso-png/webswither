@@ -11,7 +11,11 @@
 //! พารามิเตอร์ของ URL: fps, vb (kbps), res (ความสูง) · vcopy=1 = วิดีโอที่ส่งมาเป็น H.264 อยู่แล้ว (เช่นจาก WebCodecs
 //! ด้วยชิปของมือถือ) → ใช้ต่อได้เลยไม่เข้ารหัสซ้ำ เข้ารหัสเฉพาะเสียงเป็น AAC
 //!
+//! รับสัญญาณเข้ามาเป็น Input (SRT / กล้อง IP RTSP / RTMP) ที่ /srt-in — ดู `ingest.rs`
+//!
 //! ใช้ในแอปเดสก์ท็อป (ทำงานในเครื่องเดียวกับหน้า WebMix — ไม่ต้องมีเซิร์ฟเวอร์) และรันแยกเป็นโปรแกรม `webmix-gateway` ได้
+
+mod ingest;
 
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -293,10 +297,13 @@ async fn handle_conn(stream: TcpStream, peer: SocketAddr, cfg: Arc<Config>, srt_
         let _ = sink.send(reject("invalid token")).await;
         return Ok(());
     }
-    if path.starts_with("/srt-in") {
-        let msg = json!({ "type": "error", "message": "Gateway ในเครื่อง (แอปเดสก์ท็อป) ยังไม่รองรับการรับสัญญาณ SRT — ใช้ Stream Gateway บนเซิร์ฟเวอร์สำหรับ Input SRT" });
-        let _ = sink.send(Message::Text(msg.to_string().into())).await;
-        let _ = sink.send(reject("srt input not supported")).await;
+    // รับสัญญาณเข้ามาเป็น Input: SRT / กล้อง IP (RTSP) / RTMP — ดู ingest.rs
+    if path == "/srt-in" {
+        ingest::control(sink, source, cfg.clone(), srt_supported, format!("[{peer}]")).await;
+        return Ok(());
+    }
+    if path == "/srt-in/data" {
+        ingest::data(sink, source, params.get("id").map(String::as_str).unwrap_or("")).await;
         return Ok(());
     }
 

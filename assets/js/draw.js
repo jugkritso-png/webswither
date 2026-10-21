@@ -97,7 +97,8 @@
       ctx.fillText(relink, w / 2, h * 0.65);
     }
     if (inp.type === 'srt') {
-      const hint = inp.srt.mode === 'listener' ? `UDP ${inp.srt.port} · ${inp.srt.latency} ms` : inp.srt.url.replace(/\?.*$/, '');
+      const c = inp.srt;
+      const hint = c.mode === 'listener' ? `UDP ${c.port} · ${c.latency} ms` : c.mode === 'rtmp' ? `RTMP · พอร์ต ${c.port} · รอผู้ส่ง` : String(c.url || '').replace(/\?.*$/, '');
       ctx.fillStyle = '#5d6578';
       fitFont(ctx, hint, 500, 18 * s, MONO, w * 0.8);
       ctx.fillText(hint, w / 2, h * 0.64);

@@ -126,7 +126,7 @@
     const copy = JSON.parse(JSON.stringify(settings));
     if (!settings.rememberKey) {
       copy.destinations.forEach(d => { d.key = ''; d.passphrase = ''; });
-      (copy.srtInputs || []).forEach(c => { c.passphrase = ''; });
+      (copy.srtInputs || []).forEach(c => { c.passphrase = ''; c.pass = ''; });
     }
     store.set('settings', copy);
   }
@@ -1364,6 +1364,8 @@
     if (inp.type === 'playlist') return playlist.edit(inp);
     if (inp.type === 'scene') return openSceneDialog(inp);
     if (inp.type === 'replay') return openReplayDialog(inp);
+    if (inp.type === 'srt' && inp.srt.mode === 'rtsp') return openRtspDialog(inp);
+    if (inp.type === 'srt' && inp.srt.mode === 'rtmp') return showRtmpSenderInfo(inp);
     if (inp.type === 'title') return openTitleDialog(inp);
     if (inp.type === 'timer') return openTimerDialog(inp);
     if (inp.type === 'score') return openScoreDialog(inp);
@@ -3378,13 +3380,14 @@
     inp.srtState = 'connecting';
     ws.onopen = () => {
       const c = inp.srt;
-      ws.send(JSON.stringify({ type: 'open', mode: c.mode, port: c.port, url: c.url, streamid: c.streamid, passphrase: c.passphrase, latency: c.latency }));
+      ws.send(JSON.stringify({ type: 'open', mode: c.mode, port: c.port, url: c.mode === 'rtsp' ? rtspUrl(c) : c.url, streamid: c.streamid, passphrase: c.passphrase, latency: c.latency, key: c.key }));
     };
     ws.onmessage = ev => {
       let msg;
       try { msg = JSON.parse(ev.data); } catch (e) { return; }
       if (msg.type === 'opened') {
         inp.srtSession = msg.id;
+        inp.srtLanIp = msg.lanIp || '';
       } else if (msg.type === 'status') {
         const prev = inp.srtState;
         inp.srtState = msg.state;
@@ -3392,7 +3395,7 @@
         inp.srtInfo = msg.info || null;
         if (msg.state === 'live') {
           startSrtPlayer(inp);
-          if (prev !== 'live') toast(`${inp.name}: รับสัญญาณ SRT แล้ว${msg.info ? ` (${msg.info.width}×${msg.info.height}${msg.transcode ? `, แปลง ${msg.info.codec.toUpperCase()} → H.264` : ''})` : ''}`, 'success', 3500);
+          if (prev !== 'live') toast(`${inp.name}: รับสัญญาณ ${netLabel(inp)} แล้ว${msg.info ? ` (${msg.info.width}×${msg.info.height}${msg.transcode ? `, แปลง ${msg.info.codec.toUpperCase()} → H.264` : ''})` : ''}`, 'success', 3500);
         } else {
           stopSrtPlayer(inp);
           setInputStatus(inp, 'nosignal');
@@ -3402,6 +3405,10 @@
         inp.srtState = 'error';
         inp.srtMessage = msg.message;
         toast(`${inp.name}: ${msg.message}`, 'error', 7000);
+      }
+      // กล้องปฏิเสธรหัสผ่าน (เช่นเปิดหน้าใหม่แล้วไม่ได้จำรหัสไว้) — บอกวิธีแก้
+      if (msg.type === 'status' && msg.state === 'error' && inp.srt.mode === 'rtsp' && /401|unauthori[sz]ed/i.test(msg.message || '')) {
+        inp.srtMessage = 'กล้องไม่รับชื่อผู้ใช้/รหัสผ่าน — กดแก้ไขที่การ์ดเพื่อใส่ใหม่';
       }
     };
     ws.onclose = () => {
@@ -3464,6 +3471,141 @@
     clearTimeout(inp.srtRetry);
     stopSrtPlayer(inp);
     if (inp.srtCtl) { const ws = inp.srtCtl; inp.srtCtl = null; ws.close(1000, 'removed'); }
+  }
+
+  /* ---- กล้อง IP (RTSP) และรับ RTMP — ใช้ทางเดียวกับ SRT: Gateway รับสัญญาณแล้วส่งต่อเป็น MPEG-TS ให้หน้านี้เล่น ---- */
+  const netLabel = inp => ({ rtsp: 'IP CAM', rtmp: 'RTMP' })[inp.srt?.mode] || 'SRT';
+  const rtmpKey = () => Array.from(crypto.getRandomValues(new Uint8Array(6)), b => 'abcdefghjkmnpqrstuvwxyz23456789'[b % 31]).join('');
+  // ยี่ห้อกล้องที่พบบ่อย: path ของภาพหลัก (main stream) — {ch} = ช่องกล้อง (เครื่องบันทึก NVR)
+  const RTSP_BRANDS = {
+    hikvision: ['Hikvision / HiLook / EZVIZ', '/Streaming/Channels/{ch}01', 554],
+    dahua: ['Dahua / IMOU / Amcrest', '/cam/realmonitor?channel={ch}&subtype=0', 554],
+    tapo: ['TP-Link Tapo / VIGI', '/stream1', 554],
+    reolink: ['Reolink', '/h264Preview_0{ch}_main', 554],
+    uniview: ['Uniview (UNV)', '/unicast/c{ch}/s0/live', 554],
+    axis: ['Axis', '/axis-media/media.amp', 554],
+    onvif: ['กล้อง PTZ / ONVIF ทั่วไป', '/live/av0', 554],
+    custom: ['กำหนดเอง (วาง URL ทั้งหมด)', '', 554]
+  };
+  function rtspUrl(c) {
+    if (!c.user) return c.url;
+    try {
+      const u = new URL(c.url);
+      u.username = encodeURIComponent(c.user);
+      u.password = encodeURIComponent(c.pass || '');
+      return u.toString();
+    } catch (e) { return c.url; }
+  }
+  async function openRtspDialog(target) {
+    const gwErr = gatewayProblem();
+    if (gwErr) { toast(`${gwErr} — กล้อง IP ต้องใช้ Stream Gateway (แอปเดสก์ท็อปมีในตัว)`, 'warn'); openSettings('stream'); return; }
+    const cur = target ? target.srt : {};
+    let host = '', path = '', port = 554;
+    try { if (cur.url) { const u = new URL(cur.url); host = u.hostname; port = +u.port || 554; path = u.pathname + u.search; } } catch (e) {}
+    const n = inputs.filter(i => i.type === 'srt' && i.srt.mode === 'rtsp').length + 1;
+    const r = await dialog({
+      title: target ? `กล้อง IP — ${target.name}` : 'เพิ่มกล้อง IP (RTSP)',
+      body: `
+        <label class="field"><span>ชื่อแหล่งภาพ</span><input name="name" class="input" maxlength="32" value="${esc(target ? target.name : `IP CAM ${n}`)}"></label>
+        <label class="field"><span>ยี่ห้อกล้อง</span><select name="brand" class="select">${Object.entries(RTSP_BRANDS).map(([k, b]) => `<option value="${k}" ${k === (target ? 'custom' : 'hikvision') ? 'selected' : ''}>${b[0]}</option>`).join('')}</select></label>
+        <div class="rtsp-parts">
+          <div class="field-row">
+            <label class="field"><span>IP ของกล้อง</span><input name="host" class="input mono" placeholder="192.168.1.64" value="${esc(host)}"></label>
+            <label class="field"><span>ช่อง (NVR)</span><input name="ch" class="input mono" type="number" min="1" max="64" value="1"></label>
+          </div>
+        </div>
+        <label class="field rtsp-url"><span>RTSP URL</span><input name="url" class="input mono" placeholder="rtsp://192.168.1.64:554/…" value="${esc(cur.url || '')}"></label>
+        <div class="field-row">
+          <label class="field"><span>ชื่อผู้ใช้กล้อง</span><input name="user" class="input mono" autocomplete="off" value="${esc(cur.user || 'admin')}"></label>
+          <label class="field"><span>รหัสผ่านกล้อง</span><input name="pass" class="input mono" type="password" autocomplete="off" value="${esc(cur.pass || '')}"></label>
+        </div>
+        <p class="note">กล้องต้องอยู่ในวงเครือข่ายเดียวกับ Gateway (แอปเดสก์ท็อป = เครื่องนี้) · ใช้ภาพหลัก (main stream) ได้ถึง 4K · กล้อง H.265 แปลงเป็น H.264 ให้อัตโนมัติ (ใช้ CPU เพิ่ม — ตั้งกล้องเป็น H.264 จะเบากว่า)${settings.rememberKey ? '' : '<br>รหัสกล้องไม่ถูกจำหลังปิดหน้า (เหมือน Stream Key) — เปิด “จำ Stream Key” ในตั้งค่าถ้าต้องการให้จำ'}</p>`,
+      actions: [{ label: 'ยกเลิก' }, { label: target ? 'บันทึก' : 'เพิ่มกล้อง', primary: true, value: 'add' }],
+      onOpen(modal) {
+        const f = $('form', modal);
+        const build = () => {
+          const b = RTSP_BRANDS[f.brand.value];
+          $('.rtsp-parts', modal).hidden = f.brand.value === 'custom';
+          if (f.brand.value === 'custom' || !f.host.value.trim()) return;
+          const ch = Math.max(1, +f.ch.value || 1);
+          f.url.value = `rtsp://${f.host.value.trim()}:${b[2]}${b[1].replace('{ch}', ch)}`;
+        };
+        [f.brand, f.host, f.ch].forEach(el => el.addEventListener('input', build));
+        f.brand.addEventListener('change', build);
+        build();
+      }
+    });
+    if (r?.value !== 'add') return;
+    const f = r.form;
+    let url = f.url.value.trim(), user = f.user.value.trim(), pass = f.pass.value;
+    // วาง URL ที่มีชื่อผู้ใช้/รหัสมาด้วย → แยกออกมาเก็บ (ไม่ให้รหัสไปอยู่ใน URL ที่แสดง)
+    try { const u = new URL(url); if (u.username) { user = decodeURIComponent(u.username); pass = decodeURIComponent(u.password); u.username = ''; u.password = ''; url = u.toString(); } } catch (e) {}
+    if (!/^rtsps?:\/\/[^\s"'<>]+$/i.test(url)) { toast('URL กล้องต้องขึ้นต้นด้วย rtsp://', 'warn'); return; }
+    const name = f.name.value.trim().slice(0, 32) || 'IP CAM';
+    const cfg = { mode: 'rtsp', url, user: user.slice(0, 64), pass: pass.slice(0, 128), latency: 500 };
+    if (target) {
+      target.name = name; target.srt = cfg;
+      closeSrtInput(target); target.removed = false;
+      connectSrtInput(target);
+      renderInputs(); saveSrtInputs();
+      return;
+    }
+    createSrtInput(cfg, name);
+    saveSrtInputs();
+    toast(`กำลังเชื่อมต่อ “${name}” — ภาพจะขึ้นในไม่กี่วินาที`, 'info', 4000);
+  }
+
+  async function openRtmpInputDialog() {
+    const gwErr = gatewayProblem();
+    if (gwErr) { toast(`${gwErr} — การรับ RTMP ต้องใช้ Stream Gateway (แอปเดสก์ท็อปมีในตัว)`, 'warn'); openSettings('stream'); return; }
+    const used = inputs.filter(i => i.type === 'srt' && i.srt.mode === 'rtmp').map(i => i.srt.port);
+    const port = [1935, 1936, 1937, 1938, 1939, 1940, 1941, 1942, 1943, 1944].find(p => !used.includes(p));
+    if (!port) { toast('รับ RTMP ได้สูงสุด 10 แหล่งพร้อมกัน', 'warn'); return; }
+    const n = inputs.filter(i => i.type === 'srt' && i.srt.mode === 'rtmp').length + 1;
+    const r = await dialog({
+      title: 'รับภาพ RTMP (OBS / vMix / มือถือ / โดรน)',
+      body: `
+        <label class="field"><span>ชื่อแหล่งภาพ</span><input name="name" class="input" maxlength="32" value="RTMP ${n}"></label>
+        <label class="field"><span>พอร์ต TCP บน Gateway</span><input name="port" class="input mono" type="number" min="1935" max="1944" value="${port}"></label>
+        <p class="note">กดเพิ่มแล้วจะได้ที่อยู่เซิร์ฟเวอร์และ Stream key สำหรับใส่ในโปรแกรม/อุปกรณ์ที่ส่งภาพ (OBS, vMix, แอป Larix / Prism บนมือถือ, โดรน DJI, encoder)</p>`,
+      actions: [{ label: 'ยกเลิก' }, { label: 'เพิ่มแหล่งภาพ', primary: true, value: 'add' }]
+    });
+    if (r?.value !== 'add') return;
+    const p = +r.form.port.value;
+    if (!(p >= 1935 && p <= 1944)) { toast('พอร์ต RTMP ต้องอยู่ระหว่าง 1935–1944', 'warn'); return; }
+    if (used.includes(p)) { toast(`พอร์ต ${p} ถูกใช้โดยแหล่งภาพอื่นแล้ว`, 'warn'); return; }
+    const inp = createSrtInput({ mode: 'rtmp', port: p, key: rtmpKey(), latency: 500 }, r.form.name.value.trim().slice(0, 32) || 'RTMP');
+    saveSrtInputs();
+    // รอให้ Gateway บอกที่อยู่ในวง LAN (กรณี Gateway อยู่ในเครื่องนี้) ก่อนแสดงวิธีตั้งค่าผู้ส่ง
+    for (let i = 0; i < 15 && !inp.srtSession; i++) await new Promise(res => setTimeout(res, 100));
+    showRtmpSenderInfo(inp);
+  }
+  function rtmpSenderHost(inp) {
+    let host = '';
+    try { host = new URL(gatewayUrl()).hostname; } catch (e) {}
+    return /^(127\.|localhost$|\[?::1)/.test(host) && inp.srtLanIp ? inp.srtLanIp : host;
+  }
+  function showRtmpSenderInfo(inp) {
+    const c = inp.srt, host = rtmpSenderHost(inp);
+    const server = `rtmp://${host}:${c.port}/live`, full = `${server}/${c.key}`;
+    const copyBtn = v => `<button type="button" class="btn btn-icon rtmp-copy" data-copy="${esc(v)}" title="คัดลอก">${icon('copy')}</button>`;
+    dialog({
+      title: `ตั้งค่าผู้ส่งสำหรับ “${inp.name}”`,
+      body: `
+        <p class="modal-text">ใส่ค่าด้านล่างในโปรแกรม/อุปกรณ์ที่จะส่งภาพเข้ามา แล้วกดเริ่มสตรีม ภาพจะขึ้นในแหล่งภาพนี้อัตโนมัติ</p>
+        <label class="field"><span>เซิร์ฟเวอร์ (Server / URL)</span><div class="link-row"><input class="input mono" readonly value="${esc(server)}">${copyBtn(server)}</div></label>
+        <label class="field"><span>Stream key</span><div class="link-row"><input class="input mono" readonly value="${esc(c.key)}">${copyBtn(c.key)}</div></label>
+        <label class="field"><span>URL เต็ม (สำหรับแอปที่มีช่องเดียว เช่น Larix)</span><div class="link-row"><input class="input mono" readonly value="${esc(full)}">${copyBtn(full)}</div></label>
+        <p class="note">อุปกรณ์ที่ส่งต้องเข้าถึงเครื่อง Gateway ได้ (วง Wi-Fi/LAN เดียวกัน หรือเซิร์ฟเวอร์ที่เปิดพอร์ต <b>TCP ${c.port}</b>) · ${/^(127\.|localhost)/.test(host) ? '<b>ยังไม่รู้ที่อยู่ในวง LAN ของเครื่องนี้ — ใช้ IP ของเครื่อง (ดูในการตั้งค่าเครือข่าย) แทน 127.0.0.1</b> · ' : ''}Windows อาจถามอนุญาตไฟร์วอลล์ครั้งแรก ให้กดอนุญาต · ผู้ส่งที่ใช้ key อื่นจะถูกปฏิเสธ · แนะนำ H.264 + AAC, keyframe ทุก 2 วินาที</p>`,
+      actions: [{ label: 'ปิด', primary: true }],
+      onOpen(modal) {
+        $$('.rtmp-copy', modal).forEach(b => b.addEventListener('click', () => {
+          (navigator.clipboard ? navigator.clipboard.writeText(b.dataset.copy) : Promise.reject())
+            .then(() => toast('คัดลอกแล้ว', 'success'))
+            .catch(() => toast('คัดลอกไม่สำเร็จ — เลือกข้อความแล้วคัดลอกเอง', 'warn'));
+        }));
+      }
+    });
   }
 
   function showSrtSenderInfo(inp) {
@@ -5236,6 +5378,8 @@
     ['เชื่อมต่อจากที่อื่น', [
       ['phone', 'กล้องมือถือไร้สาย', 'สแกน QR ด้วยมือถืออีกเครื่อง แล้วใช้เป็นกล้อง', showWirelessDialog],
       ['headphones', 'แขกรับเชิญทางไกล', 'ส่งลิงก์ให้แขก คุยกันได้ทั้งภาพและเสียง', addGuest],
+      ['video', 'กล้อง IP (RTSP)', 'กล้องวงจรปิด / PTZ เช่น Hikvision Dahua Tapo Reolink', () => openRtspDialog()],
+      ['broadcast', 'รับ RTMP', 'OBS / vMix / แอปมือถือ / โดรน ส่งภาพเข้ามา', openRtmpInputDialog],
       ['broadcast', 'สัญญาณ SRT', 'รับภาพจาก OBS / vMix / encoder', openSrtInputDialog]]],
     ['กราฟิกและข้อความ', [
       ['type', 'Title กราฟิกข้อความ', 'ป้ายชื่อ/ข้อความบนพื้นโปร่งใส', addTitleInput],
@@ -5325,13 +5469,14 @@
   // ข้อความเล็กใต้ชื่อบนการ์ด: สถานะสัญญาณ, ข้อมูลจากชีต, หรือชนิด + ความละเอียดจริง
   function cardSub(inp) {
     if (inp.type === 'replay' && inp.status !== 'live') return inp.rbError ? 'REPLAY · ใช้ไม่ได้' : `REPLAY · พร้อม (${inp.replay.source === 'program' ? 'Program' : byId(inp.replay.source)?.name || '—'})`;
-    if (inp.type === 'srt' && inp.status !== 'live') return `SRT · ${SRT_IN_STATES[inp.srtState] || 'ไม่มีสัญญาณ'}`;
+    if (inp.type === 'srt' && inp.status !== 'live') return `${netLabel(inp)} · ${SRT_IN_STATES[inp.srtState] || 'ไม่มีสัญญาณ'}`;
     if (inp.status !== 'live') return 'ไม่มีสัญญาณ';
     if (inp.data && inp.data.error) return 'DATA ERROR';
     if (inp.type === 'title' && inp.data && inp.data.rows && inp.data.rows.length) return `${inp.data.row + 1}/${inp.data.rows.length}`;
     if (inp.type === 'playlist') return inp.list.items.length ? `${inp.list.index + 1}/${inp.list.items.length}` : 'ว่าง';
     const meta = TYPE_META[inp.type];
-    const label = inp.name.toUpperCase() === meta.label ? '' : meta.label;
+    const tag = inp.type === 'srt' ? netLabel(inp) : meta.label;
+    const label = inp.name.toUpperCase() === tag ? '' : tag;
     const w = inp.el?.videoWidth || inp.el?.naturalWidth, h = inp.el?.videoHeight || inp.el?.naturalHeight;
     return w && h ? `${label}${label ? ' · ' : ''}${resTag(w, h)}` : label;
   }
@@ -5535,7 +5680,7 @@
           if (i.type === 'media') { o.file = i.fileName || ''; o.loop = !!i.el.loop; }
           if (i.type === 'image') o.file = i.fileName || '';
           if (i.type === 'wireless') o.peerId = i.peerId;
-          if (i.type === 'srt') o.srt = { ...i.srt, passphrase: secrets ? i.srt.passphrase : '' };
+          if (i.type === 'srt') o.srt = { ...i.srt, passphrase: secrets ? i.srt.passphrase : '', pass: secrets ? i.srt.pass || '' : '' };
           if (i.type === 'title') o.title = { ...i.title };
           // เวลาที่เดินอยู่บันทึกเป็นเวลาที่ผ่านไปแล้ว (เปิดหน้าใหม่แล้วหยุดรอให้กดเริ่ม)
           const freeze = t => ({ ...t, base: (t.base || 0) + (t.running && t.since ? Date.now() - t.since : 0), running: false, since: 0 });
@@ -5712,9 +5857,10 @@
         }
         case 'srt': {
           const c = raw.srt || {};
-          if (c.mode !== 'listener' && c.mode !== 'caller') return;
-          createSrtInput({ mode: c.mode, port: +c.port || 9000, url: String(c.url || ''), streamid: String(c.streamid || ''),
-            passphrase: String(c.passphrase || ''), latency: SRT_LATENCIES.includes(+c.latency) ? +c.latency : 500 }, base.name, { id: base.id });
+          if (!['listener', 'caller', 'rtsp', 'rtmp'].includes(c.mode)) return;
+          createSrtInput({ mode: c.mode, port: +c.port || (c.mode === 'rtmp' ? 1935 : 9000), url: String(c.url || ''), streamid: String(c.streamid || ''),
+            passphrase: String(c.passphrase || ''), latency: SRT_LATENCIES.includes(+c.latency) ? +c.latency : 500,
+            user: String(c.user || '').slice(0, 64), pass: String(c.pass || '').slice(0, 128), key: /^[A-Za-z0-9_-]{4,64}$/.test(c.key || '') ? c.key : rtmpKey() }, base.name, { id: base.id });
           break;
         }
       }

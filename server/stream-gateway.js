@@ -23,7 +23,8 @@
 //   (ยังรองรับแบบเดิม ?rtmp=URL สำหรับปลายทางเดียว)
 //
 // รับสัญญาณ SRT เข้ามาเป็น Input (ดูรายละเอียดที่ส่วน "SRT Input" ด้านล่าง):
-//   ws /srt-in?token=…        client → { type: 'open', mode: 'listener'|'caller', port, url, streamid, passphrase, latency }
+//   ws /srt-in?token=…        client → { type: 'open', mode: 'listener'|'caller'|'rtsp'|'rtmp', port, url, streamid, passphrase, latency, key }
+//                             rtsp = ดึงภาพจากกล้อง IP (url rtsp://…) · rtmp = รอรับ RTMP ที่ rtmp://<gateway>:port/live/key (RTMP_PORTS)
 //                             server → { type: 'opened', id, port } แล้ว { type: 'status', state: waiting|connecting|live|error, info }
 //   ws /srt-in/data?token=…&id=…   ข้อมูลภาพ MPEG-TS (binary) สำหรับ mpegts.js
 //   SRT_PORTS     ช่วงพอร์ต UDP สำหรับโหมด listener (ค่าเริ่มต้น 9000-9009)
@@ -108,6 +109,8 @@ function verticalFilter(mode, w, h) {
   return `crop=ih*9/16:ih,scale=${w}:${h},setsar=1`;
 }
 
+// rtsp://user:pass@host → rtsp://***@host (ไม่ให้รหัสกล้องไปอยู่ใน log / หน้า admin)
+const maskCreds = url => url.replace(/^(\w+:\/\/)[^@/]*@/, '$1***@');
 const maskUrl = url => (/^srt:/i.test(url) ? url.replace(/\?.*$/, '?***') : url.replace(/[^/]+$/, '***'));
 
 /* ==========================================================================
@@ -177,6 +180,20 @@ const SRT_PORT_RANGE = (() => {
   return m ? [Number(m[1]), Number(m[2])] : [9000, 9009];
 })();
 const SRT_LATENCIES_MS = [120, 200, 500, 1000, 2000, 4000];
+// รับ RTMP (OBS / vMix / มือถือ / โดรน ส่งเข้ามา) — พอร์ต TCP ละหนึ่งแหล่งภาพ
+const RTMP_PORT_RANGE = (() => {
+  const m = /^(\d+)\s*-\s*(\d+)$/.exec(process.env.RTMP_PORTS || '1935-1944');
+  return m ? [Number(m[1]), Number(m[2])] : [1935, 1944];
+})();
+// ที่อยู่ในวง LAN ของเครื่องนี้ — ให้อุปกรณ์อื่นส่ง RTMP/SRT เข้ามาได้เมื่อ Gateway อยู่ในเครื่องเดียวกับหน้า WebMix
+const lanIp = () => {
+  for (const list of Object.values(require('os').networkInterfaces())) {
+    for (const a of list || []) if (a.family === 'IPv4' && !a.internal) return a.address;
+  }
+  return '';
+};
+const RTSP_RE = /^rtsps?:\/\/[^\s"'<>]+$/i;
+const KEY_RE = /^[A-Za-z0-9_-]{4,64}$/;
 const ingests = new Map();
 const usedPorts = new Set();
 
@@ -193,17 +210,30 @@ function ingestControl(ws, req, auth) {
     let msg;
     try { msg = JSON.parse(String(data)); } catch (e) { return; }
     if (msg.type !== 'open') return;
-    if (!SRT_SUPPORTED) return fail('ffmpeg ในเซิร์ฟเวอร์นี้ไม่รองรับ SRT');
+    const kind = ['caller', 'rtsp', 'rtmp'].includes(msg.mode) ? msg.mode : 'listener';
+    if ((kind === 'listener' || kind === 'caller') && !SRT_SUPPORTED) return fail('ffmpeg ในเซิร์ฟเวอร์นี้ไม่รองรับ SRT');
     const lim = auth.user.limits;
     if (lim && countFor('srt-in', auth.user.name) >= lim.srt) return fail(`บัญชี ${auth.user.name} รับ SRT ได้พร้อมกันสูงสุด ${lim.srt} สัญญาณ`);
     if (MAX_SRT_INPUTS && countFor('srt-in') >= MAX_SRT_INPUTS) return fail(`เซิร์ฟเวอร์รับ SRT พร้อมกันได้สูงสุด ${MAX_SRT_INPUTS} สัญญาณ`);
 
-    const mode = msg.mode === 'caller' ? 'caller' : 'listener';
+    const mode = kind;
     const latency = SRT_LATENCIES_MS.includes(Number(msg.latency)) ? Number(msg.latency) : 500;
     const passphrase = String(msg.passphrase || '');
     if (passphrase && (passphrase.length < 10 || passphrase.length > 64)) return fail('รหัสผ่าน SRT ต้องยาว 10–64 ตัวอักษร');
-    let port = 0, target = '';
-    if (mode === 'listener') {
+    let port = 0, target = '', key = '';
+    if (mode === 'rtsp') {
+      target = String(msg.url || '').trim();
+      if (!RTSP_RE.test(target)) return fail('URL กล้องต้องอยู่ในรูปแบบ rtsp://ผู้ใช้:รหัส@ที่อยู่กล้อง:554/…');
+    } else if (mode === 'rtmp') {
+      port = Number(msg.port);
+      key = String(msg.key || '');
+      if (!Number.isInteger(port) || port < RTMP_PORT_RANGE[0] || port > RTMP_PORT_RANGE[1]) {
+        return fail(`พอร์ต RTMP ต้องอยู่ในช่วง ${RTMP_PORT_RANGE[0]}–${RTMP_PORT_RANGE[1]} (ตั้งด้วย RTMP_PORTS บนเซิร์ฟเวอร์)`);
+      }
+      if (!KEY_RE.test(key)) return fail('Stream key ต้องเป็นตัวอักษรอังกฤษ/ตัวเลข 4–64 ตัว');
+      if (usedPorts.has('tcp' + port)) return fail(`พอร์ต ${port} ถูกใช้โดย Input อื่นอยู่แล้ว`);
+      usedPorts.add('tcp' + port);
+    } else if (mode === 'listener') {
       port = Number(msg.port);
       if (!Number.isInteger(port) || port < SRT_PORT_RANGE[0] || port > SRT_PORT_RANGE[1]) {
         return fail(`พอร์ตต้องอยู่ในช่วง ${SRT_PORT_RANGE[0]}–${SRT_PORT_RANGE[1]} (ตั้งด้วย SRT_PORTS บนเซิร์ฟเวอร์)`);
@@ -216,18 +246,18 @@ function ingestControl(ws, req, auth) {
     }
 
     s = {
-      id: crypto.randomBytes(12).toString('hex'), mode, port, target, latency, passphrase,
+      id: crypto.randomBytes(12).toString('hex'), mode, port, target, latency, passphrase, key,
       streamid: String(msg.streamid || '').slice(0, 512),
       transcode: false, proc: null, viewers: new Set(), state: 'starting', info: null, message: '', closed: false, timer: null
     };
     ingests.set(s.id, s);
-    const label = mode === 'listener' ? `UDP ${port}` : target.replace(/\?.*$/, '');
+    const label = mode === 'listener' ? `UDP ${port}` : mode === 'rtmp' ? `RTMP ${port}` : maskCreds(target).replace(/\?.*$/, '');
     sessions.set(s.id, {
       kind: 'srt-in', user: auth.user, startedAt: Date.now(),
       snapshot: () => ({ id: s.id, kind: 'srt-in', user: auth.user.name, ip: auth.ip, startedAt: sessions.get(s.id)?.startedAt, label, state: s.state, wasLive: !!s.wasLive, info: s.info })
     });
-    console.log(`${tag} open ${mode} ${mode === 'listener' ? 'port ' + port : target.replace(/\?.*$/, '')}`);
-    send({ type: 'opened', id: s.id, mode, port, portRange: SRT_PORT_RANGE });
+    console.log(`${tag} open ${mode} ${label}`);
+    send({ type: 'opened', id: s.id, mode, port, portRange: mode === 'rtmp' ? RTMP_PORT_RANGE : SRT_PORT_RANGE, lanIp: lanIp() });
     startIngest(s, send, tag);
   });
 
@@ -238,6 +268,7 @@ function ingestControl(ws, req, auth) {
     if (s.proc) s.proc.kill('SIGKILL');
     for (const v of s.viewers) v.close(1000, 'closed');
     if (s.mode === 'listener') usedPorts.delete(s.port);
+    if (s.mode === 'rtmp') usedPorts.delete('tcp' + s.port);
     ingests.delete(s.id);
     sessions.delete(s.id);
     monitor.forget(`srt:${s.id}`);
@@ -248,8 +279,16 @@ function ingestControl(ws, req, auth) {
 function startIngest(s, send, tag) {
   if (s.closed) return;
   const lat = String(s.latency * 1000);
-  let input;
-  if (s.mode === 'listener') {
+  let input, pre = [];
+  if (s.mode === 'rtsp') {
+    // TCP ผ่านเราเตอร์/NAT ได้เสถียรกว่า UDP · timeout = กล้องหายไป 5 วินาทีแล้วเชื่อมต่อใหม่
+    pre = ['-rtsp_transport', 'tcp', '-timeout', '5000000'];
+    input = s.target;
+  } else if (s.mode === 'rtmp') {
+    // รอผู้ส่งเชื่อมต่อเข้ามา (ไม่จำกัดเวลา) — ส่งจบแล้วเปิดรอใหม่อัตโนมัติ
+    pre = ['-listen', '1', '-timeout', '-1'];
+    input = `rtmp://0.0.0.0:${s.port}/live/${s.key}`;
+  } else if (s.mode === 'listener') {
     // timeout = ตรวจว่าผู้ส่งหายไปภายใน 3 วินาที (ไม่กระทบการรอผู้ส่งเชื่อมต่อเข้ามา)
     input = `srt://0.0.0.0:${s.port}?mode=listener&latency=${lat}&pkt_size=1316&timeout=3000000`;
   } else {
@@ -266,7 +305,7 @@ function startIngest(s, send, tag) {
     '-hide_banner', '-loglevel', 'info', '-nostats', '-progress', 'pipe:3',
     ...(s.passphrase ? ['-passphrase', s.passphrase] : []),
     '-fflags', '+nobuffer+genpts', '-probesize', '2000000', '-analyzeduration', '2500000',
-    '-i', input,
+    ...pre, '-i', input,
     '-map', '0:v:0?', '-map', '0:a:0?',
     '-c:v', 'copy', '-c:a', 'aac', '-b:a', '160k', '-ar', '48000',
     '-f', 'mpegts', '-mpegts_flags', '+resend_headers', 'pipe:1'
@@ -274,7 +313,7 @@ function startIngest(s, send, tag) {
   s.proc = proc;
   s.info = null;
   s.transcode = false;
-  setState(s, s.mode === 'listener' ? 'waiting' : 'connecting', '', send);
+  setState(s, s.mode === 'listener' || s.mode === 'rtmp' ? 'waiting' : 'connecting', '', send);
 
   const toViewers = chunk => {
     for (const v of s.viewers) {
@@ -320,7 +359,13 @@ function startIngest(s, send, tag) {
         // stderr กับ progress มาคนละท่อ — ถ้าแจ้ง live ไปก่อนรู้รายละเอียดภาพ ให้ส่งสถานะซ้ำพร้อมรายละเอียด
         if (s.state === 'live' && s.proc === proc) setState(s, 'live', '', send);
       }
-      if (/error|failed|refused|reject|invalid/i.test(line)) lastErr = line.trim().slice(0, 200);
+      if (/error|failed|refused|reject|invalid/i.test(line)) lastErr = maskCreds(line.trim()).slice(0, 200);
+      // ffmpeg รับ RTMP ทุก stream key (แค่เตือน) — key ไม่ตรง = ตัดทิ้ง แล้วเปิดรอใหม่
+      if (s.mode === 'rtmp' && /Unexpected stream/.test(line) && s.proc === proc) {
+        lastErr = 'มีผู้ส่ง RTMP ที่ใช้ Stream key ไม่ถูกต้อง — ปฏิเสธแล้ว';
+        console.log(`${tag} rejected RTMP sender with a wrong key`);
+        proc.kill('SIGKILL');
+      }
     }
   });
   proc.stdio[3].on('data', b => {
@@ -341,7 +386,7 @@ function startIngest(s, send, tag) {
     for (const v of s.viewers) v.close(4000, 'restart');
     const wasLive = s.state === 'live';
     setState(s, 'error', wasLive ? 'สัญญาณหยุด — กำลังรอสัญญาณใหม่' : (lastErr || 'เชื่อมต่อไม่ได้'), send);
-    s.timer = setTimeout(() => startIngest(s, send, tag), s.mode === 'listener' ? 1000 : 3000);
+    s.timer = setTimeout(() => startIngest(s, send, tag), s.mode === 'listener' || s.mode === 'rtmp' ? 1000 : 3000);
   });
 }
 
