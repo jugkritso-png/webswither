@@ -52,7 +52,7 @@ jobs:
         working-directory: tests
         env:
           GATEWAY_BIN: desktop/target/release/webmix-gateway
-        run: npm test -- multistream srt-output reconnect desktop
+        run: npm test -- multistream srt-output reconnect desktop vertical
 
   app:
     name: App · ${{ matrix.name }}

@@ -199,6 +199,19 @@ fn pix_fmt(encoder: &str) -> &'static str {
     if encoder == "h264_mediacodec" { "nv12" } else { "yuv420p" }
 }
 
+/// ภาพแนวตั้ง 9:16 (TikTok / Reels / Shorts) สร้างจาก Program 16:9 ที่เข้ารหัสแล้ว — เข้ารหัสใหม่เฉพาะปลายทางแนวตั้ง
+/// crop = ตัดกลางภาพให้เต็มจอแนวตั้ง · fit = ภาพเต็มกลางจอ พื้นหลังเป็นภาพเดิมขยายแล้วเบลอ
+fn vertical_size(height: u32) -> (u32, u32) {
+    if height >= 1080 { (1080, 1920) } else { (720, 1280) }
+}
+fn vertical_filter(mode: &str, w: u32, h: u32) -> String {
+    if mode == "fit" {
+        format!("split=2[bg][fg];[bg]scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},boxblur=20:2[b];[fg]scale={w}:-2[f];[b][f]overlay=0:(H-h)/2,setsar=1")
+    } else {
+        format!("crop=ih*9/16:ih,scale={w}:{h},setsar=1")
+    }
+}
+
 /// Windows: ไม่ให้ ffmpeg เปิดหน้าต่าง console ขึ้นมา
 fn quiet(cmd: &mut Command) -> &mut Command {
     #[cfg(windows)]
@@ -457,6 +470,8 @@ struct Dest {
     bytes: u64,
     kbps: u64,
     wanted: bool,
+    /// "" = แนวนอนตาม Program · "crop" / "fit" = รับภาพจากตัวเข้ารหัสแนวตั้งแบบนั้น
+    vertical: String,
     /// ช่องส่งข้อมูลไปยัง ffmpeg ของปลายทางนี้ (None = ไม่ได้ทำงาน)
     tx: Option<mpsc::Sender<Arc<Vec<u8>>>>,
     /// รุ่นของโปรเซส — ใช้แยกโปรเซสเก่าที่ปิดช้าออกจากตัวใหม่
@@ -468,6 +483,8 @@ struct State {
     encoder_tx: Option<mpsc::UnboundedSender<Vec<u8>>>,
     encoder_started: bool,
     encoder_stats: Option<(f64, f64)>,
+    /// ตัวเข้ารหัสภาพแนวตั้ง (แบบ, ช่องส่ง MPEG-TS ของ Program เข้าไป)
+    verticals: Vec<(String, mpsc::Sender<Arc<Vec<u8>>>)>,
     closed: bool,
 }
 
@@ -497,7 +514,7 @@ impl Session {
             video_copy: false,
             out,
             tag,
-            st: Arc::new(Mutex::new(State { dests: Vec::new(), encoder_tx: None, encoder_started: false, encoder_stats: None, closed: false })),
+            st: Arc::new(Mutex::new(State { dests: Vec::new(), encoder_tx: None, encoder_started: false, encoder_stats: None, verticals: Vec::new(), closed: false })),
             last_tick: Arc::new(Mutex::new(Instant::now())),
         }
     }
@@ -628,7 +645,13 @@ impl Session {
                         Ok(n) => {
                             let chunk = Arc::new(buf[..n].to_vec());
                             let mut st = s.st.lock().unwrap();
+                            for (_, tx) in st.verticals.iter() {
+                                let _ = tx.try_send(chunk.clone());
+                            }
                             for d in st.dests.iter_mut() {
+                                if !d.vertical.is_empty() {
+                                    continue;
+                                }
                                 if let Some(tx) = &d.tx {
                                     if tx.try_send(chunk.clone()).is_ok() {
                                         d.bytes += n as u64;
@@ -650,6 +673,104 @@ impl Session {
         });
     }
 
+    /// MPEG-TS ของ Program → ครอป/ย่อเป็น 9:16 → MPEG-TS ไปปลายทางแนวตั้งแบบเดียวกัน (เสียงคัดลอกตามเดิม)
+    fn start_vertical(&self, mode: &str) {
+        {
+            let st = self.st.lock().unwrap();
+            if st.closed || st.verticals.iter().any(|(m, _)| m == mode) {
+                return;
+            }
+        }
+        let (w, h) = vertical_size(self.height);
+        let (fps, kbps) = (self.fps, self.kbps);
+        let mut args: Vec<String> = [
+            "-hide_banner", "-loglevel", "warning", "-nostats", "-probesize", "5000000", "-analyzeduration", "3000000", "-f", "mpegts", "-i", "pipe:0", "-vf",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        args.push(vertical_filter(mode, w, h));
+        args.extend(video_args(&self.cfg, h));
+        for a in [
+            "-pix_fmt", pix_fmt(&self.cfg.video_encoder), "-r", &fps.to_string(), "-g", &(fps * 2).to_string(), "-keyint_min", &(fps * 2).to_string(), "-sc_threshold", "0",
+            "-b:v", &format!("{kbps}k"), "-maxrate", &format!("{kbps}k"), "-bufsize", &format!("{}k", kbps * 2),
+            "-c:a", "copy", "-f", "mpegts", "-mpegts_flags", "+resend_headers", "pipe:1",
+        ] {
+            args.push(a.to_string());
+        }
+        eprintln!("{} vertical {} {}x{}", self.tag, mode, w, h);
+        let child = quiet(Command::new(&self.cfg.ffmpeg).args(&args)).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn();
+        let mut child = match child {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("{} vertical {}: {e}", self.tag, mode);
+                return;
+            }
+        };
+        let (tx, mut rx) = mpsc::channel::<Arc<Vec<u8>>>(DEST_QUEUE);
+        self.st.lock().unwrap().verticals.push((mode.to_string(), tx.clone()));
+        let mut stdin = child.stdin.take().unwrap();
+        tokio::spawn(async move {
+            while let Some(chunk) = rx.recv().await {
+                if stdin.write_all(&chunk).await.is_err() {
+                    break;
+                }
+            }
+        });
+        {
+            let stderr = child.stderr.take().unwrap();
+            let tag = format!("{} vertical {}", self.tag, mode);
+            tokio::spawn(async move {
+                let mut lines = BufReader::new(stderr).lines();
+                while let Ok(Some(line)) = lines.next_line().await {
+                    if !line.trim().is_empty() {
+                        eprintln!("{tag}: {}", line.trim());
+                    }
+                }
+            });
+        }
+        {
+            let mut stdout = child.stdout.take().unwrap();
+            let s = self.clone();
+            let mode = mode.to_string();
+            tokio::spawn(async move {
+                let mut buf = vec![0u8; 188 * 700];
+                loop {
+                    match stdout.read(&mut buf).await {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => {
+                            let chunk = Arc::new(buf[..n].to_vec());
+                            let mut st = s.st.lock().unwrap();
+                            for d in st.dests.iter_mut().filter(|d| d.vertical == mode) {
+                                if let Some(tx) = &d.tx {
+                                    if tx.try_send(chunk.clone()).is_ok() {
+                                        d.bytes += n as u64;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+        let s = self.clone();
+        let mode = mode.to_string();
+        tokio::spawn(async move {
+            let code = child.wait().await.ok().and_then(|c| c.code());
+            eprintln!("{} vertical {} exited ({code:?})", s.tag, mode);
+            let again = {
+                let mut st = s.st.lock().unwrap();
+                st.verticals.retain(|(m, t)| !(m == &mode && t.same_channel(&tx)));
+                !st.closed && st.dests.iter().any(|d| d.wanted && d.vertical == mode)
+            };
+            // ล่มระหว่างไลฟ์ → เริ่มใหม่ ถ้ายังมีปลายทางแนวตั้งแบบนี้อยู่
+            if again {
+                tokio::time::sleep(RETRY).await;
+                s.start_vertical(&mode);
+            }
+        });
+    }
+
     fn dest_error(&self, id: &str, name: &str, message: &str) {
         self.send(json!({ "type": "status", "destinations": [{ "id": id, "name": name, "state": "error", "message": message, "kbps": 0 }] }));
     }
@@ -658,6 +779,10 @@ impl Session {
         let id: String = raw.get("id").and_then(Value::as_str).unwrap_or("").chars().take(40).collect();
         let name: String = raw.get("name").and_then(Value::as_str).unwrap_or(&id).chars().take(40).collect();
         let url = raw.get("url").and_then(Value::as_str).unwrap_or("").to_string();
+        let vertical = match raw.get("vertical").and_then(Value::as_str) {
+            Some(m @ ("crop" | "fit")) => m.to_string(),
+            _ => String::new(),
+        };
         if id.is_empty() {
             return;
         }
@@ -678,11 +803,15 @@ impl Session {
             }
             let d = st.dests.iter_mut().find(|d| d.id == id).unwrap();
             d.url = url;
+            d.vertical = vertical.clone();
             d.wanted = true;
             if d.tx.is_some() {
                 drop(st);
                 return self.report();
             }
+        }
+        if !vertical.is_empty() {
+            self.start_vertical(&vertical);
         }
         self.spawn_dest(&id);
         self.report();
@@ -849,6 +978,7 @@ impl Session {
         let mut st = self.st.lock().unwrap();
         st.closed = true;
         st.encoder_tx = None; // ปิด stdin ของตัวเข้ารหัส
+        st.verticals.clear(); // ปิด stdin ของตัวเข้ารหัสแนวตั้ง
         for d in st.dests.iter_mut() {
             d.wanted = false;
             d.tx = None;
@@ -891,6 +1021,14 @@ mod tests {
             // AMF (การ์ดจอ AMD บน Windows) ไม่มีใน ffmpeg ของ Linux → ตกไปที่ libx264
             assert_eq!(pick_encoder("ffmpeg", &["h264_amf"]).await, "libx264");
         }
+    }
+
+    #[test]
+    fn vertical_filters() {
+        assert_eq!(vertical_size(720), (720, 1280));
+        assert_eq!(vertical_size(1080), (1080, 1920));
+        assert_eq!(vertical_filter("crop", 720, 1280), "crop=ih*9/16:ih,scale=720:1280,setsar=1");
+        assert!(vertical_filter("fit", 1080, 1920).contains("boxblur") && vertical_filter("fit", 1080, 1920).contains("overlay=0:(H-h)/2"));
     }
 
     #[test]

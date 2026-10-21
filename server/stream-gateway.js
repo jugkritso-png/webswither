@@ -19,6 +19,7 @@
 //   server → { type: 'status', destinations: [{ id, name, state, message, kbps }] }
 //            state: connecting | live | error | stopped
 //   url: rtmp://… rtmps://… หรือ srt://host:port?streamid=…&passphrase=…&latency=… (SRT ส่งเป็น MPEG-TS)
+//   vertical: 'crop' | 'fit' (ไม่ใส่ = แนวนอนตามต้นฉบับ) — ปลายทางนี้ได้ภาพแนวตั้ง 9:16
 //   (ยังรองรับแบบเดิม ?rtmp=URL สำหรับปลายทางเดียว)
 //
 // รับสัญญาณ SRT เข้ามาเป็น Input (ดูรายละเอียดที่ส่วน "SRT Input" ด้านล่าง):
@@ -94,6 +95,18 @@ function outputArgs(url) {
   return ['-f', 'flv', url];
 }
 const RETRY_MS = 5000;
+
+// ภาพแนวตั้ง 9:16 (TikTok / Reels / Shorts) สร้างจาก Program 16:9 ที่เข้ารหัสแล้ว — เข้ารหัสใหม่เฉพาะปลายทางแนวตั้ง
+//   crop = ตัดกลางภาพให้เต็มจอแนวตั้ง · fit = ภาพเต็มกลางจอ พื้นหลังเป็นภาพเดิมขยายแล้วเบลอ
+const VERTICAL_MODES = ['crop', 'fit'];
+function verticalSize(height) { return height >= 1080 ? [1080, 1920] : [720, 1280]; }
+function verticalFilter(mode, w, h) {
+  if (mode === 'fit') {
+    return `split=2[bg][fg];[bg]scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h},boxblur=20:2[b];` +
+      `[fg]scale=${w}:-2[f];[b][f]overlay=0:(H-h)/2,setsar=1`;
+  }
+  return `crop=ih*9/16:ih,scale=${w}:${h},setsar=1`;
+}
 
 const maskUrl = url => (/^srt:/i.test(url) ? url.replace(/\?.*$/, '?***') : url.replace(/[^/]+$/, '***'));
 
@@ -450,6 +463,8 @@ wss.on('connection', (ws, req) => {
   const dests = new Map();
   let encoder = null;
   let closed = false;
+  // ตัวเข้ารหัสภาพแนวตั้ง แยกตามแบบ (crop / fit) — เริ่มเมื่อมีปลายทางแนวตั้งแบบนั้น
+  const verticals = new Map();
 
   const send = obj => { if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(obj)); };
   // ปฏิเสธพร้อมข้อความภาษาไทย (เหตุผลใน close frame ยาวได้ไม่เกิน 123 ไบต์ จึงส่งเป็นข้อความ JSON ก่อน)
@@ -527,11 +542,12 @@ wss.on('connection', (ws, req) => {
     encoder.stderr.on('data', d => process.stderr.write(`${tag} encoder: ${d}`));
     encoder.stdout.on('data', chunk => {
       for (const d of dests.values()) {
-        if (d.proc && d.proc.stdin.writable) {
+        if (!d.vertical && d.proc && d.proc.stdin.writable) {
           d.proc.stdin.write(chunk);
           d.bytes += chunk.length;
         }
       }
+      for (const v of verticals.values()) if (v.stdin.writable) v.stdin.write(chunk);
     });
     encoder.on('error', err => ws.close(1011, 'ffmpeg not available: ' + err.message));
     encoder.on('close', code => {
@@ -539,6 +555,41 @@ wss.on('connection', (ws, req) => {
       if (!closed && ws.readyState === ws.OPEN) ws.close(1011, `encoder exited (${code})`);
     });
     return true;
+  }
+
+  // MPEG-TS ของ Program → ครอป/ย่อเป็น 9:16 → MPEG-TS ไปปลายทางแนวตั้งแบบเดียวกัน (เสียงคัดลอกตามเดิม)
+  function startVertical(mode) {
+    if (verticals.has(mode) || closed) return;
+    const [w, h] = verticalSize(height);
+    console.log(`${tag} vertical ${mode} ${w}x${h}`);
+    const proc = spawn(FFMPEG, [
+      '-loglevel', 'warning', '-nostats',
+      '-probesize', '5000000', '-analyzeduration', '3000000',
+      '-f', 'mpegts', '-i', 'pipe:0',
+      '-vf', verticalFilter(mode, w, h),
+      ...videoArgs(h),
+      '-pix_fmt', 'yuv420p', '-r', String(fps), '-g', String(fps * 2), '-keyint_min', String(fps * 2), '-sc_threshold', '0',
+      '-b:v', `${kbps}k`, '-maxrate', `${kbps}k`, '-bufsize', `${kbps * 2}k`,
+      '-c:a', 'copy', '-f', 'mpegts', '-mpegts_flags', '+resend_headers', 'pipe:1'
+    ], { stdio: ['pipe', 'pipe', 'pipe'] });
+    verticals.set(mode, proc);
+    proc.stdin.on('error', () => {});
+    proc.stderr.on('data', d => process.stderr.write(`${tag} vertical ${mode}: ${d}`));
+    proc.stdout.on('data', chunk => {
+      for (const d of dests.values()) {
+        if (d.vertical === mode && d.proc && d.proc.stdin.writable) {
+          d.proc.stdin.write(chunk);
+          d.bytes += chunk.length;
+        }
+      }
+    });
+    proc.on('error', err => console.log(`${tag} vertical ${mode}: ${err.message}`));
+    proc.on('close', code => {
+      if (verticals.get(mode) === proc) verticals.delete(mode);
+      console.log(`${tag} vertical ${mode} exited (${code})`);
+      // ล่มระหว่างไลฟ์ → เริ่มใหม่ ถ้ายังมีปลายทางแนวตั้งแบบนี้อยู่
+      if (!closed && [...dests.values()].some(d => d.wanted && d.vertical === mode)) setTimeout(() => startVertical(mode), RETRY_MS).unref();
+    });
   }
 
   function spawnDest(d) {
@@ -615,8 +666,10 @@ wss.on('connection', (ws, req) => {
       dests.set(id, d);
     }
     d.url = url;
+    d.vertical = VERTICAL_MODES.includes(raw.vertical) ? raw.vertical : '';
     d.wanted = true;
     clearTimeout(d.retry);
+    if (d.vertical) startVertical(d.vertical);
     if (!d.proc) spawnDest(d);
     report();
   }
@@ -691,6 +744,10 @@ wss.on('connection', (ws, req) => {
       const enc = encoder;
       enc.stdin.end();
       setTimeout(() => enc.kill('SIGINT'), 5000).unref();
+    }
+    for (const v of verticals.values()) {
+      v.stdin.end();
+      setTimeout(() => v.kill('SIGINT'), 5000).unref();
     }
     console.log(`${tag} disconnected`);
   });

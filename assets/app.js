@@ -29,6 +29,9 @@
     youtube: { label: 'YouTube Live', server: 'rtmp://a.rtmp.youtube.com/live2', maxHeight: 2160 },
     facebook: { label: 'Facebook Live', server: 'rtmps://live-api-s.facebook.com:443/rtmp', maxHeight: 1080 },
     twitch: { label: 'Twitch', server: 'rtmp://live.twitch.tv/app', maxHeight: 1080 },
+    // TikTok / Instagram ให้ Server URL แยกต่อบัญชี — วางจากหน้าไลฟ์ของแพลตฟอร์ม · ใช้ภาพแนวตั้งเป็นค่าเริ่มต้น
+    tiktok: { label: 'TikTok Live', server: '', vertical: true },
+    instagram: { label: 'Instagram Live', server: '', vertical: true },
     srt: { label: 'SRT (vMix / OBS / SRT Server)', server: '' },
     custom: { label: 'RTMP อื่น ๆ (กำหนดเอง)', server: '' }
   };
@@ -78,8 +81,11 @@
   // ปลายทางการสตรีม (ส่งพร้อมกันได้หลายช่อง) — ย้ายค่าแบบปลายทางเดียวของเวอร์ชันก่อนมาด้วย
   const MAX_DESTINATIONS = 6;
   const SRT_LATENCIES = [120, 200, 500, 1000, 2000, 4000];
+  // รูปแบบภาพของปลายทาง: h = แนวนอนตาม Program · vcrop = แนวตั้ง 9:16 ตัดกลาง · vfit = แนวตั้ง 9:16 ภาพเต็ม พื้นเบลอ
+  const ORIENTS = { h: 'แนวนอน 16:9', vcrop: 'แนวตั้ง 9:16 · ตัดกลางภาพ', vfit: 'แนวตั้ง 9:16 · ภาพเต็ม พื้นเบลอ' };
   const newDest = (platform = 'youtube', server, key = '') => ({
-    id: uid(), platform, server: server ?? PLATFORMS[platform].server, key, passphrase: '', latency: 500, enabled: true
+    id: uid(), platform, server: server ?? PLATFORMS[platform].server, key, passphrase: '', latency: 500, enabled: true,
+    orient: PLATFORMS[platform].vertical ? 'vcrop' : 'h'
   });
   if (!Array.isArray(settings.destinations)) settings.destinations = [];
   if (!settings.destinations.length && (saved.server || saved.streamKey)) {
@@ -96,7 +102,8 @@
       key: String(d.key || ''),
       passphrase: String(d.passphrase || ''),
       latency: SRT_LATENCIES.includes(+d.latency) ? +d.latency : 500,
-      enabled: d.enabled !== false
+      enabled: d.enabled !== false,
+      orient: ORIENTS[d.orient] ? d.orient : 'h'
     }));
   delete settings.platform; delete settings.server; delete settings.streamKey;
 
@@ -143,7 +150,8 @@
     if (!d) return '';
     const base = baseLabel(d);
     const same = settings.destinations.filter(x => baseLabel(x) === base);
-    return same.length > 1 ? `${base} #${same.indexOf(d) + 1}` : base;
+    const i = same.findIndex(x => x.id === d.id);
+    return (same.length > 1 ? `${base} #${(i < 0 ? same.length : i) + 1}` : base) + (d.orient && d.orient !== 'h' ? ' (9:16)' : '');
   }
   function destProblem(d) {
     if (isSrt(d)) {
@@ -3409,7 +3417,7 @@
       : location.protocol === 'https:' && /^ws:\/\//i.test(gw) ? 'หน้านี้เปิดผ่าน HTTPS จึงต้องใช้ Gateway แบบ wss://' : '';
   }
 
-  const destPayload = d => ({ id: d.id, name: destLabel(d), url: destUrl(d) });
+  const destPayload = d => ({ id: d.id, name: destLabel(d), url: destUrl(d), ...(d.orient === 'vcrop' ? { vertical: 'crop' } : d.orient === 'vfit' ? { vertical: 'fit' } : {}) });
   const isRunning = id => { const st = streamer.dests.get(id); return !!st && st.state !== 'stopped'; };
 
   // เริ่มเฉพาะปลายทางที่เลือก — ถ้ายังไม่ได้เชื่อมต่อ Gateway จะเปิดการเชื่อมต่อให้อัตโนมัติ
@@ -4289,7 +4297,8 @@
             <input class="input mono" data-f="key" type="${showKeys.checked ? 'text' : 'password'}" autocomplete="off" value="${esc(d.key)}" placeholder="${isSrt(d) ? 'Stream ID (ถ้ามี)' : 'Stream Key'}" aria-label="Stream Key / Stream ID">
             <button type="button" class="btn btn-ghost btn-icon dest-remove" title="ลบปลายทาง">${icon('x')}</button>
             <button type="button" class="btn dest-paste">${icon('copy')}วางคีย์จากคลิปบอร์ด</button>
-            <div class="dest-test"><button type="button" class="btn btn-sm dest-test-btn" title="${TEST_NOTE}">${icon('broadcast')}ทดสอบ</button><p class="dest-test-out" hidden></p></div>
+            <div class="dest-test"><select class="select dest-orient" data-f="orient" aria-label="รูปแบบภาพ">${Object.entries(ORIENTS).map(([k, v]) => `<option value="${k}" ${(d.orient || 'h') === k ? 'selected' : ''}>${v}</option>`).join('')}</select>
+              <button type="button" class="btn btn-sm dest-test-btn" title="${TEST_NOTE}">${icon('broadcast')}ทดสอบ</button><p class="dest-test-out" hidden></p></div>
             <div class="dest-srt" ${isSrt(d) ? '' : 'hidden'}>
               <input class="input mono" data-f="passphrase" type="${showKeys.checked ? 'text' : 'password'}" autocomplete="off" value="${esc(d.passphrase)}" placeholder="รหัสผ่านเข้ารหัส SRT (10–64 ตัว, ถ้ามี)" aria-label="SRT passphrase">
               <select class="select" data-f="latency" aria-label="SRT latency" title="SRT latency — ยิ่งสูงยิ่งทนเน็ตกระตุก แต่ดีเลย์มากขึ้น">
@@ -4333,7 +4342,9 @@
           try { text = (await navigator.clipboard.readText()).trim(); } catch (err) {}
           if (!text) { toast('อ่านคลิปบอร์ดไม่ได้ — กดค้างที่ช่อง Stream Key แล้วเลือก “วาง”', 'warn'); row.querySelector('[data-f=key]').focus(); return; }
           const m = /^(rtmps?:\/\/.+)\/([^/]+)$/i.exec(text);
-          if (m && /\/(live|rtmp|live2|app)\b/i.test(m[1])) { row.querySelector('[data-f=server]').value = m[1]; row.querySelector('[data-f=key]').value = m[2]; }
+          // แพลตฟอร์มที่ไม่มีเซิร์ฟเวอร์ตายตัว (TikTok / Instagram / อื่น ๆ) แยกส่วนท้ายเป็นคีย์ได้เสมอ
+          const noFixed = !PLATFORMS[row.querySelector('[data-f=platform]').value]?.server;
+          if (m && (noFixed || /\/(live|rtmp|live2|app)\b/i.test(m[1]))) { row.querySelector('[data-f=server]').value = m[1]; row.querySelector('[data-f=key]').value = m[2]; }
           else row.querySelector('[data-f=key]').value = text;
           toast('วางคีย์แล้ว', 'success', 2000);
         };
@@ -4344,6 +4355,7 @@
             const srt = e.target.value === 'srt';
             const server = row.querySelector('[data-f=server]');
             if (p.server) server.value = p.server; else { server.value = ''; server.focus(); }
+            row.querySelector('[data-f=orient]').value = p.vertical ? 'vcrop' : 'h';
             server.placeholder = srt ? 'srt://host:9000' : 'rtmp://...';
             row.querySelector('[data-f=key]').placeholder = srt ? 'Stream ID (ถ้ามี)' : 'Stream Key';
             row.querySelector('.dest-srt').hidden = !srt;
@@ -4360,7 +4372,8 @@
           server: row.querySelector('[data-f=server]').value.trim(),
           key: row.querySelector('[data-f=key]').value.trim(),
           passphrase: row.querySelector('[data-f=passphrase]').value,
-          latency: +row.querySelector('[data-f=latency]').value || 500
+          latency: +row.querySelector('[data-f=latency]').value || 500,
+          orient: row.querySelector('[data-f=orient]').value
         });
         readDests = () => $$('.dest-row', list).map(readRow);
       }
