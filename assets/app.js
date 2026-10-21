@@ -224,7 +224,8 @@
     timer: { icon: 'clock', label: 'TIMER' },
     score: { icon: 'grid', label: 'SCORE' },
     ticker: { icon: 'type', label: 'TICKER' },
-    playlist: { icon: 'film', label: 'PLAYLIST' }
+    playlist: { icon: 'film', label: 'PLAYLIST' },
+    scene: { icon: 'grid', label: 'SCENE' }
   };
   // กราฟิกที่วาดบนพื้นโปร่งใส (ซ้อนเป็น Overlay ได้ทันที)
   const GRAPHIC_TYPES = ['title', 'timer', 'score', 'ticker'];
@@ -256,6 +257,7 @@
       case 'slate': drawSlate(ctx, w, h, inp); break;
       case 'clock': drawClock(ctx, w, h, inp); break;
       case 'title': case 'timer': case 'score': case 'ticker': fillBlack(ctx, w, h); drawGraphic(ctx, inp, w, h); break;
+      case 'scene': drawScene(ctx, inp, w, h); break;
       case 'image':
         if (inp.status !== 'live') { drawNoSignal(ctx, w, h, inp); break; }
         fillBlack(ctx, w, h);
@@ -397,7 +399,7 @@
   const ovlKeyLabel = i => (i >= 4 ? '⇧' : '') + OVL_KEYS[i % 4].toUpperCase();
   const ovl = Array.from({ length: OVL_COUNT }, (_, i) => i).map(i => ({ n: i + 1, inputId: null, on: false, staged: false, anim: 0, effect: 'fade', duration: 500 }));
   const onOverlay = id => !!id && ovl.some(c => c.on && c.inputId === id);
-  const isOnAir = id => !!id && (id === state.programId || onOverlay(id));
+  const isOnAir = id => !!id && (id === state.programId || onOverlay(id) || sceneHas(state.programId, id));
 
   const DEFAULT_LAYOUT = { x: 0.5, y: 0.5, scale: 1, crop: { l: 0, r: 0, t: 0, b: 0 }, opacity: 1, key: 'none', tolerance: 60, border: false };
   const layoutOf = inp => inp.layout || DEFAULT_LAYOUT;
@@ -427,7 +429,7 @@
     switch (inp.type) {
       case 'title': case 'timer': case 'score': case 'ticker': drawGraphic(ctx, inp, w, h); return;
       case 'image': if (inp.status === 'live') drawFit(ctx, inp.el, inp.el.naturalWidth, inp.el.naturalHeight, w, h); return;
-      case 'bars': case 'black': case 'slate': case 'clock': drawSource(ctx, inp, w, h); return;
+      case 'bars': case 'black': case 'slate': case 'clock': case 'scene': drawSource(ctx, inp, w, h); return;
       case 'playlist':
         if (inp.showImg) { drawFit(ctx, inp.showImg, inp.showImg.naturalWidth, inp.showImg.naturalHeight, w, h); return; }
         // falls through
@@ -623,6 +625,7 @@
   // วาด Input ให้พอดีกรอบ box โดยแสดงเฉพาะส่วนที่อยู่ใน clip
   function glDrawInput(inp, box, clip, alpha = 1, opts = {}) {
     if (!inp) return;
+    if (inp.type === 'scene') { glDrawScene(inp, box, clip, alpha); return; }
     const t = inputTexture(inp, !!opts.transparent);
     if (!t) return;
     const vis = intersect(box, clip);
@@ -633,6 +636,24 @@
     const r = intersect(f, clip);
     if (r.w <= 0 || r.h <= 0) return;
     gpu.quad(t.e, r, [(r.x - f.x) / f.w, (r.y - f.y) / f.h, (r.x + r.w - f.x) / f.w, (r.y + r.h - f.y) / f.h], alpha, opts.key || null);
+  }
+
+  // ซีน: วาดแต่ละช่องด้วยแหล่งภาพของช่องนั้น (เต็มช่องแบบครอปขอบ) บนพื้นสีเข้ม
+  function glDrawScene(inp, box, clip, alpha) {
+    const vis = intersect(box, clip);
+    if (vis.w <= 0 || vis.h <= 0) return;
+    gpu.solid(vis, [0.043, 0.051, 0.071, 1], alpha);
+    for (const sl of sceneSlots(inp, box.x, box.y, box.w, box.h)) {
+      const area = intersect(sl.rect, clip);
+      if (area.w <= 0 || area.h <= 0) continue;
+      if (!sl.child) { gpu.solid(area, [0.09, 0.105, 0.135, 1], alpha); continue; }
+      glDrawInput(sl.child, sl.box, area, alpha);
+      if (sl.frame) {
+        const r = sl.rect, t = Math.max(2, box.w / 480), col = [1, 1, 1, 0.9];
+        gpu.solid({ x: r.x, y: r.y, w: r.w, h: t }, col, alpha); gpu.solid({ x: r.x, y: r.y + r.h - t, w: r.w, h: t }, col, alpha);
+        gpu.solid({ x: r.x, y: r.y, w: t, h: r.h }, col, alpha); gpu.solid({ x: r.x + r.w - t, y: r.y, w: t, h: r.h }, col, alpha);
+      }
+    }
   }
 
   function glProgramBase(w, h) {
@@ -895,10 +916,11 @@
       const id = card.dataset.id;
       const isPgm = id === state.programId, isPvw = id === state.previewId && !isPgm;
       const ovIdx = ovl.findIndex(c => c.on && c.inputId === id);
+      const inScene = !isPgm && sceneHas(state.programId, id);
       card.classList.toggle('is-pgm', isPgm);
       card.classList.toggle('is-pvw', isPvw);
-      card.classList.toggle('is-ovl', !isPgm && ovIdx >= 0);
-      card.querySelector('.card-tally').textContent = isPgm ? 'PGM' : ovIdx >= 0 ? `OV${ovIdx + 1}` : isPvw ? 'PVW' : '';
+      card.classList.toggle('is-ovl', !isPgm && (ovIdx >= 0 || inScene));
+      card.querySelector('.card-tally').textContent = isPgm ? 'PGM' : ovIdx >= 0 ? `OV${ovIdx + 1}` : inScene ? 'SCENE' : isPvw ? 'PVW' : '';
       card.querySelectorAll('[data-card-ovl]').forEach(b => {
         const c = ovl[+b.dataset.cardOvl];
         b.classList.toggle('is-on', c.on && c.inputId === id);
@@ -1187,6 +1209,7 @@
 
   async function renameInput(inp) {
     if (inp.type === 'playlist') return playlist.edit(inp);
+    if (inp.type === 'scene') return openSceneDialog(inp);
     if (inp.type === 'title') return openTitleDialog(inp);
     if (inp.type === 'timer') return openTimerDialog(inp);
     if (inp.type === 'score') return openScoreDialog(inp);
@@ -1672,6 +1695,104 @@
   }
 
   // Title Input
+  /* ------------------------------------------------------------ ซีน (หลายแหล่งภาพในจอเดียว)
+     ซีนเป็นแหล่งภาพแบบหนึ่ง: ขึ้น Preview/Program, ทรานซิชัน, บันทึก และสตรีมได้เหมือนแหล่งภาพอื่น
+     แต่ละช่องวาดแหล่งภาพที่เลือกให้เต็มช่อง (ครอปขอบที่เกิน) — ซีนซ้อนซีนไม่ได้ */
+  const SCENE_LAYOUTS = {
+    side: { label: 'คู่กัน', slots: [[0, 0, 0.5, 1], [0.5, 0, 0.5, 1]] },
+    pip: { label: 'ภาพซ้อนมุม', slots: [[0, 0, 1, 1], [0.655, 0.625, 0.32, 0.32, 'frame']] },
+    grid4: { label: '4 ช่อง', slots: [[0, 0, 0.5, 0.5], [0.5, 0, 0.5, 0.5], [0, 0.5, 0.5, 0.5], [0.5, 0.5, 0.5, 0.5]] },
+    main3: { label: 'ใหญ่ 1 + เล็ก 2', slots: [[0, 0, 2 / 3, 1], [2 / 3, 0, 1 / 3, 0.5], [2 / 3, 0.5, 1 / 3, 0.5]] },
+    three: { label: '3 ช่อง', slots: [[0, 0, 1 / 3, 1], [1 / 3, 0, 1 / 3, 1], [2 / 3, 0, 1 / 3, 1]] }
+  };
+  function sanitizeScene(sc) {
+    const layout = SCENE_LAYOUTS[sc && sc.layout] ? sc.layout : 'side';
+    const slots = Array.isArray(sc && sc.slots) ? sc.slots.slice(0, 4).map(v => (typeof v === 'string' && v ? v.slice(0, 40) : null)) : [];
+    return { layout, slots, gap: sc ? sc.gap !== false : true };
+  }
+  // ตำแหน่งแต่ละช่องในกรอบ (x, y, w, h): rect = ช่อง, box = กรอบ 16:9 ที่ครอบช่องไว้ (วาดแล้วตัดส่วนเกิน)
+  function sceneSlots(inp, x, y, w, h) {
+    const L = SCENE_LAYOUTS[inp.scene.layout] || SCENE_LAYOUTS.side;
+    const g = inp.scene.gap ? Math.max(1, w * 0.004) : 0;
+    return L.slots.map((sl, i) => {
+      const frame = sl[4] === 'frame';
+      const inset = frame ? 0 : g / 2;
+      const rect = { x: x + sl[0] * w + inset, y: y + sl[1] * h + inset, w: sl[2] * w - inset * 2, h: sl[3] * h - inset * 2 };
+      const k = Math.max(rect.w / 16, rect.h / 9), bw = 16 * k, bh = 9 * k;
+      const box = { x: rect.x + (rect.w - bw) / 2, y: rect.y + (rect.h - bh) / 2, w: bw, h: bh };
+      const c = byId(inp.scene.slots[i]);
+      return { rect, box, frame, child: c && c.type !== 'scene' ? c : null, n: i + 1 };
+    });
+  }
+  function drawScene(ctx, inp, w, h) {
+    ctx.fillStyle = '#0b0d12';
+    ctx.fillRect(0, 0, w, h);
+    for (const sl of sceneSlots(inp, 0, 0, w, h)) {
+      const r = sl.rect;
+      ctx.save();
+      ctx.beginPath(); ctx.rect(r.x, r.y, r.w, r.h); ctx.clip();
+      if (sl.child) {
+        ctx.translate(sl.box.x, sl.box.y);
+        drawSource(ctx, sl.child, sl.box.w, sl.box.h);
+      } else {
+        ctx.fillStyle = '#171b23'; ctx.fillRect(r.x, r.y, r.w, r.h);
+        ctx.fillStyle = '#5d6578'; ctx.font = `600 ${Math.round(Math.min(r.w, r.h) * 0.12)}px ${FONT}`;
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText(`ช่อง ${sl.n}`, r.x + r.w / 2, r.y + r.h / 2);
+      }
+      ctx.restore();
+      if (sl.frame) { ctx.strokeStyle = 'rgba(255,255,255,.9)'; ctx.lineWidth = Math.max(2, w / 480); ctx.strokeRect(r.x, r.y, r.w, r.h); }
+    }
+  }
+  // แหล่งภาพในซีนที่ออกอากาศ (Program) — นับว่า "ออกอากาศ" ด้วย (tally, AFV)
+  const sceneHas = (sceneId, id) => { const sc = byId(sceneId); return !!(sc && sc.type === 'scene' && id && sc.scene.slots.includes(id)); };
+
+  function addSceneInput() {
+    const n = inputs.filter(i => i.type === 'scene').length + 1;
+    const cams = inputs.filter(i => i.type !== 'scene').map(i => i.id);
+    openSceneDialog(null, { name: `SCENE ${n}`, scene: { layout: 'side', slots: cams.slice(0, 2), gap: true } });
+  }
+  async function openSceneDialog(inp, draft) {
+    const cur = inp ? { name: inp.name, scene: { ...inp.scene, slots: [...inp.scene.slots] } } : draft;
+    const sources = inputs.filter(i => i.type !== 'scene');
+    const diagram = key => `<span class="sc-diagram">${SCENE_LAYOUTS[key].slots.map(sl => `<i style="left:${sl[0] * 100}%;top:${sl[1] * 100}%;width:${sl[2] * 100}%;height:${sl[3] * 100}%"${sl[4] ? ' class="frame"' : ''}></i>`).join('')}</span>`;
+    let layout = cur.scene.layout;
+    const r = await dialog({
+      title: inp ? 'แก้ไขซีน' : 'ซีนใหม่ — หลายแหล่งภาพในจอเดียว',
+      wide: true,
+      body: `
+        <label class="field"><span>ชื่อซีน</span><input name="name" class="input" maxlength="40" value="${esc(cur.name)}"></label>
+        <div class="field"><span>รูปแบบ</span><div class="sc-layouts" role="radiogroup" aria-label="รูปแบบซีน">${Object.entries(SCENE_LAYOUTS).map(([k, L]) => `
+          <label class="sc-layout"><input type="radio" name="layout" value="${k}" ${k === layout ? 'checked' : ''}>${diagram(k)}<b>${L.label}</b></label>`).join('')}</div></div>
+        <div class="sc-slots"></div>
+        <label class="check"><input type="checkbox" name="gap" ${cur.scene.gap ? 'checked' : ''}> เว้นเส้นแบ่งระหว่างช่อง</label>
+        ${sources.length ? '' : '<p class="note warn">ยังไม่มีแหล่งภาพให้เลือก — เพิ่มกล้องหรือไฟล์ก่อน แล้วค่อยแก้ไขซีนนี้</p>'}`,
+      actions: [{ label: 'ยกเลิก' }, { label: inp ? 'บันทึก' : 'สร้างซีน', primary: true, value: 'save' }],
+      onOpen(modal) {
+        const box = $('.sc-slots', modal);
+        const renderSlots = () => {
+          const keep = $$('select[data-slot]', box).map(sel => sel.value);
+          const slots = keep.length ? keep : cur.scene.slots;
+          box.innerHTML = SCENE_LAYOUTS[layout].slots.map((sl, i) => `
+            <label class="field"><span>ช่อง ${i + 1}${i === 0 && layout === 'pip' ? ' (ภาพหลัก)' : i === 1 && layout === 'pip' ? ' (ภาพมุม)' : i === 0 && layout === 'main3' ? ' (ภาพใหญ่)' : ''}</span>
+              <select class="select" data-slot="${i}"><option value="">— ว่าง —</option>${sources.map((s2, n2) => `<option value="${s2.id}" ${slots[i] === s2.id ? 'selected' : ''}>${n2 + 1}. ${esc(s2.name)}</option>`).join('')}</select></label>`).join('');
+        };
+        renderSlots();
+        $$('input[name=layout]', modal).forEach(rd => rd.addEventListener('change', () => { layout = rd.value; renderSlots(); }));
+      }
+    });
+    if (r?.value !== 'save') return null;
+    const f = r.form;
+    const slots = [...f].filter(el => el.dataset && el.dataset.slot !== undefined).map(el => el.value || null);
+    const scene = sanitizeScene({ layout: f.layout.value || layout, slots, gap: f.gap.checked });
+    const name = String(f.name.value || '').trim().slice(0, 40) || cur.name;
+    if (inp) { inp.scene = scene; inp.name = name; renderInputs(); refreshSourceSelects(); updateTally(); return inp; }
+    const made = addInput({ type: 'scene', name, scene });
+    setPreview(made.id);
+    toast(`สร้าง “${name}” แล้ว — อยู่ใน Preview กด CUT เพื่อขึ้นจอ`, 'success');
+    return made;
+  }
+
   function addTitleInput() {
     const n = inputs.filter(i => i.type === 'title').length + 1;
     const inp = addInput({ type: 'title', name: `TITLE ${n}`, title: { headline: 'ชื่อ นามสกุล', subtitle: 'ตำแหน่ง / หน่วยงาน', color: TITLE_COLORS[0], style: 'lower' } });
@@ -2254,7 +2375,8 @@
     applyAfv() {
       if (!this.ctx) return;
       for (const ch of this.channels) {
-        const on = !ch.afv || ch.inputId === state.programId || onOverlay(ch.inputId) || ((tr.progress > 0 || tr.auto) && ch.inputId === state.previewId);
+        const on = !ch.afv || ch.inputId === state.programId || onOverlay(ch.inputId) || sceneHas(state.programId, ch.inputId)
+          || ((tr.progress > 0 || tr.auto) && (ch.inputId === state.previewId || sceneHas(state.previewId, ch.inputId)));
         ch.afvGain.gain.setTargetAtTime(on ? 1 : 0, this.ctx.currentTime, 0.06);
       }
     },
@@ -4411,7 +4533,8 @@
   const ADD_GROUPS = () => [
     ['กล้องและหน้าจอ', [
       ['video', 'กล้อง / แคปเจอร์การ์ด', 'เว็บแคม กล้องของเครื่อง หรือการ์ดจับภาพ HDMI', openCameraDialog],
-      ['monitor', 'แชร์หน้าจอ', 'หน้าจอคอม หน้าต่างโปรแกรม หรือแท็บเบราว์เซอร์', addScreen]]],
+      ['monitor', 'แชร์หน้าจอ', 'หน้าจอคอม หน้าต่างโปรแกรม หรือแท็บเบราว์เซอร์', addScreen],
+      ['grid', 'ซีน / แบ่งจอ', 'หลายแหล่งภาพในจอเดียว: คู่กัน ภาพซ้อนมุม 3–4 ช่อง', addSceneInput]]],
     ['ไฟล์', [
       ['film', 'ไฟล์วิดีโอ', 'MP4 / WebM จากเครื่องนี้', () => pickFiles('video/*', addVideoFiles)],
       ['repeat', 'Playlist', 'วิดีโอและรูปหลายไฟล์เล่นต่อกัน', addPlaylist],
@@ -4691,7 +4814,7 @@
      - ไฟล์วิดีโอ/รูปเก็บสำเนาไว้ในพื้นที่ของเบราว์เซอร์ (OPFS) จึงไม่ต้องเลือกไฟล์ใหม่
      - บันทึกเป็นไฟล์ .webmix.json เพื่อย้ายเครื่องหรือเก็บหลายรายการ (ไฟล์สื่อไม่ได้รวมอยู่ในไฟล์ ต้องเลือกใหม่บนเครื่องอื่น) */
 
-  const SHOW_TYPES = ['bars', 'black', 'slate', 'clock', 'image', 'media', 'camera', 'screen', 'wireless', 'srt', 'title', 'guest', 'timer', 'score', 'ticker', 'playlist'];
+  const SHOW_TYPES = ['bars', 'black', 'slate', 'clock', 'image', 'media', 'camera', 'screen', 'wireless', 'srt', 'title', 'guest', 'timer', 'score', 'ticker', 'playlist', 'scene'];
   const show = {
     ready: false, last: '', savedAt: 0,
     get name() { return store.get('showName', '') || 'โชว์ใหม่'; },
@@ -4721,6 +4844,7 @@
           if (i.type === 'playlist') o.list = { items: i.list.items.map(x => ({ key: x.key, name: x.name, kind: x.kind })), index: i.list.index, loop: i.list.loop, imageSec: i.list.imageSec };
           if (i.data) o.data = { url: i.data.url, header: i.data.header, row: i.data.row || 0 };
           if (i.type === 'guest') o.guest = i.guest;
+          if (i.type === 'scene') o.scene = { ...i.scene, slots: [...i.scene.slots] };
           if (i.layout) o.layout = JSON.parse(JSON.stringify(i.layout));
           return o;
         }),
@@ -4807,6 +4931,9 @@
       switch (raw.type) {
         case 'bars': case 'black': case 'slate': case 'clock':
           addInput({ type: raw.type, ...base, text });
+          break;
+        case 'scene':
+          addInput({ type: 'scene', ...base, scene: sanitizeScene(raw.scene) });
           break;
         case 'timer': {
           const t = raw.timer || {};

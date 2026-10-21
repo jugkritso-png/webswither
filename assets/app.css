@@ -1444,3 +1444,20 @@ html[data-cards=l] .card-num, html[data-cards=l] .card-tally { font-size: 14px; 
 .mv-hint { position: absolute; left: 50%; transform: translateX(-50%); bottom: max(12px, env(safe-area-inset-bottom)); margin: 0; padding: 6px 14px; border-radius: 99px;
   background: rgba(0, 0, 0, .8); color: #e8ecf1; font-size: 13px; white-space: nowrap; pointer-events: none; transition: opacity 1s; }
 .mv-hint.is-hidden { opacity: 0; }
+
+/* ---------- ซีน: เลือกรูปแบบ (ภาพย่อแสดงตำแหน่งช่อง) */
+.sc-layouts { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
+.sc-layout { position: relative; display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 8px; border-radius: 10px; border: 1.5px solid var(--line);
+  background: var(--panel-2); cursor: pointer; text-align: center; }
+.sc-layout input { position: absolute; opacity: 0; pointer-events: none; }
+.sc-layout b { font-size: 12px; font-weight: 600; }
+.sc-layout:has(input:checked) { border-color: #7fa6ff; background: #17223a; }
+.sc-layout:has(input:focus-visible) { outline: 2px solid #fff; outline-offset: 2px; }
+.sc-diagram { position: relative; display: block; width: 100%; aspect-ratio: 16 / 9; background: #0b0d12; border-radius: 4px; overflow: hidden; }
+.sc-diagram i { position: absolute; box-sizing: border-box; border: 1.5px solid #0b0d12; background: #3b4a66; }
+.sc-diagram i.frame { border-color: #fff; background: #5b7ab8; }
+.sc-slots { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 12px; margin-top: 10px; }
+@media (max-width: 760px) {
+  .sc-layouts { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .sc-slots { grid-template-columns: 1fr; }
+}
