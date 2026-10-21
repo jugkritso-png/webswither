@@ -239,7 +239,8 @@
     score: { icon: 'grid', label: 'SCORE' },
     ticker: { icon: 'type', label: 'TICKER' },
     playlist: { icon: 'film', label: 'PLAYLIST' },
-    scene: { icon: 'grid', label: 'SCENE' }
+    scene: { icon: 'grid', label: 'SCENE' },
+    replay: { icon: 'restart', label: 'REPLAY' }
   };
   // กราฟิกที่วาดบนพื้นโปร่งใส (ซ้อนเป็น Overlay ได้ทันที)
   const GRAPHIC_TYPES = ['title', 'timer', 'score', 'ticker'];
@@ -811,6 +812,7 @@
     }
     if (ftb.level > 0) gpu.solid({ x: 0, y: 0, w: W, h: H }, [0, 0, 0, 1], ftb.level);
     pgmCtx.drawImage(gpu.canvas, 0, 0);
+    feedReplay();
   }
 
   /* ----------------------------------------------------------- render loop */
@@ -854,6 +856,7 @@
       drawOverlays(pgmCtx, W, H);
       if (stingerOn()) pgmCtx.drawImage(stinger.el, 0, 0, W, H);
       if (ftb.level > 0) { pgmCtx.fillStyle = `rgba(0,0,0,${ftb.level})`; pgmCtx.fillRect(0, 0, W, H); }
+      feedReplay();
 
       drawSource(pvwCtx, byId(state.previewId), PW, PH);
       drawOverlayChannels(pvwCtx, PW, PH, true);
@@ -965,6 +968,7 @@
 
   function cut() {
     if (!byId(state.previewId)) return;
+    replayGoingOn(state.previewId);
     stopStinger();
     tr.auto = false;
     tr.progress = 0;
@@ -985,6 +989,7 @@
       stinger.el.currentTime = 0;
       stinger.el.play().catch(() => {});
     } else tr.from = tr.progress;
+    replayGoingOn(state.previewId);
     tr.auto = true;
     tr.start = performance.now();
     $('[data-action="auto"]').classList.add('is-running');
@@ -1024,6 +1029,7 @@
     tr.progress = clamp(tr.base === 0 ? v / 100 : (100 - v) / 100, 0, 1);
     if (tr.progress >= 0.999) completeTransition();
     else if ((was > 0) !== (tr.progress > 0)) audio.applyAfv();
+    if (was === 0 && tr.progress > 0) replayGoingOn(state.previewId);
   }
 
   function toggleFtb() {
@@ -1171,6 +1177,9 @@
               <button class="mini" data-card="play" title="เล่น / หยุดชั่วคราว">${icon(inp.el.paused ? 'play' : 'pause')}</button>
               <button class="mini" data-card="restart" title="เล่นใหม่ตั้งแต่ต้น">${icon('restart')}</button>
               <button class="mini ${inp.el.loop ? 'is-on' : ''}" data-card="loop" title="เล่นวนซ้ำ">${icon('repeat')}</button>` : ''}
+            ${inp.type === 'replay' ? `
+              <button class="mini txt rp-cap" data-card="rcap" title="จับภาพ ${inp.replay.len} วินาทีล่าสุด แล้วใส่ใน Preview (ปุ่มลัด I)">⟲ ${inp.replay.len}s</button>
+              <button class="mini txt" data-card="rspd" title="ความเร็วเล่นซ้ำ">${speedLabel(inp.replay.speed)}</button>` : ''}
             ${canRelink ? `<button class="mini warn" data-card="relink" title="เชื่อมต่อแหล่งภาพนี้ใหม่">${icon('link')}</button>` : ''}
             ${inp.type === 'guest' ? `<button class="mini ${inp.status === 'live' ? '' : 'warn'}" data-card="invite" title="ลิงก์เชิญแขก">${icon('link')}</button>` : ''}
             ${inp.type === 'score' ? `
@@ -1220,6 +1229,8 @@
       else if (act === 'play') { inp.el.paused ? inp.el.play().catch(() => {}) : inp.el.pause(); }
       else if (act === 'restart') { inp.el.currentTime = 0; inp.el.play().catch(() => {}); }
       else if (act === 'loop') { inp.el.loop = !inp.el.loop; actionBtn.classList.toggle('is-on', inp.el.loop); }
+      else if (act === 'rcap') replayCapture(inp);
+      else if (act === 'rspd') { const i = REPLAY_SPEEDS.indexOf(inp.replay.speed); inp.replay.speed = REPLAY_SPEEDS[(i + 1) % REPLAY_SPEEDS.length]; inp.el.playbackRate = inp.replay.speed; actionBtn.textContent = speedLabel(inp.replay.speed); }
       return;
     }
     // แตะสองครั้ง = ตัดเข้า Program (ตรวจจับเองเพราะ iOS ไม่ส่ง dblclick)
@@ -1319,6 +1330,7 @@
     if (inp.type === 'srt') closeSrtInput(inp);
     if (forget && (inp.type === 'media' || inp.type === 'image')) mediaStore.del(inp.id);
     if (inp.type === 'playlist') playlist.dispose(inp, forget);
+    if (inp.type === 'replay') replayStop(inp);
     inp.removed = true;
     if (gpu) gpu.drop(inp.id);
     audio.removeForInput(inp.id);
@@ -1346,6 +1358,7 @@
   async function renameInput(inp) {
     if (inp.type === 'playlist') return playlist.edit(inp);
     if (inp.type === 'scene') return openSceneDialog(inp);
+    if (inp.type === 'replay') return openReplayDialog(inp);
     if (inp.type === 'title') return openTitleDialog(inp);
     if (inp.type === 'timer') return openTimerDialog(inp);
     if (inp.type === 'score') return openScoreDialog(inp);
@@ -1950,6 +1963,175 @@
     setPreview(made.id);
     toast(`สร้าง “${name}” แล้ว — อยู่ใน Preview กด CUT เพื่อขึ้นจอ`, 'success');
     return made;
+  }
+
+  /* ---- Instant Replay: บัฟเฟอร์ภาพย้อนหลังตลอดเวลา กด ⟲ (หรือ I) แล้วได้คลิป N วินาทีล่าสุดใน Preview
+     ตัดขึ้นจอแล้วเล่น (สโลว์ได้) จบคลิปแล้วกลับภาพเดิมให้อัตโนมัติ
+     บัฟเฟอร์: MediaRecorder 2 ตัวสลับกันเริ่มใหม่ทุก N วินาที → ตัวเก่ามีภาพย้อนหลัง N–2N วินาทีเสมอ (หน่วยความจำคงที่)
+     แหล่ง: Program (ย่อเหลือ ≤960px) หรือกล้อง/แหล่งภาพสดตัวเดียว */
+  const REPLAY_LENS = [5, 8, 12, 20];
+  const REPLAY_SPEEDS = [1, 0.5, 0.25];
+  const speedLabel = v => v === 1 ? '1×' : v === 0.5 ? '½×' : '¼×';
+  const replayFeed = { canvas: document.createElement('canvas'), stream: null, users: 0 };
+  replayFeed.ctx = replayFeed.canvas.getContext('2d');
+  function sanitizeReplay(r) {
+    r = r || {};
+    return { len: REPLAY_LENS.includes(+r.len) ? +r.len : 8, speed: REPLAY_SPEEDS.includes(+r.speed) ? +r.speed : 0.5,
+      source: typeof r.source === 'string' && r.source ? r.source.slice(0, 40) : 'program', autoReturn: r.autoReturn !== false };
+  }
+  function replayStream(inp) {
+    if (inp.replay.source !== 'program') {
+      const src = byId(inp.replay.source);
+      const t = src && src.stream && src.stream.getVideoTracks().find(x => x.readyState === 'live');
+      if (t) return new MediaStream([t]);
+    }
+    if (!replayFeed.stream) {
+      const w = Math.min(960, W), h = Math.round(w * H / W / 2) * 2;
+      replayFeed.canvas.width = w; replayFeed.canvas.height = h;
+      replayFeed.stream = replayFeed.canvas.captureStream(Math.min(30, settings.fps));
+    }
+    replayFeed.users++;
+    inp.rbProgram = true;
+    return replayFeed.stream;
+  }
+  // เรียกทุกเฟรมหลังวาด Program
+  function feedReplay() {
+    if (!replayFeed.users) return;
+    const c = replayFeed.canvas;
+    replayFeed.ctx.drawImage(pgmCanvas, 0, 0, c.width, c.height);
+  }
+  function replayStart(inp) {
+    replayStop(inp);
+    if (!window.MediaRecorder || (window.WebMix.wcrec && window.WebMix.wcrec.preferred())) { inp.rbError = 'เครื่องนี้บันทึกภาพย้อนหลังไม่ได้'; return; }
+    const mime = ['video/webm;codecs=vp8', 'video/webm;codecs=vp9', 'video/webm', 'video/mp4'].find(t => MediaRecorder.isTypeSupported(t)) || '';
+    const stream = replayStream(inp);
+    const rb = inp.rb = { recs: [], mime, stop: null };
+    const spawn = () => {
+      if (inp.removed || inp.rb !== rb) return;
+      try {
+        const r = new MediaRecorder(stream, { ...(mime ? { mimeType: mime } : {}), videoBitsPerSecond: 5000000 });
+        const rec = { r, chunks: [], t0: performance.now(), type: r.mimeType || mime || 'video/webm' };
+        r.ondataavailable = e => { if (e.data.size) rec.chunks.push(e.data); };
+        r.start(250);
+        rb.recs.push(rec);
+      } catch (e) { inp.rbError = e.message; }
+      while (rb.recs.length > 2) { const old = rb.recs.shift(); try { old.r.stop(); } catch (e) {} old.chunks = []; }
+    };
+    spawn();
+    const ms = inp.replay.len * 1000;
+    rb.stop = window.WebMix.wcrec && window.WebMix.wcrec.every ? window.WebMix.wcrec.every(spawn, ms) : (id => () => clearInterval(id))(setInterval(spawn, ms));
+  }
+  function replayStop(inp) {
+    const rb = inp.rb;
+    if (!rb) return;
+    inp.rb = null;
+    if (rb.stop) rb.stop();
+    for (const rec of rb.recs) { try { rec.r.stop(); } catch (e) {} rec.chunks = []; }
+    if (inp.rbProgram) { inp.rbProgram = false; replayFeed.users = Math.max(0, replayFeed.users - 1); }
+  }
+  // ทำให้ WebM จาก MediaRecorder (ยังไม่จบ) เลื่อนตำแหน่งเล่นได้: เติมความยาว + Cues
+  async function seekableClip(blob, type) {
+    if (!type.includes('webm') || !window.WebmSeek) return blob;
+    try {
+      const fix = new WebmSeek.WebmSeekFix();
+      const parts = fix.push(new Uint8Array(await blob.arrayBuffer()));
+      const n = parts.reduce((a, x) => a + x.byteLength, 0);
+      const done = fix.finish(n);
+      if (!done) return blob;
+      const out = new Uint8Array(n + done.tail.byteLength);
+      let at = 0;
+      for (const x of [...parts, done.tail]) { out.set(x, at); at += x.byteLength; }
+      for (const pt of done.patches) out.set(pt.data, pt.position);
+      return new Blob([out], { type });
+    } catch (e) { return blob; }
+  }
+  async function replayCapture(inp) {
+    if (!inp) {
+      inp = inputs.find(i => i.type === 'replay');
+      if (!inp) { toast('เพิ่มแหล่งภาพ “Instant Replay” ก่อน (เพิ่มแหล่งภาพ → Instant Replay)', 'warn'); return; }
+    }
+    if (inp.capturing) return;
+    const rec = inp.rb && inp.rb.recs[0];
+    if (!rec) { toast(inp.rbError || 'ยังไม่มีภาพย้อนหลัง', 'warn'); return; }
+    if (state.programId === inp.id) { toast('รีเพลย์กำลังออกอากาศอยู่ — ตัดออกก่อนแล้วค่อยจับภาพใหม่', 'warn'); return; }
+    inp.capturing = true;
+    try {
+      try { rec.r.requestData(); } catch (e) {}
+      await new Promise(r => setTimeout(r, 150));
+      const age = (performance.now() - rec.t0) / 1000;
+      if (!rec.chunks.length || age < 1) { toast('ภาพย้อนหลังยังไม่พอ — รอสักครู่แล้วกดใหม่', 'warn'); return; }
+      const clip = await seekableClip(new Blob(rec.chunks, { type: rec.type }), rec.type);
+      if (inp.removed) return;
+      if (inp.url) URL.revokeObjectURL(inp.url);
+      inp.url = URL.createObjectURL(clip);
+      const v = inp.el;
+      v.pause();
+      await new Promise(res => { v.onloadedmetadata = res; v.onerror = res; v.src = inp.url; setTimeout(res, 3000); });
+      const dur = isFinite(v.duration) && v.duration > 0 ? v.duration : age;
+      inp.clipStart = Math.max(0, dur - inp.replay.len);
+      inp.clipLen = dur - inp.clipStart;
+      v.playbackRate = inp.replay.speed;
+      v.currentTime = inp.clipStart;
+      setInputStatus(inp, 'live');
+      setPreview(inp.id);
+      toast(`รีเพลย์ ${inp.clipLen.toFixed(1)} วินาทีอยู่ใน Preview — กด AUTO / CUT เพื่อเล่นบนจอ`, 'success', 4000);
+    } finally { inp.capturing = false; }
+  }
+  // เริ่มเล่นเมื่อรีเพลย์กำลังขึ้นจอ (CUT / AUTO / T-Bar) — จำภาพเดิมไว้กลับไปตอนจบ
+  function replayGoingOn(id) {
+    const inp = byId(id);
+    if (!inp || inp.type !== 'replay' || inp.status !== 'live' || !inp.el.paused) return;
+    inp.returnTo = state.programId !== id ? state.programId : null;
+    inp.el.currentTime = inp.clipStart || 0;
+    inp.el.playbackRate = inp.replay.speed;
+    inp.el.play().catch(() => {});
+  }
+  function replayEnded(inp) {
+    if (state.programId !== inp.id || !inp.replay.autoReturn || !byId(inp.returnTo)) return;
+    if (tr.auto) return;
+    setPreview(inp.returnTo);
+    autoTransition();
+  }
+  function createReplayInput(props) {
+    const v = document.createElement('video');
+    v.muted = true; v.playsInline = true; v.preload = 'auto';
+    pool.appendChild(v);
+    const inp = addInput({ type: 'replay', status: 'nosignal', ...props, replay: sanitizeReplay(props.replay), el: v });
+    v.addEventListener('ended', () => replayEnded(inp));
+    replayStart(inp);
+    return inp;
+  }
+  function addReplayInput() {
+    const n = inputs.filter(i => i.type === 'replay').length + 1;
+    const inp = createReplayInput({ name: n > 1 ? `REPLAY ${n}` : 'REPLAY' });
+    toast('เริ่มเก็บภาพย้อนหลังแล้ว — กด ⟲ บนการ์ด (หรือปุ่ม I) เมื่อต้องการรีเพลย์', 'success', 5000);
+    return inp;
+  }
+  async function openReplayDialog(inp) {
+    const cur = inp.replay;
+    const sources = inputs.filter(i => i.stream && i.type !== 'replay');
+    const r = await dialog({
+      title: 'Instant Replay',
+      body: `
+        <label class="field"><span>ชื่อ</span><input name="name" class="input" maxlength="40" value="${esc(inp.name)}"></label>
+        <label class="field"><span>ภาพที่เก็บย้อนหลัง</span><select name="source" class="select">
+          <option value="program">Program (ภาพที่ออกอากาศ)</option>
+          ${sources.map(s2 => `<option value="${s2.id}" ${cur.source === s2.id ? 'selected' : ''}>${esc(s2.name)}</option>`).join('')}</select></label>
+        <label class="field"><span>ความยาวรีเพลย์</span><select name="len" class="select">${REPLAY_LENS.map(l => `<option value="${l}" ${l === cur.len ? 'selected' : ''}>${l} วินาที</option>`).join('')}</select></label>
+        <label class="field"><span>ความเร็ว</span><select name="speed" class="select">${REPLAY_SPEEDS.map(x => `<option value="${x}" ${x === cur.speed ? 'selected' : ''}>${x === 1 ? 'ปกติ' : x === 0.5 ? 'สโลว์ ½' : 'สโลว์ ¼'}</option>`).join('')}</select></label>
+        <label class="check"><input type="checkbox" name="autoReturn" ${cur.autoReturn ? 'checked' : ''}> เล่นจบแล้วกลับภาพเดิมอัตโนมัติ</label>
+        <p class="note">${inp.rbError ? esc(inp.rbError) : 'เก็บภาพย้อนหลังในหน่วยความจำตลอดเวลา (ไม่บันทึกลงดิสก์) · กด ⟲ หรือปุ่ม I เพื่อจับคลิป'}</p>`,
+      actions: [{ label: 'ยกเลิก' }, { label: 'บันทึก', primary: true, value: 'save' }]
+    });
+    if (r?.value !== 'save') return;
+    const f = r.form;
+    const next = sanitizeReplay({ len: f.len.value, speed: f.speed.value, source: f.source.value, autoReturn: f.autoReturn.checked });
+    const restart = next.len !== cur.len || next.source !== cur.source;
+    inp.replay = next;
+    inp.name = String(f.name.value || '').trim().slice(0, 40) || inp.name;
+    inp.el.playbackRate = next.speed;
+    if (restart) replayStart(inp);
+    renderInputs(); refreshSourceSelects();
   }
 
   function addTitleInput() {
@@ -4797,7 +4979,8 @@
     ['กล้องและหน้าจอ', [
       ['video', 'กล้อง / แคปเจอร์การ์ด', 'เว็บแคม กล้องของเครื่อง หรือการ์ดจับภาพ HDMI', openCameraDialog],
       ['monitor', 'แชร์หน้าจอ', 'หน้าจอคอม หน้าต่างโปรแกรม หรือแท็บเบราว์เซอร์', addScreen],
-      ['grid', 'ซีน / แบ่งจอ', 'หลายแหล่งภาพในจอเดียว: คู่กัน ภาพซ้อนมุม 3–4 ช่อง', addSceneInput]]],
+      ['grid', 'ซีน / แบ่งจอ', 'หลายแหล่งภาพในจอเดียว: คู่กัน ภาพซ้อนมุม 3–4 ช่อง', addSceneInput],
+      ['restart', 'Instant Replay', 'ย้อนดูช็อตเด็ด 5–20 วินาทีล่าสุด เล่นสโลว์ได้', addReplayInput]]],
     ['ไฟล์', [
       ['film', 'ไฟล์วิดีโอ', 'MP4 / WebM จากเครื่องนี้', () => pickFiles('video/*', addVideoFiles)],
       ['repeat', 'Playlist', 'วิดีโอและรูปหลายไฟล์เล่นต่อกัน', addPlaylist],
@@ -4893,6 +5076,7 @@
   }
   // ข้อความเล็กใต้ชื่อบนการ์ด: สถานะสัญญาณ, ข้อมูลจากชีต, หรือชนิด + ความละเอียดจริง
   function cardSub(inp) {
+    if (inp.type === 'replay' && inp.status !== 'live') return inp.rbError ? 'REPLAY · ใช้ไม่ได้' : `REPLAY · พร้อม (${inp.replay.source === 'program' ? 'Program' : byId(inp.replay.source)?.name || '—'})`;
     if (inp.type === 'srt' && inp.status !== 'live') return `SRT · ${SRT_IN_STATES[inp.srtState] || 'ไม่มีสัญญาณ'}`;
     if (inp.status !== 'live') return 'ไม่มีสัญญาณ';
     if (inp.data && inp.data.error) return 'DATA ERROR';
@@ -5056,7 +5240,7 @@
         return;
       }
       const k = e.key.toLowerCase();
-      const map = { ' ': cut, enter: autoTransition, f: toggleFtb, t: actions.title, l: actions.title, p: actions.pip, k: actions.key, m: () => multiview.open() };
+      const map = { ' ': cut, enter: autoTransition, f: toggleFtb, t: actions.title, l: actions.title, p: actions.pip, k: actions.key, m: () => multiview.open(), i: () => replayCapture() };
       const oi = OVL_KEYS.indexOf(k);
       if (oi >= 0) {
         const i = oi + (e.shiftKey ? 4 : 0);
@@ -5083,7 +5267,7 @@
      - ไฟล์วิดีโอ/รูปเก็บสำเนาไว้ในพื้นที่ของเบราว์เซอร์ (OPFS) จึงไม่ต้องเลือกไฟล์ใหม่
      - บันทึกเป็นไฟล์ .webmix.json เพื่อย้ายเครื่องหรือเก็บหลายรายการ (ไฟล์สื่อไม่ได้รวมอยู่ในไฟล์ ต้องเลือกใหม่บนเครื่องอื่น) */
 
-  const SHOW_TYPES = ['bars', 'black', 'slate', 'clock', 'image', 'media', 'camera', 'screen', 'wireless', 'srt', 'title', 'guest', 'timer', 'score', 'ticker', 'playlist', 'scene'];
+  const SHOW_TYPES = ['bars', 'black', 'slate', 'clock', 'image', 'media', 'camera', 'screen', 'wireless', 'srt', 'title', 'guest', 'timer', 'score', 'ticker', 'playlist', 'scene', 'replay'];
   const show = {
     ready: false, last: '', savedAt: 0,
     get name() { return store.get('showName', '') || 'โชว์ใหม่'; },
@@ -5114,6 +5298,7 @@
           if (i.data) o.data = { url: i.data.url, header: i.data.header, row: i.data.row || 0 };
           if (i.type === 'guest') o.guest = i.guest;
           if (i.type === 'scene') o.scene = { ...i.scene, slots: [...i.scene.slots] };
+          if (i.type === 'replay') o.replay = { ...i.replay };
           if (i.layout) o.layout = JSON.parse(JSON.stringify(i.layout));
           if (i.color) o.color = { ...i.color };
           return o;
@@ -5205,6 +5390,9 @@
           break;
         case 'scene':
           addInput({ type: 'scene', ...base, scene: sanitizeScene(raw.scene) });
+          break;
+        case 'replay':
+          createReplayInput({ ...base, replay: raw.replay });
           break;
         case 'timer': {
           const t = raw.timer || {};
@@ -5461,7 +5649,7 @@
     $$('#seg-cardsize button').forEach(b => { b.classList.toggle('is-active', b.dataset.size === cardSize()); b.addEventListener('click', () => setCardSize(b.dataset.size)); });
 
     // สำหรับดีบัก/ทดสอบอัตโนมัติ
-    window.webmix = { playlist, dataSources, timerControl, multiview, renderer, gpu, setRenderer: v => { settings.renderer = v; renderer.resolve(); updateStatus(); }, show, ovl, setChannel, toggleInputOverlay, useRecFolder: dir => { recFolder = dir; }, inputs, state, settings, overlays, audio, rec, iso, stinger, streamer, wireless, cut, autoTransition, setPreview, tr, ftb };
+    window.webmix = { playlist, dataSources, timerControl, multiview, renderer, gpu, setRenderer: v => { settings.renderer = v; renderer.resolve(); updateStatus(); }, show, ovl, setChannel, toggleInputOverlay, useRecFolder: dir => { recFolder = dir; }, inputs, state, settings, overlays, audio, rec, iso, stinger, replayCapture, streamer, wireless, cut, autoTransition, setPreview, tr, ftb };
   }
 
   boot();

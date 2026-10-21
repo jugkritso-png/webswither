@@ -14,6 +14,7 @@
     ['Q W E R', 'เปิด / ปิด Overlay 1 – 4'],
     ['Shift + Q W E R', 'เปิด / ปิด Overlay 5 – 8'],
     ['M', 'เปิดหน้าต่าง Multiview'],
+    ['I', 'Instant Replay — จับภาพย้อนหลังใส่ Preview (ต้องเพิ่มแหล่งภาพ Instant Replay ก่อน)'],
     ['Esc', 'ปิดหน้าต่าง / ออกจากเต็มจอ']
   ];
   const MANUAL = [
