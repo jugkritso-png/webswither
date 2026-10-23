@@ -561,6 +561,41 @@ mod android {
     }
 }
 
+/// อัปเดตแอป: ตรวจเวอร์ชันใหม่จาก GitHub Release (latest.json ที่ลงลายเซ็นไว้) — คืน null ถ้าเป็นเวอร์ชันล่าสุดแล้ว
+/// Android ไม่มีตัวอัปเดตในแอป (หน้าเว็บเช็กจาก GitHub แล้วบอกให้ดาวน์โหลด APK เอง)
+#[tauri::command]
+async fn update_check(app: tauri::AppHandle) -> Result<Option<serde_json::Value>, String> {
+    #[cfg(desktop)]
+    {
+        use tauri_plugin_updater::UpdaterExt;
+        let update = app.updater().map_err(|e| e.to_string())?.check().await.map_err(|e| e.to_string())?;
+        Ok(update.map(|u| serde_json::json!({ "version": u.version, "current": u.current_version, "notes": u.body, "date": u.date.map(|d| d.to_string()) })))
+    }
+    #[cfg(not(desktop))]
+    {
+        let _ = app;
+        Ok(None)
+    }
+}
+
+/// ดาวน์โหลด ตรวจลายเซ็น ติดตั้ง แล้วเปิดแอปใหม่ (Windows: ตัวติดตั้งแบบไม่ต้องกดอะไรจะปิดแอปให้เอง)
+#[tauri::command]
+async fn update_install(app: tauri::AppHandle) -> Result<(), String> {
+    #[cfg(desktop)]
+    {
+        use tauri_plugin_updater::UpdaterExt;
+        let update = app.updater().map_err(|e| e.to_string())?.check().await.map_err(|e| e.to_string())?;
+        let Some(update) = update else { return Err("เป็นเวอร์ชันล่าสุดแล้ว".into()) };
+        update.download_and_install(|_, _| {}, || {}).await.map_err(|e| e.to_string())?;
+        app.restart();
+    }
+    #[cfg(not(desktop))]
+    {
+        let _ = app;
+        Err("อัปเดตในแอปใช้ได้บนคอมพิวเตอร์เท่านั้น".into())
+    }
+}
+
 /// Android: ไลฟ์/บันทึกอยู่ → เปิดบริการเบื้องหน้าพร้อมแจ้งเตือน (ระบบไม่หยุดกล้อง/สตรีมตอนปิดจอหรือสลับแอป)
 #[tauri::command]
 fn set_live(window: tauri::WebviewWindow, active: bool, text: String) {
@@ -572,10 +607,24 @@ fn set_live(window: tauri::WebviewWindow, active: bool, text: String) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
-        .plugin(tauri_plugin_dialog::init())
+    let builder = tauri::Builder::default().plugin(tauri_plugin_dialog::init());
+    #[cfg(desktop)]
+    let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+    builder
         .manage(AppState::default())
-        .invoke_handler(tauri::generate_handler![desktop_info, pick_folder, rec_open, rec_write, rec_patch, rec_close, selftest_report, selftest_cleanup, set_live])
+        .invoke_handler(tauri::generate_handler![
+            desktop_info,
+            pick_folder,
+            rec_open,
+            rec_write,
+            rec_patch,
+            rec_close,
+            selftest_report,
+            selftest_cleanup,
+            set_live,
+            update_check,
+            update_install
+        ])
         .setup(|app| {
             #[cfg(mobile)]
             {

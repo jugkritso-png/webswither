@@ -5345,7 +5345,75 @@
       <p class="note">${gw ? `Gateway ในแอปพร้อม · ${esc(gw.url.replace(/\?.*$/, ''))}${gw.srt ? ' · ส่ง SRT ได้' : ''}` : `เปิด Gateway ในแอปไม่ได้: ${esc(info.gatewayError || desktop.error || 'ไม่ทราบสาเหตุ')}`}</p>
       <p class="note ${ff ? '' : 'warn'}">${ff ? `ffmpeg: ${esc(ff.version)} · ตัวเข้ารหัส: ${esc(ENCODER_LABEL[info.encoder] || info.encoder || 'libx264')}${info.encoderNote ? `<br><small>ใช้ตัวเข้ารหัสฮาร์ดแวร์ไม่ได้: ${esc(info.encoderNote)}</small>` : ''}` : `ไม่พบ ffmpeg — ติดตั้งด้วย ${install} แล้วเปิดแอปใหม่`}</p>
       ${desktop.mobile ? '<p class="note warn">ระหว่างไลฟ์ให้เปิดแอปค้างไว้บนหน้าจอและเสียบสายชาร์จ — ถ้าสลับไปแอปอื่นหรือปิดจอ Android จะหยุดกล้องและการสตรีม</p>' : ''}
-      <p class="note">อินเทอร์เน็ตขาขึ้นของเครื่องนี้ต้องพอสำหรับทุกปลายทางรวมกัน (ffmpeg ส่งแยกทีละปลายทาง) · การรับสัญญาณ SRT เข้ามา และ TURN สำหรับมือถือยังต้องใช้ Gateway บนเซิร์ฟเวอร์</p>`;
+      <p class="note">อินเทอร์เน็ตขาขึ้นของเครื่องนี้ต้องพอสำหรับทุกปลายทางรวมกัน (ffmpeg ส่งแยกทีละปลายทาง) · TURN สำหรับกล้องมือถือผ่านเน็ตมือถือยังต้องใช้ Gateway บนเซิร์ฟเวอร์</p>
+      <p class="note app-ver">แอปเวอร์ชัน ${esc(info.version || '?')}${appUpdate.available ? ` · <b>มีเวอร์ชันใหม่ ${esc(appUpdate.available.version)}</b>` : appUpdate.checkedAt ? ' · เป็นเวอร์ชันล่าสุด' : ''}
+        <button type="button" class="btn btn-sm app-update-btn">${appUpdate.available ? (desktop.mobile ? 'ดาวน์โหลด' : 'อัปเดตเลย') : 'ตรวจหาอัปเดต'}</button></p>`;
+  }
+
+  /* ---- อัปเดตแอป ----
+     คอมพิวเตอร์: ตรวจ latest.json ใน GitHub Release (ลงลายเซ็นไว้ — แอปตรวจลายเซ็นก่อนติดตั้งเสมอ) แล้วดาวน์โหลด ติดตั้ง เปิดใหม่ในแอป
+     Android: ดูเลขเวอร์ชันจาก GitHub แล้วบอกให้ดาวน์โหลด APK (ติดตั้งทับได้ ข้อมูลไม่หาย)
+     ตรวจหลังเปิดแอป 20 วินาที และทุก 6 ชั่วโมง · ไม่ติดตั้งระหว่างไลฟ์/บันทึก */
+  const RELEASES_URL = 'https://github.com/jugkritso-png/webswither/releases/latest';
+  const appUpdate = { available: null, checkedAt: 0, installing: false };
+  const newerVersion = (a, b) => {
+    const x = String(a).replace(/^v/, '').split('.').map(Number), y = String(b).replace(/^v/, '').split('.').map(Number);
+    for (let i = 0; i < 3; i++) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0);
+    return false;
+  };
+  async function checkAppUpdate(manual) {
+    if (!desktop) return;
+    const info = await desktop.ready;
+    if (!info) return;
+    try {
+      if (desktop.mobile) {
+        const r = await fetch('https://api.github.com/repos/jugkritso-png/webswither/releases/latest', { cache: 'no-store' });
+        const tag = r.ok ? (await r.json()).tag_name : '';
+        appUpdate.available = tag && newerVersion(tag, info.version) ? { version: tag.replace(/^v/, '') } : null;
+      } else {
+        appUpdate.available = await desktop.updateCheck();
+      }
+      appUpdate.checkedAt = Date.now();
+    } catch (e) {
+      if (manual) toast('ตรวจหาอัปเดตไม่ได้ (ต้องต่ออินเทอร์เน็ต) — ดาวน์โหลดเองได้ที่หน้า Release', 'warn', 7000, { label: 'คัดลอกลิงก์', run: () => copyText(RELEASES_URL) });
+      return;
+    }
+    if (appUpdate.available) {
+      const v = appUpdate.available.version;
+      toast(desktop.mobile ? `มี WebMix Pro ${v} แล้ว — ดาวน์โหลด APK ใหม่ติดตั้งทับได้เลย (ข้อมูลไม่หาย)` : `มี WebMix Pro ${v} แล้ว — อัปเดตได้ในคลิกเดียว แอปจะเปิดใหม่เอง`, 'info', 20000,
+        desktop.mobile ? { label: 'คัดลอกลิงก์', run: () => copyText(RELEASES_URL) } : { label: 'อัปเดตเลย', run: installAppUpdate });
+    } else if (manual) toast(`เป็นเวอร์ชันล่าสุดแล้ว (${info.version})`, 'success');
+    refreshAppVersion();
+  }
+  async function installAppUpdate() {
+    if (desktop.mobile) { copyText(RELEASES_URL); return; }
+    if (streamer.active || streamer.reconnecting || rec.active) { toast('กำลังไลฟ์หรือบันทึกอยู่ — หยุดก่อนแล้วค่อยอัปเดต (แอปต้องปิดแล้วเปิดใหม่)', 'warn', 7000); return; }
+    if (appUpdate.installing) return;
+    appUpdate.installing = true;
+    show.autosave(true);
+    toast('กำลังดาวน์โหลดและติดตั้งอัปเดต… แอปจะปิดแล้วเปิดใหม่เอง', 'info', 60000);
+    try { await desktop.updateInstall(); }
+    catch (e) {
+      appUpdate.installing = false;
+      toast(`อัปเดตไม่สำเร็จ: ${e.message || e} — ดาวน์โหลดตัวติดตั้งเองได้ที่หน้า Release`, 'error', 10000, { label: 'คัดลอกลิงก์', run: () => copyText(RELEASES_URL) });
+    }
+  }
+  function copyText(text) {
+    (navigator.clipboard ? navigator.clipboard.writeText(text) : Promise.reject())
+      .then(() => toast('คัดลอกลิงก์แล้ว — เปิดในเบราว์เซอร์เพื่อดาวน์โหลด', 'success'))
+      .catch(() => toast(text, 'info', 15000));
+  }
+  function refreshAppVersion() {
+    const el = $('.app-ver');
+    if (el) el.outerHTML = desktopGatewayHtml().match(/<p class="note app-ver">[\s\S]*?<\/p>/)[0];
+  }
+  document.addEventListener('click', e => {
+    if (!e.target.closest('.app-update-btn')) return;
+    appUpdate.available ? installAppUpdate() : checkAppUpdate(true);
+  });
+  if (desktop) {
+    setTimeout(() => checkAppUpdate(false), 20000);
+    setInterval(() => checkAppUpdate(false), 6 * 3600 * 1000);
   }
 
   function openSettings(tab = 'output') {
@@ -6501,7 +6569,7 @@
     $$('#seg-cardsize button').forEach(b => { b.classList.toggle('is-active', b.dataset.size === cardSize()); b.addEventListener('click', () => setCardSize(b.dataset.size)); });
 
     // สำหรับดีบัก/ทดสอบอัตโนมัติ
-    window.webmix = { playlist, dataSources, timerControl, multiview, renderer, gpu, setRenderer: v => { settings.renderer = v; renderer.resolve(); updateStatus(); }, show, ovl, setChannel, toggleInputOverlay, useRecFolder: dir => { recFolder = dir; }, inputs, state, settings, overlays, audio, rec, iso, stinger, replayCapture, slideGo, midi, abr: { state: abr, decide: abrDecide, apply: abrApply, tick: abrTick }, streamer, wireless, cut, autoTransition, setPreview, tr, ftb };
+    window.webmix = { playlist, dataSources, timerControl, multiview, renderer, gpu, setRenderer: v => { settings.renderer = v; renderer.resolve(); updateStatus(); }, show, ovl, setChannel, toggleInputOverlay, useRecFolder: dir => { recFolder = dir; }, inputs, state, settings, overlays, audio, rec, iso, stinger, replayCapture, slideGo, midi, checkAppUpdate, abr: { state: abr, decide: abrDecide, apply: abrApply, tick: abrTick }, streamer, wireless, cut, autoTransition, setPreview, tr, ftb };
   }
 
   boot();

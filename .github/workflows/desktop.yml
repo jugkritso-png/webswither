@@ -94,7 +94,14 @@ jobs:
       - name: Build installers
         working-directory: desktop
         shell: bash
-        run: npx --yes @tauri-apps/cli@2 build ${{ matrix.target && format('--target {0}', matrix.target) || '' }}
+        # มีกุญแจเซ็นอัปเดตใน Secrets → สร้างไฟล์อัปเดตพร้อมลายเซ็น (.sig) ให้แอปที่ติดตั้งแล้วอัปเดตตัวเองได้
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          EXTRA=()
+          if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then EXTRA=(--config '{"bundle":{"createUpdaterArtifacts":true}}'); else echo "::notice::ไม่มี TAURI_SIGNING_PRIVATE_KEY — ข้ามไฟล์อัปเดตอัตโนมัติ"; fi
+          npx --yes @tauri-apps/cli@2 build ${{ matrix.target && format('--target {0}', matrix.target) || '' }} "${EXTRA[@]}"
       - name: Self-test (open the real app)
         shell: bash
         env:
@@ -137,6 +144,8 @@ jobs:
             desktop/target/release/bundle/**/*.deb
             desktop/target/release/bundle/**/*.rpm
             desktop/target/release/bundle/**/*.AppImage
+            desktop/target/**/release/bundle/**/*.app.tar.gz
+            desktop/target/**/release/bundle/**/*.sig
           if-no-files-found: error
           retention-days: 30
 
@@ -246,9 +255,29 @@ jobs:
         run: |
           gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --pattern 'WebMix-Pro-*' --dir artifacts
           mkdir release
-          find artifacts -type f \( -name '*.msi' -o -name '*.exe' -o -name '*.dmg' -o -name '*.deb' -o -name '*.rpm' -o -name '*.AppImage' -o -name '*.apk' \) -print0 |
+          find artifacts -type f \( -name '*.msi' -o -name '*.exe' -o -name '*.dmg' -o -name '*.deb' -o -name '*.rpm' -o -name '*.AppImage' -o -name '*.apk' -o -name '*.app.tar.gz' -o -name '*.sig' \) -print0 |
             while IFS= read -r -d '' f; do cp "$f" "release/$(basename "$f" | tr ' ' '-')"; done
           ls -la release
+      # latest.json: แอปที่ติดตั้งแล้วอ่านไฟล์นี้จาก releases/latest เพื่อรู้ว่ามีเวอร์ชันใหม่ (ลายเซ็นตรวจด้วย pubkey ใน tauri.conf.json)
+      - name: Update manifest (latest.json)
+        run: |
+          node - <<'JS'
+          const fs = require('fs');
+          const tag = process.env.TAG, files = fs.readdirSync('release');
+          const base = `https://github.com/${process.env.GITHUB_REPOSITORY}/releases/download/${tag}/`;
+          const pick = re => files.find(f => re.test(f) && files.includes(f + '.sig'));
+          const entry = f => f && { signature: fs.readFileSync(`release/${f}.sig`, 'utf8').trim(), url: base + encodeURIComponent(f) };
+          const mac = entry(pick(/\.app\.tar\.gz$/));
+          const platforms = Object.fromEntries(Object.entries({
+            'windows-x86_64': entry(pick(/x64-setup\.exe$/)),
+            'darwin-x86_64': mac, 'darwin-aarch64': mac,
+            'linux-x86_64': entry(pick(/\.AppImage$/))
+          }).filter(([, v]) => v));
+          if (!Object.keys(platforms).length) { console.log('::warning::ไม่มีไฟล์ .sig — Release นี้ไม่มีอัปเดตอัตโนมัติ (ตั้ง Secret TAURI_SIGNING_PRIVATE_KEY ก่อน)'); process.exit(0); }
+          const manifest = { version: tag.replace(/^v/, ''), notes: `WebMix Pro ${tag} — ดูรายละเอียดที่หน้า Release`, pub_date: new Date().toISOString(), platforms };
+          fs.writeFileSync('release/latest.json', JSON.stringify(manifest, null, 2));
+          console.log(JSON.stringify(manifest, null, 2));
+          JS
       - name: Create release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -268,6 +297,7 @@ jobs:
 
           การสตรีมบนคอมพิวเตอร์ต้องมี ffmpeg — Windows: `winget install ffmpeg` · macOS: `brew install ffmpeg` (การบันทึกไม่ต้องใช้) · Android มี ffmpeg ในแอปแล้ว
           Linux: กล้องมือถือและแขกรับเชิญใช้ไม่ได้ (WebKitGTK ไม่มี WebRTC) — ใช้หน้าเว็บใน Chrome ถ้าต้องการ
+          ติดตั้งแล้วครั้งต่อไปไม่ต้องดาวน์โหลดเอง: แอปบน Windows / macOS / Linux (AppImage) แจ้งและอัปเดตตัวเองได้ · Android แจ้งเมื่อมีเวอร์ชันใหม่
           รายละเอียดและข้อจำกัด: ดู README หัวข้อ “แอปเดสก์ท็อป”
           NOTES
           sed -i 's/^          //' notes.md

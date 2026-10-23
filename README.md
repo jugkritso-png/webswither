@@ -66,6 +66,7 @@ workflow จะ build ทุกระบบ ทดสอบ แล้วสร�
   ไม่มีหน้าต่าง Output/Multiview แยก · แนะนำ 720p–1080p และ Input ไม่เกิน 3–4 ช่อง (เครื่องร้อนได้ถ้าไลฟ์นาน) ·
   ยังไม่มีไฟล์สำหรับมือถือ ARM 32 บิตรุ่นเก่า
 - กุญแจเซ็น APK: ตั้ง secrets `ANDROID_KEYSTORE_BASE64` และ `ANDROID_KEYSTORE_PASSWORD` (alias `webmix`) เพื่อให้อัปเดตทับเวอร์ชันเก่าได้
+- อัปเดตอัตโนมัติ (Windows / macOS / Linux AppImage): ตั้ง secrets `TAURI_SIGNING_PRIVATE_KEY` และ `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` (สร้างด้วย `npx @tauri-apps/cli signer generate`; กุญแจสาธารณะอยู่ใน `desktop/src-tauri/tauri.conf.json` → `plugins.updater.pubkey`) — Release จะมี `latest.json` และไฟล์ `.sig` ให้แอปที่ติดตั้งแล้วอัปเดตตัวเอง · ไม่มี secret ก็ build ได้ตามปกติแต่ไม่มีไฟล์อัปเดต · Android แอปแจ้งเมื่อมีเวอร์ชันใหม่จาก GitHub
   — ถ้าไม่ตั้ง CI เซ็นด้วยกุญแจชั่วคราว ต้องถอนแอปเดิมก่อนติดตั้งเวอร์ชันใหม่
 - CI คอมไพล์ ffmpeg สำหรับ Android (`desktop/android/build-ffmpeg.sh`) แล้วเปิดแอปบน emulator ให้สตรีม RTMP ออกมาจริงทุกครั้ง
 - ไลเซนส์: ffmpeg และ x264 เป็น GPL — ซอร์สอยู่ในเวอร์ชันที่ระบุใน `build-ffmpeg.sh`

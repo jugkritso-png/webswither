@@ -28,6 +28,9 @@
     mobile: /Android/i.test(navigator.userAgent),
 
     pickFolder: () => invoke('pick_folder'),
+    // อัปเดตแอป (Windows / macOS / Linux AppImage): ตรวจ → { version, current, notes } หรือ null · ติดตั้งแล้วแอปเปิดใหม่เอง
+    updateCheck: () => invoke('update_check'),
+    updateInstall: () => invoke('update_install'),
     // Android: บริการเบื้องหน้า (แจ้งเตือน "กำลังไลฟ์") ให้กล้อง ไมค์ และการสตรีมทำงานต่อตอนปิดจอ/สลับแอป
     setLive: (active, text) => invoke('set_live', { active: !!active, text: String(text || '') }).catch(() => {}),
 
