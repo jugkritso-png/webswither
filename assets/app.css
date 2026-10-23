@@ -1498,3 +1498,62 @@ html[data-cards=l] .card-num, html[data-cards=l] .card-tally { font-size: 14px; 
 @media (max-width: 560px) { .mstep { grid-template-columns: 1.6em minmax(0, 1fr) auto; } .mstep > :nth-child(3) { grid-column: 2 / 3; } }
 /* 5 แท็บในแผงกราฟิก: ไม่ให้ชื่อแท็บขึ้นสองบรรทัด */
 .tabs .tab { gap: 4px; letter-spacing: 0; white-space: nowrap; }
+
+/* ---------- กล้องมือถือแบบมืออาชีพ (procam.js) ---------- */
+.caller.procam .caller-bottom { gap: 18px; padding-top: 28px; padding-right: 76px; }
+.caller.procam .round { width: 50px; height: 50px; }
+.caller.procam .round.lg { width: 60px; height: 60px; }
+.pc-stage { position: absolute; pointer-events: none; }
+.pc-assist { position: absolute; inset: 0; width: 100%; height: 100%; }
+.pc-guides, .pc-guides i { position: absolute; }
+.pc-guides { inset: 0; }
+.pc-guides .g-v { top: 0; bottom: 0; width: 1px; background: rgba(255, 255, 255, .45); }
+.pc-guides .g-h { left: 0; right: 0; height: 1px; background: rgba(255, 255, 255, .45); }
+.pc-guides .g-c { left: 50%; top: 50%; width: 22px; height: 22px; margin: -11px 0 0 -11px; background: linear-gradient(rgba(255,255,255,.7), rgba(255,255,255,.7)) center/100% 1px no-repeat, linear-gradient(rgba(255,255,255,.7), rgba(255,255,255,.7)) center/1px 100% no-repeat; }
+.pc-guides .g-mask { background: rgba(0, 0, 0, .55); }
+.pc-focus { position: absolute; width: 72px; height: 72px; margin: -36px 0 0 -36px; border: 2px solid #f5a524; border-radius: 6px; }
+.pc-focus.pulse { animation: pcFocus .5s ease-out; }
+@keyframes pcFocus { from { transform: scale(1.5); opacity: .3; } to { transform: scale(1); opacity: 1; } }
+.pc-info { position: absolute; left: 16px; right: 80px; top: max(52px, calc(env(safe-area-inset-top) + 40px)); font: 600 11px/1.3 var(--mono, ui-monospace, monospace); color: rgba(255,255,255,.9); text-shadow: 0 1px 2px #000; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pc-info.warn { color: #fbbf24; }
+.pc-hist { position: absolute; left: 16px; top: max(74px, calc(env(safe-area-inset-top) + 62px)); width: 128px; height: 56px; border-radius: 4px; }
+.pc-meter { position: absolute; left: 6px; top: 34%; height: 32%; width: 6px; border-radius: 3px; background: rgba(255,255,255,.18); overflow: hidden; }
+.pc-meter i { position: absolute; left: 0; right: 0; bottom: 0; height: 0; background: #22c55e; }
+.pc-meter b { position: absolute; left: 0; right: 0; height: 2px; background: #fff; }
+.pc-level { position: absolute; left: 50%; top: 50%; width: 38%; max-width: 320px; transform: translate(-50%, -50%); pointer-events: none; }
+.pc-level i { display: block; height: 2px; background: rgba(255,255,255,.75); box-shadow: 0 0 3px #000; transition: transform .08s linear; }
+.pc-level.ok i { background: #22c55e; }
+.pc-level span { position: absolute; left: 50%; top: 8px; transform: translateX(-50%); font: 600 11px var(--mono, monospace); text-shadow: 0 1px 2px #000; }
+.pc-rec { position: absolute; left: 50%; top: max(52px, calc(env(safe-area-inset-top) + 40px)); transform: translateX(-50%); padding: 3px 10px; border-radius: 4px; background: #dc2626; font: 800 12px var(--mono, monospace); letter-spacing: .06em; z-index: 3; }
+.pc-rail { position: absolute; right: max(8px, env(safe-area-inset-right)); top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; gap: 6px; max-height: calc(100% - 130px); overflow-y: auto; z-index: 3; }
+.pc-rail button { width: 62px; padding: 5px 2px; border-radius: 8px; border: 1px solid rgba(255,255,255,.18); background: rgba(14, 16, 22, .72); color: #fff; display: grid; gap: 1px; text-align: center; cursor: pointer; -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
+.pc-rail small { font-size: 9px; font-weight: 800; letter-spacing: .08em; color: rgba(255,255,255,.6); }
+.pc-rail b { font: 700 11px var(--mono, monospace); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pc-rail button.on b { color: #f5a524; }
+.pc-rail button.active { border-color: #f5a524; }
+.pc-rail .pc-recbtn b { color: #ef4444; font-size: 14px; }
+.pc-rail .pc-recbtn.on { background: #b91c1c; }
+.pc-rail .pc-recbtn.on b { color: #fff; }
+.pc-panel { position: absolute; left: 8px; right: 78px; bottom: max(8px, env(safe-area-inset-bottom)); max-height: 52%; overflow-y: auto; z-index: 4; padding: 10px 12px 12px; border-radius: 12px; background: rgba(12, 14, 20, .9); border: 1px solid rgba(255,255,255,.14); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); display: grid; gap: 10px; }
+.pc-panel-head { display: flex; align-items: center; justify-content: space-between; font-size: 12px; letter-spacing: .1em; }
+.pc-close { border: 0; background: none; color: #fff; font-size: 16px; padding: 2px 6px; cursor: pointer; }
+.pc-seg, .pc-toggles { display: flex; flex-wrap: wrap; gap: 6px; }
+.pc-seg button, .pc-toggles button { flex: 1 1 auto; min-width: 56px; padding: 8px 10px; border-radius: 8px; border: 1px solid rgba(255,255,255,.2); background: rgba(255,255,255,.06); color: #fff; font-size: 12px; font-weight: 700; cursor: pointer; }
+.pc-seg button.on, .pc-toggles button.on { background: #f5a524; border-color: #f5a524; color: #111; }
+.pc-slider { display: grid; gap: 4px; font-size: 12px; }
+.pc-slider span { display: flex; justify-content: space-between; }
+.pc-slider b { font-family: var(--mono, monospace); color: #f5a524; }
+.pc-slider input { width: 100%; accent-color: #f5a524; }
+.pc-label { font-size: 11px; color: rgba(255,255,255,.6); letter-spacing: .06em; }
+.pc-note { margin: 0; font-size: 11px; color: rgba(255,255,255,.65); }
+@media (orientation: landscape) and (max-height: 520px) {
+  .pc-panel { max-height: 70%; left: auto; width: min(420px, 60%); }
+  .pc-rail { gap: 4px; }
+  .pc-rail button { padding: 3px 2px; }
+}
+/* สตูดิโอ: ควบคุมกล้องมือถือ */
+.cam-ctl { display: grid; gap: 8px; }
+.cam-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.cam-seg { grid-auto-columns: minmax(0, 1fr); }
+.cam-seg button { padding: 0 6px; letter-spacing: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mini.is-rec { color: #ef4444; box-shadow: inset 0 0 0 1px #ef4444; }

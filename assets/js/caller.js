@@ -36,9 +36,12 @@
     ];
     // แขกรับเชิญใช้ HD (คุยผ่านเน็ตบ้าน/มือถือได้ลื่น) — กล้องมือถือของทีมงานเลือกได้ถึง 4K
     let quality = guestSlot ? QUALITIES[0] : QUALITIES[Math.min(2, Math.max(0, +store.get('caller-quality', 1)))] || QUALITIES[1];
+    // กล้องมือถือของทีมงาน: เลือกเลนส์ (deviceId) และเฟรมเรตได้จากแผงกล้องโปร
+    let lensId = null, fps = guestSlot ? 30 : [24, 25, 30, 50, 60].includes(+store.get('caller-fps', 30)) ? +store.get('caller-fps', 30) : 30;
     const getCamera = withAudio => navigator.mediaDevices.getUserMedia({
-      video: { facingMode: facing, width: { ideal: quality.w }, height: { ideal: quality.h }, frameRate: { ideal: 30 } },
-      audio: withAudio ? { echoCancellation: true, noiseSuppression: true } : false
+      video: { ...(lensId ? { deviceId: { exact: lensId } } : { facingMode: facing }), width: { ideal: quality.w }, height: { ideal: quality.h }, frameRate: { ideal: fps } },
+      // กล้องทีมงาน: ไม่ตัดเสียงรอบข้าง (เสียงบรรยากาศ/ดนตรีไม่ถูกบีบ) · แขก: ตัดเสียงสะท้อน
+      audio: withAudio ? (guestSlot ? { echoCancellation: true, noiseSuppression: true } : { echoCancellation: false, noiseSuppression: false, autoGainControl: false }) : false
     });
     const qualityBtn = $('#caller-quality');
     const paintQuality = () => {
@@ -64,7 +67,7 @@
       store.set('caller-quality', i);
       const track = stream?.getVideoTracks()[0];
       if (track) {
-        try { await track.applyConstraints({ width: { ideal: quality.w }, height: { ideal: quality.h }, frameRate: { ideal: 30 } }); }
+        try { await track.applyConstraints({ width: { ideal: quality.w }, height: { ideal: quality.h }, frameRate: { ideal: fps } }); }
         catch (e) {}
       }
       await applyBitrate();
@@ -73,7 +76,8 @@
       if (s?.width) showMsgBrief(`ส่งภาพ ${s.width}×${s.height}${s.height < quality.h ? ' (กล้องรองรับสูงสุดเท่านี้)' : ''}`);
     }
     let briefTimer = null;
-    const showMsgBrief = text => { showMsg(text); clearTimeout(briefTimer); briefTimer = setTimeout(() => showMsg(''), 2500); };
+    const showMsgBrief = (text, ms = 2500) => { showMsg(text); clearTimeout(briefTimer); briefTimer = setTimeout(() => showMsg(''), ms); };
+    let pro = null;
 
     async function start() {
       if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
@@ -91,6 +95,18 @@
       video.srcObject = stream;
       paintQuality();
       keepScreenOn(true);
+      if (!guestSlot && WM.initProCam) pro = WM.initProCam({
+        root, video, brief: showMsgBrief,
+        getStream: () => stream,
+        getPeerConnection: () => call?.peerConnection || null,
+        send: msg => { if (conn && conn.open) { try { conn.send(msg); } catch (e) {} } },
+        qualities: () => QUALITIES.map(q => q.label),
+        getQuality: () => quality.label,
+        getFps: () => fps,
+        async setQuality(label) { const i = QUALITIES.findIndex(q => q.label === label); if (i < 0 || QUALITIES[i] === quality) return; quality = QUALITIES[(i + QUALITIES.length - 1) % QUALITIES.length]; await cycleQuality(); },
+        async setFps(v) { fps = v; store.set('caller-fps', v); const t = stream?.getVideoTracks()[0]; try { await t.applyConstraints({ frameRate: { ideal: v } }); } catch (e) { await reopenVideo(); } },
+        async setLens(id) { lensId = id; await reopenVideo(); }
+      });
       if (typeof Peer === 'undefined') {
         setStatus('ออฟไลน์', 'bad');
         showMsg('โหลดระบบเชื่อมต่อ (PeerJS) ไม่สำเร็จ ตรวจสอบอินเทอร์เน็ตแล้วลองใหม่');
@@ -139,8 +155,10 @@
       if (stopped || !peer || peer.destroyed) return;
       const d = peer.connect(targetId, { reliable: true });
       conn = d;
+      d.on('open', () => pro && pro.sendState());
       d.on('data', msg => {
         if (!msg || typeof msg !== 'object') return;
+        if (pro && (msg.type === 'cam-set' || msg.type === 'cam-cmd')) pro.onStudioMsg(msg);
         if (msg.type === 'tally') setTally(msg.tally);
         if (msg.type === 'removed') stop(guestSlot ? 'สตูดิโอจบการเชื่อมต่อแล้ว ขอบคุณที่ร่วมรายการ' : 'สตูดิโอนำกล้องนี้ออกจากรายการแล้ว');
       });
@@ -177,6 +195,13 @@
       if (!stream || stopped) return;
       const prev = facing;
       facing = facing === 'user' ? 'environment' : 'user';
+      lensId = null;
+      await reopenVideo(prev);
+    }
+    // เปิดกล้องใหม่ตามตัวเลือกปัจจุบัน (ด้าน / เลนส์ / เฟรมเรต) แล้วสลับแทร็กในสายเดิม
+    async function reopenVideo(prevFacing) {
+      if (!stream || stopped) return;
+      const prev = prevFacing || facing;
       const oldTrack = stream.getVideoTracks()[0];
       const sender = call?.peerConnection?.getSenders().find(s => s.track && s.track.kind === 'video');
       // มือถือหลายรุ่นเปิดกล้องสองตัวพร้อมกันไม่ได้ ต้องปิดตัวเดิมก่อน
@@ -192,6 +217,7 @@
       video.srcObject = stream;
       if (sender) await sender.replaceTrack(track);
       paintQuality();
+      if (pro) pro.afterTrackChange();
     }
 
     // แขก: ปิดกล้องชั่วคราว (สตูดิโอเห็นจอดำ เสียงยังส่งอยู่)

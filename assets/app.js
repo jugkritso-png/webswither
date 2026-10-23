@@ -1319,6 +1319,7 @@
               <button class="mini txt rp-cap" data-card="rcap" title="จับภาพ ${inp.replay.len} วินาทีล่าสุด แล้วใส่ใน Preview (ปุ่มลัด I)">⟲ ${inp.replay.len}s</button>
               <button class="mini txt" data-card="rspd" title="ความเร็วเล่นซ้ำ">${speedLabel(inp.replay.speed)}</button>` : ''}
             ${canRelink ? `<button class="mini warn" data-card="relink" title="เชื่อมต่อแหล่งภาพนี้ใหม่">${icon('link')}</button>` : ''}
+            ${inp.type === 'wireless' && inp.cam && inp.status === 'live' ? `<button class="mini ${inp.cam.rec ? 'is-rec' : ''}" data-card="camctl" title="ควบคุมกล้องมือถือ (แสง / สี / โฟกัส / ซูม / บันทึกในเครื่อง)">${icon('sliders')}</button>` : ''}
             ${inp.type === 'guest' ? `<button class="mini ${inp.status === 'live' ? '' : 'warn'}" data-card="invite" title="ลิงก์เชิญแขก">${icon('link')}</button>` : ''}
             ${inp.type === 'score' ? `
               <button class="mini txt" data-card="sa+" title="${esc(inp.score.teamA)} +1">A+</button><button class="mini txt" data-card="sa-" title="${esc(inp.score.teamA)} −1">A−</button>
@@ -1358,6 +1359,7 @@
       else if (act === 'relink') relinkInput(inp);
       else if (act === 'layout') openLayoutDialog(inp);
       else if (act === 'invite') showGuestInvite(inp);
+      else if (act === 'camctl') openCamControl(inp);
       else if (act === 'tplay' || act === 'treset') { timerControl(inp, act === 'tplay' ? 'toggle' : 'reset'); }
       else if (/^s[ab][+-]$/.test(act)) { const k = act[1] === 'a' ? 'scoreA' : 'scoreB'; inp.score[k] = Math.max(0, (+inp.score[k] || 0) + (act[2] === '+' ? 1 : -1)); }
       else if (act === 'dprev' || act === 'dnext') dataSources.step(inp, act === 'dnext' ? 1 : -1);
@@ -3151,6 +3153,116 @@
     show.autosave(true);
   }
 
+  /* ---- ควบคุมกล้องมือถือจากสตูดิโอ (แบบ Camera Control ของ ATEM) ----
+     ค่าที่ปรับได้มาจากกล้องจริงของมือถือเครื่องนั้น — ปรับแล้วมือถือส่งสถานะกลับมา ค่าบนหน้านี้จึงตรงกับกล้องเสมอ */
+  let camCtl = null;
+  const camShutter = t => t > 0 ? (t >= 10000 ? `${(t / 10000).toFixed(1)}s` : `1/${Math.round(10000 / t)}`) : '—';
+  function openCamControl(inp) {
+    if (!inp.cam) return;
+    let dragging = false, sendTimer = null, sig = '';
+    const send = set => wireless.sendCam(inp, { type: 'cam-set', set });
+    const cmd = (c, value) => wireless.sendCam(inp, { type: 'cam-cmd', cmd: c, value });
+    const R = r => r && r.max > r.min;
+    const fmt = { iso: v => Math.round(v), exposureTime: camShutter, exposureCompensation: v => (v > 0 ? '+' : '') + (+v).toFixed(1), colorTemperature: v => Math.round(v) + 'K', focusDistance: v => (+v).toFixed(2) + ' m', zoom: v => (+v).toFixed(1) + '×' };
+    const slider = (k, label, r, v) => R(r) ? `<label class="field cc-row"><span>${label} <b class="mono" data-cv="${k}">${v == null ? '—' : fmt[k](v)}</b></span>
+      <input class="range" type="range" data-ck="${k}" min="${r.min}" max="${r.max}" step="${r.step || (r.max - r.min) / 200}" value="${v ?? r.min}"></label>` : '';
+    const segs = (name, items, cur) => `<div class="seg cam-seg" data-cs="${name}">${items.map(([v, l]) => `<button type="button" data-v="${esc(String(v))}" class="${String(v) === String(cur) ? 'is-active' : ''}">${esc(String(l))}</button>`).join('')}</div>`;
+    const status = () => {
+      const c = inp.cam, st = c.set || {}, x = c.stats || {};
+      return [`${st.width || '?'}×${st.height || '?'} @ ${x.fps || st.fps || '?'} fps`, x.kbps ? `${(x.kbps / 1000).toFixed(1)} Mb/s` : '', x.rtt != null ? `ดีเลย์ ${x.rtt} ms` : '',
+        x.limit && x.limit !== 'none' ? `⚠ ${x.limit === 'bandwidth' ? 'เน็ตไม่พอ' : x.limit === 'cpu' ? 'เครื่องช้า/ร้อน' : x.limit}` : '',
+        c.battery ? `🔋 ${Math.round(c.battery.level * 100)}%${c.battery.charging ? ' ⚡' : ''}` : '', c.tilt != null ? `เอียง ${c.tilt}°` : ''].filter(Boolean).join(' · ');
+    };
+    const body = () => {
+      const c = inp.cam, k = c.caps || {}, st = c.set || {}, man = m => m === 'manual';
+      sig = [st.exposureMode, st.whiteBalanceMode, st.focusMode, (c.lenses || []).length, !!c.rec, c.locked].join('|');
+      const parts = [];
+      parts.push(`<p class="note cam-status">${esc(status())}</p>`);
+      parts.push(`<div class="cam-row"><button type="button" class="btn ${c.rec ? 'btn-danger' : ''} cam-rec">${c.rec ? '■ หยุดบันทึกในมือถือ' : '● บันทึกในมือถือ (ไฟล์สำรองคุณภาพสูง)'}</button>
+        <button type="button" class="btn cam-lock ${c.locked ? 'is-on' : ''}">${c.locked ? 'ปลดล็อก AE/AWB/AF' : 'ล็อก AE/AWB/AF'}</button>
+        ${k.torch ? `<button type="button" class="btn cam-torch ${st.torch ? 'is-on' : ''}">ไฟฉาย ${st.torch ? 'ON' : 'OFF'}</button>` : ''}</div>`);
+      if (R(k.iso) || R(k.exposureTime) || R(k.exposureCompensation)) {
+        parts.push(`<div class="help"><h3>แสง (Exposure)</h3></div>`);
+        if ((k.exposureMode || []).includes('manual')) parts.push(segs('exposureMode', [['continuous', 'AUTO'], ['manual', 'MANUAL']], man(st.exposureMode) ? 'manual' : 'continuous'));
+        if (man(st.exposureMode)) parts.push(slider('iso', 'ISO', k.iso, st.iso) + slider('exposureTime', 'ชัตเตอร์', k.exposureTime, st.exposureTime));
+        else parts.push(slider('exposureCompensation', 'EV', k.exposureCompensation, st.exposureCompensation ?? 0));
+      }
+      if (R(k.colorTemperature)) {
+        parts.push(`<div class="help"><h3>สมดุลแสงขาว (WB)</h3></div>`);
+        parts.push(segs('whiteBalanceMode', [['continuous', 'AUTO'], ['manual', 'MANUAL']], man(st.whiteBalanceMode) ? 'manual' : 'continuous'));
+        if (man(st.whiteBalanceMode)) parts.push(slider('colorTemperature', 'อุณหภูมิสี', k.colorTemperature, st.colorTemperature) + segs('wb', [[3200, 'หลอดไส้ 3200K'], [4000, 'ฟลูออเรสเซนต์ 4000K'], [5600, 'แดด 5600K'], [6500, 'ครึ้ม 6500K']].filter(([v]) => v >= k.colorTemperature.min && v <= k.colorTemperature.max), ''));
+      }
+      if (R(k.focusDistance)) {
+        parts.push(`<div class="help"><h3>โฟกัส</h3></div>`);
+        parts.push(segs('focusMode', [['continuous', 'AF'], ['manual', 'MF']], man(st.focusMode) ? 'manual' : 'continuous'));
+        if (man(st.focusMode)) parts.push(slider('focusDistance', 'ระยะโฟกัส', k.focusDistance, st.focusDistance));
+      }
+      if (R(k.zoom)) parts.push(`<div class="help"><h3>ซูม</h3></div>` + slider('zoom', 'ซูม', k.zoom, st.zoom));
+      parts.push(`<div class="help"><h3>ภาพที่ส่ง</h3></div>`);
+      parts.push(segs('quality', (c.qualities || []).map(q => [q, q]), st.quality));
+      parts.push(segs('fps', [24, 25, 30, 50, 60].filter(f => f <= (k.maxFps || 30) + 0.5).map(f => [f, f + ' fps']), st.fps));
+      if ((c.lenses || []).length > 1) parts.push(segs('lens', c.lenses.map(l => [l.id, l.label]), st.lens));
+      if (!R(k.iso) && !R(k.colorTemperature) && !R(k.focusDistance) && !R(k.zoom)) parts.push('<p class="note warn">มือถือเครื่องนี้ (หรือเบราว์เซอร์) ไม่ให้ปรับแสง/สี/โฟกัสเอง — Android + Chrome รองรับมากที่สุด</p>');
+      parts.push(`<div class="field"><span>ข้อความถึงช่างกล้อง (ขึ้นบนจอมือถือ)</span><div class="link-row"><input class="input cam-msg" maxlength="120" placeholder="เช่น ซูมเข้าหน้าผู้พูด"><button type="button" class="btn cam-msg-send">ส่ง</button></div></div>`);
+      return parts.join('');
+    };
+    dialog({
+      title: `ควบคุมกล้อง — ${inp.name}`,
+      body: `<div class="cam-ctl">${body()}</div>`,
+      actions: [{ label: 'ปิด', primary: true }],
+      onOpen(modal) {
+        const box = $('.cam-ctl', modal);
+        camCtl = {
+          inp,
+          refresh() {
+            if (!box.isConnected) return;
+            const st = inp.cam.set || {};
+            const nextSig = [st.exposureMode, st.whiteBalanceMode, st.focusMode, (inp.cam.lenses || []).length, !!inp.cam.rec, inp.cam.locked].join('|');
+            if (nextSig !== sig && !dragging) { box.innerHTML = body(); return; }
+            const s1 = $('.cam-status', box);
+            if (s1) s1.textContent = status();
+            if (!dragging) for (const el of $$('[data-ck]', box)) { const v = st[el.dataset.ck]; if (v != null) { el.value = v; const l = $(`[data-cv="${el.dataset.ck}"]`, box); if (l) l.textContent = fmt[el.dataset.ck](v); } }
+            for (const sg of $$('[data-cs]', box)) {
+              const cur = { quality: st.quality, fps: st.fps, lens: st.lens }[sg.dataset.cs];
+              if (cur != null) $$('button', sg).forEach(b => b.classList.toggle('is-active', b.dataset.v === String(cur)));
+            }
+          }
+        };
+        box.addEventListener('pointerdown', e => { if (e.target.dataset.ck) dragging = true; });
+        addEventListener('pointerup', () => { dragging = false; }, { once: false });
+        box.addEventListener('input', e => {
+          const k = e.target.dataset.ck;
+          if (!k) return;
+          const v = +e.target.value, l = $(`[data-cv="${k}"]`, box);
+          if (l) l.textContent = fmt[k](v);
+          clearTimeout(sendTimer);
+          sendTimer = setTimeout(() => send({ [k]: v }), 60);
+        });
+        box.addEventListener('click', e => {
+          if (e.target.closest('.cam-rec')) { cmd('rec', !inp.cam.rec); return; }
+          if (e.target.closest('.cam-lock')) { cmd('lock', !inp.cam.locked); return; }
+          if (e.target.closest('.cam-torch')) { send({ torch: !(inp.cam.set || {}).torch }); return; }
+          if (e.target.closest('.cam-msg-send')) { const i = $('.cam-msg', box); if (i.value.trim()) { cmd('msg', i.value.trim()); toast('ส่งข้อความถึงช่างกล้องแล้ว', 'success', 2000); i.value = ''; } return; }
+          const b = e.target.closest('[data-cs] button');
+          if (!b) return;
+          const name = b.closest('[data-cs]').dataset.cs, v = b.dataset.v, st = inp.cam.set || {};
+          if (name === 'quality' || name === 'lens') cmd(name, v);
+          else if (name === 'fps') cmd('fps', +v);
+          else if (name === 'wb') send({ colorTemperature: +v });
+          else {
+            const set = { [name]: v };
+            if (v === 'manual' && name === 'exposureMode') Object.assign(set, { iso: st.iso, exposureTime: st.exposureTime });
+            if (v === 'manual' && name === 'whiteBalanceMode' && st.colorTemperature) set.colorTemperature = st.colorTemperature;
+            if (v === 'manual' && name === 'focusMode' && st.focusDistance != null) set.focusDistance = st.focusDistance;
+            for (const k of Object.keys(set)) if (set[k] == null) delete set[k];
+            send(set);
+          }
+        });
+        cmd('state');
+      }
+    }).then(() => { if (camCtl && camCtl.inp === inp) camCtl = null; });
+  }
+
   function addVizInput() {
     audio.ensure();
     const n = inputs.filter(i => i.type === 'visualizer').length + 1;
@@ -3870,6 +3982,7 @@
       }
       this.conns.set(conn.peer, conn);
       conn.on('open', () => this.sendTallyTo(conn));
+      conn.on('data', msg => this.onCamMsg(conn.peer, msg));
       conn.on('close', () => { if (this.conns.get(conn.peer) === conn) this.conns.delete(conn.peer); });
     },
     sendTallyTo(conn) {
@@ -3879,6 +3992,26 @@
       try { conn.send({ type: 'tally', tally }); } catch (e) {}
     },
     sendTally() { for (const conn of this.conns.values()) this.sendTallyTo(conn); },
+    // กล้องมือถือแบบโปร: สถานะกล้อง (ความสามารถ/ค่าปัจจุบัน/แบต/บันทึก) และคำสั่งควบคุมจากสตูดิโอ
+    onCamMsg(peerId, msg) {
+      if (!msg || msg.type !== 'cam-state' || typeof msg !== 'object') return;
+      const inp = inputs.find(i => i.type === 'wireless' && i.peerId === peerId);
+      if (!inp) return;
+      const first = !inp.cam;
+      inp.cam = msg;
+      if (first || !!$(`#inputs-grid .card[data-id="${inp.id}"] [data-card=camctl]`) !== (inp.status === 'live')) renderInputs();
+      else {
+        const sub = $(`#inputs-grid .card[data-id="${inp.id}"] .card-sub`);
+        if (sub) sub.textContent = cardSub(inp);
+        $(`#inputs-grid .card[data-id="${inp.id}"] [data-card=camctl]`)?.classList.toggle('is-rec', !!msg.rec);
+      }
+      if (camCtl && camCtl.inp === inp) camCtl.refresh();
+    },
+    sendCam(inp, msg) {
+      const conn = this.conns.get(inp.peerId);
+      if (conn && conn.open) { try { conn.send(msg); return true; } catch (e) {} }
+      return false;
+    },
     release(peerId) {
       this.blocked.add(peerId);
       const conn = this.conns.get(peerId);
@@ -6294,6 +6427,10 @@ onmessage = async e => {
     if (inp.status !== 'live') return 'ไม่มีสัญญาณ';
     if (inp.data && inp.data.error) return 'DATA ERROR';
     if (inp.type === 'title' && inp.data && inp.data.rows && inp.data.rows.length) return `${inp.data.row + 1}/${inp.data.rows.length}`;
+    if (inp.type === 'wireless' && inp.cam && inp.status === 'live') {
+      const c = inp.cam, st = c.set || {};
+      return ['MOBILE', st.height ? `${resTag(st.width, st.height)} ${st.fps}` : '', c.battery ? `🔋${Math.round(c.battery.level * 100)}%` : '', c.rec ? '● REC' : '', c.stats && c.stats.limit && c.stats.limit !== 'none' ? '⚠ เน็ต' : ''].filter(Boolean).join(' · ');
+    }
     if (inp.type === 'visualizer') return `VISUALIZER · ${VIZ_STYLES[inp.viz.style]} · ${vizSourceName(inp.viz)}`;
     if (inp.type === 'slides') return inp.slides.count ? `SLIDES · หน้า ${inp.slides.page}/${inp.slides.count}` : 'SLIDES';
     if (inp.type === 'playlist') return inp.list.items.length ? `${inp.list.index + 1}/${inp.list.items.length}` : 'ว่าง';
@@ -6890,7 +7027,7 @@ onmessage = async e => {
     $$('#seg-cardsize button').forEach(b => { b.classList.toggle('is-active', b.dataset.size === cardSize()); b.addEventListener('click', () => setCardSize(b.dataset.size)); });
 
     // สำหรับดีบัก/ทดสอบอัตโนมัติ
-    window.webmix = { playlist, dataSources, timerControl, multiview, renderer, gpu, setRenderer: v => { settings.renderer = v; renderer.resolve(); updateStatus(); }, show, ovl, setChannel, toggleInputOverlay, useRecFolder: dir => { recFolder = dir; }, inputs, state, settings, overlays, audio, rec, iso, stinger, replayCapture, slideGo, midi, checkAppUpdate, macros, runMacro, abr: { state: abr, decide: abrDecide, apply: abrApply, tick: abrTick }, streamer, wireless, cut, autoTransition, setPreview, tr, ftb };
+    window.webmix = { playlist, dataSources, timerControl, multiview, renderer, gpu, setRenderer: v => { settings.renderer = v; renderer.resolve(); updateStatus(); }, show, ovl, setChannel, toggleInputOverlay, useRecFolder: dir => { recFolder = dir; }, inputs, state, settings, overlays, audio, rec, iso, stinger, replayCapture, slideGo, midi, checkAppUpdate, macros, runMacro, openCamControl, abr: { state: abr, decide: abrDecide, apply: abrApply, tick: abrTick }, streamer, wireless, cut, autoTransition, setPreview, tr, ftb };
   }
 
   boot();
