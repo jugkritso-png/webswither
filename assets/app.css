@@ -518,7 +518,7 @@ kbd {
 .empty-state { grid-column: 1 / -1; padding: 28px 12px; text-align: center; color: var(--dim); font-size: 12px; }
 
 /* Overlays */
-.tabs { display: grid; grid-template-columns: repeat(4, 1fr); border-bottom: 1px solid var(--line); flex: none; }
+.tabs { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); border-bottom: 1px solid var(--line); flex: none; }
 .tab {
   display: flex; align-items: center; justify-content: center; gap: 7px;
   height: 38px;
@@ -1481,3 +1481,20 @@ html[data-cards=l] .card-num, html[data-cards=l] .card-tally { font-size: 14px; 
 .midi-row.is-learning { box-shadow: inset 0 0 0 1px var(--amber, #f5a524); }
 .midi-row.is-learning .midi-map { color: var(--amber, #f5a524); }
 @media (max-width: 560px) { .midi-row { grid-template-columns: minmax(0, 1fr) auto 2.2em; } .midi-row .midi-map { grid-column: 1; grid-row: 2; } }
+
+/* Macro */
+.macro-list { display: grid; gap: 6px; }
+.macro-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; align-items: stretch; }
+.macro-run { position: relative; overflow: hidden; display: grid; gap: 2px; text-align: left; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line-2); background: var(--panel-2, #11151c); color: var(--text); cursor: pointer; }
+.macro-run b { font-size: 14px; }
+.macro-run small { color: var(--muted); font-size: 11px; }
+.macro-run:hover { border-color: var(--amber, #f5a524); }
+.macro-progress { position: absolute; left: 0; bottom: 0; height: 3px; width: 0; background: var(--amber, #f5a524); transition: width .2s; }
+.macro-row.is-running .macro-run { border-color: var(--amber, #f5a524); box-shadow: inset 0 0 0 1px var(--amber, #f5a524); }
+.msteps { display: grid; gap: 6px; margin-bottom: 8px; }
+.mstep { display: grid; grid-template-columns: 1.6em minmax(0, 1.2fr) minmax(0, 1fr) auto; gap: 6px; align-items: center; }
+.mstep-n { color: var(--muted); font-family: var(--mono, monospace); text-align: right; }
+.mstep-btns { display: flex; gap: 2px; }
+@media (max-width: 560px) { .mstep { grid-template-columns: 1.6em minmax(0, 1fr) auto; } .mstep > :nth-child(3) { grid-column: 2 / 3; } }
+/* 5 แท็บในแผงกราฟิก: ไม่ให้ชื่อแท็บขึ้นสองบรรทัด */
+.tabs .tab { gap: 4px; letter-spacing: 0; white-space: nowrap; }

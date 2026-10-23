@@ -194,6 +194,7 @@
           <button class="tab th" data-tab="title" role="tab">ป้ายชื่อ<span class="live-dot"></span></button>
           <button class="tab th" data-tab="pip" role="tab">ภาพซ้อนมุม<span class="live-dot"></span></button>
           <button class="tab th" data-tab="key" role="tab">ฉากเขียว<span class="live-dot"></span></button>
+          <button class="tab th" data-tab="macro" role="tab">Macro<span class="live-dot"></span></button>
         </div>
 
         <div class="pane is-active" data-pane="overlay">
@@ -222,6 +223,11 @@
             </div>
           </div>
           <button id="btn-pip" class="btn btn-take" data-action="pip">TAKE PIP<kbd>P</kbd></button>
+        </div>
+
+        <div class="pane" data-pane="macro">
+          <div id="macro-list" class="macro-list"></div>
+          <button id="macro-add" type="button" class="btn">+ สร้าง Macro</button>
         </div>
 
         <div class="pane" data-pane="key">

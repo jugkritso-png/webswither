@@ -2558,6 +2558,7 @@
       ['tbar', 'T-Bar', null, v => { onTbar(v * 100); tbar.set(tr.base === 0 ? tr.progress * 100 : 100 - tr.progress * 100); }],
       ['replay', 'Instant Replay', () => replayCapture()],
       ['slnext', 'สไลด์ถัดไป', () => slideStep(1)], ['slprev', 'สไลด์ก่อนหน้า', () => slideStep(-1)],
+      ...nums.map(n => [`mac${n}`, `Macro ${n}`, () => { if (macros[n - 1]) runMacro(macros[n - 1]); }]),
       ['rec', 'เริ่ม / หยุดบันทึก', toggleRecord],
       ...nums.map(n => [`pvw${n}`, `Preview ${n}`, () => pick(n, false)]),
       ...nums.map(n => [`pgm${n}`, `ตัดเข้า Program ${n}`, () => pick(n, true)]),
@@ -2950,6 +2951,204 @@
     readDataFields(inp, f);
     renderInputs();
     refreshSourceSelects();
+  }
+
+  /* ---- Macro: กดปุ่มเดียวทำหลายขั้นตอนต่อกัน (ตัดภาพ / Overlay / เสียง / บันทึก / ไลฟ์ / รอ) ----
+     สั่งได้จากปุ่มในแท็บ Macro, ปุ่ม F1–F12, ปุ่ม MIDI หรือให้เริ่มเองตามเวลา · บันทึกไว้กับโชว์ */
+  const MACRO_ACTIONS = {
+    preview: ['ใส่ใน Preview', 'input'], program: ['ตัดเข้า Program', 'input'], cut: ['CUT', ''], auto: ['AUTO (รอจนเปลี่ยนเสร็จ)', ''],
+    effect: ['ตั้งเอฟเฟกต์เปลี่ยนภาพ', 'effect'], ovlOn: ['Overlay ขึ้นจอ', 'ovl'], ovlOff: ['Overlay ลงจอ', 'ovl'], ovlAllOff: ['เอา Overlay ลงทั้งหมด', ''],
+    ftbOn: ['จอดำ (FTB) เปิด', ''], ftbOff: ['จอดำ (FTB) ปิด', ''], mute: ['ปิดเสียงช่อง', 'audio'], unmute: ['เปิดเสียงช่อง', 'audio'],
+    play: ['เล่นวิดีโอ / Playlist จากต้น', 'media'], recStart: ['เริ่มบันทึก', ''], recStop: ['หยุดบันทึก', ''],
+    liveStart: ['เริ่มไลฟ์ (ปลายทางที่เปิดใช้)', ''], liveStop: ['หยุดไลฟ์ทั้งหมด', ''], replay: ['Instant Replay', ''],
+    slideNext: ['สไลด์ถัดไป', ''], slidePrev: ['สไลด์ก่อนหน้า', ''], wait: ['รอ (วินาที)', 'secs']
+  };
+  const MACRO_KEYS = ['', 'F1', 'F2', 'F3', 'F4', 'F6', 'F7', 'F8', 'F9', 'F10', 'F12'];
+  const macros = [];
+  const macroRun = { id: null, step: 0, cancel: false };
+  function sanitizeMacros(list) {
+    return (Array.isArray(list) ? list : []).filter(m => m && typeof m === 'object').slice(0, 24).map(m => ({
+      id: typeof m.id === 'string' && /^[\w-]{1,24}$/.test(m.id) ? m.id : uid(),
+      name: String(m.name || 'Macro').slice(0, 40),
+      key: MACRO_KEYS.includes(m.key) ? m.key : '',
+      at: /^\d{2}:\d{2}$/.test(m.at || '') ? m.at : '',
+      // วันที่เริ่มเองตามเวลาไปแล้ว — เปิดหน้าใหม่ในนาทีเดิมจะไม่ทำซ้ำ
+      ranOn: typeof m.ranOn === 'string' ? m.ranOn.slice(0, 24) : '',
+      steps: (Array.isArray(m.steps) ? m.steps : []).filter(st => st && MACRO_ACTIONS[st.a]).slice(0, 60)
+        .map(st => ({ a: st.a, v: st.a === 'wait' ? clamp(+st.v || 1, 0.1, 3600) : String(st.v ?? '').slice(0, 80) }))
+    }));
+  }
+  const sleepCancellable = async ms => { const end = performance.now() + ms; while (!macroRun.cancel && performance.now() < end) await new Promise(r => setTimeout(r, Math.min(100, end - performance.now()))); };
+  const macroChannel = v => v.startsWith('mic:') ? audio.channels.find(c => c.kind === 'mic' && 'mic:' + c.micId === v) : v === 'master' ? audio.masterStrip : audio.channels.find(c => c.inputId === v);
+  async function macroStep(st) {
+    const v = st.v;
+    switch (st.a) {
+      case 'preview': if (byId(v) && v !== state.programId) setPreview(v); break;
+      case 'program': if (byId(v) && v !== state.programId) { state.previewId = v; cut(); } break;
+      case 'cut': cut(); break;
+      case 'auto':
+        autoTransition();
+        for (let t = 0; tr.auto && t < 300 && !macroRun.cancel; t++) await new Promise(r => setTimeout(r, 50));
+        break;
+      case 'effect':
+        if (TRANSITIONS.includes(v) && (v !== 'stinger' || stinger.ready)) { settings.transition = v; $$('#seg-transition button').forEach(b => b.classList.toggle('is-active', b.dataset.value === v)); saveSettings(); }
+        break;
+      case 'ovlOn': case 'ovlOff': { const i = +v; if (ovl[i] && ovl[i].on !== (st.a === 'ovlOn') && (st.a === 'ovlOff' || byId(ovl[i].inputId))) setChannel(i, st.a === 'ovlOn'); break; }
+      case 'ovlAllOff': ovl.forEach((c, i) => { if (c.on) setChannel(i, false); }); break;
+      case 'ftbOn': case 'ftbOff': if (!!ftb.target !== (st.a === 'ftbOn')) toggleFtb(); break;
+      case 'mute': case 'unmute': {
+        const ch = macroChannel(v);
+        if (!ch) break;
+        ch.muted = st.a === 'mute';
+        ch === audio.masterStrip ? audio.applyMaster() : audio.applyGain(ch);
+        renderMixer();
+        break;
+      }
+      case 'play': {
+        const inp = byId(v);
+        if (inp && inp.type === 'playlist') playlist.go(inp, 0, true);
+        else if (inp && inp.el && inp.el.tagName === 'VIDEO' && inp.type === 'media') { inp.el.currentTime = 0; inp.el.play().catch(() => {}); }
+        break;
+      }
+      case 'recStart': if (!rec.active && !rec.starting) await toggleRecord(); break;
+      case 'recStop': if (rec.active && rec.recorder) rec.recorder.stop(); break;
+      case 'liveStart': startDestinations(settings.destinations.filter(d => d.enabled)); break;
+      case 'liveStop': if (streamer.active || streamer.reconnecting) stopAllStreams(); break;
+      case 'replay': await replayCapture(); break;
+      case 'slideNext': slideStep(1); break;
+      case 'slidePrev': slideStep(-1); break;
+      case 'wait': await sleepCancellable(v * 1000); break;
+    }
+  }
+  async function runMacro(m) {
+    if (macroRun.id) {
+      if (macroRun.id === m.id) { macroRun.cancel = true; toast(`หยุด Macro “${m.name}”`, 'info', 2000); }
+      else toast('มี Macro อื่นทำงานอยู่ — รอให้จบหรือกดซ้ำที่ Macro นั้นเพื่อหยุด', 'warn');
+      return;
+    }
+    audio.ensure();
+    Object.assign(macroRun, { id: m.id, step: 0, cancel: false });
+    renderMacros();
+    try {
+      for (let i = 0; i < m.steps.length && !macroRun.cancel; i++) {
+        macroRun.step = i;
+        paintMacroProgress(m);
+        try { await macroStep(m.steps[i]); } catch (e) { console.warn('macro step', e); }
+      }
+    } finally {
+      macroRun.id = null;
+      renderMacros();
+    }
+  }
+  // เริ่มเองตามเวลา (ครั้งเดียวต่อวัน ขณะเปิดแอปอยู่)
+  function macroClock(now) {
+    const hm = `${pad2(now.getHours())}:${pad2(now.getMinutes())}`, day = now.toDateString();
+    for (const m of macros) {
+      if (m.at && m.at === hm && m.ranOn !== day) { m.ranOn = day; show.autosave(true); toast(`เริ่ม Macro “${m.name}” ตามเวลา ${m.at}`, 'info', 4000); runMacro(m); }
+    }
+  }
+  const macroLabel = st => {
+    const [label, arg] = MACRO_ACTIONS[st.a] || ['?', ''];
+    const v = st.v;
+    const what = arg === 'input' || arg === 'media' ? byId(v)?.name || '—' : arg === 'ovl' ? `ช่อง ${+v + 1}` : arg === 'effect' ? String(v).toUpperCase()
+      : arg === 'audio' ? (v === 'master' ? 'Master' : macroChannel(v)?.name || byId(v)?.name || '—') : arg === 'secs' ? `${v} วินาที` : '';
+    return what ? `${label}: ${what}` : label;
+  };
+  function renderMacros() {
+    const box = $('#macro-list');
+    if (!box) return;
+    box.innerHTML = macros.length ? macros.map((m, i) => `
+      <div class="macro-row ${macroRun.id === m.id ? 'is-running' : ''}" data-macro="${m.id}">
+        <button type="button" class="macro-run" title="${esc(m.steps.map(macroLabel).join(' → ') || 'ยังไม่มีขั้นตอน')}">
+          <b>${esc(m.name)}</b><small>${m.steps.length} ขั้นตอน${m.key ? ` · ${m.key}` : ''}${m.at ? ` · เริ่มเอง ${m.at}` : ''}${i < 8 ? ` · MIDI Macro ${i + 1}` : ''}</small>
+          <span class="macro-progress"></span></button>
+        <button type="button" class="mini macro-edit" title="แก้ไข Macro">${icon('edit')}</button>
+      </div>`).join('') : '<p class="note">ยังไม่มี Macro — สร้างเพื่อทำหลายอย่างในปุ่มเดียว เช่น “เปิดรายการ”: โลโก้ขึ้น → เริ่มบันทึก → เปลี่ยนเป็นกล้อง 1 แบบ AUTO</p>';
+    const m = macros.find(x => x.id === macroRun.id);
+    if (m) paintMacroProgress(m);
+  }
+  function paintMacroProgress(m) {
+    const el = $(`.macro-row[data-macro="${m.id}"] .macro-progress`);
+    if (el) el.style.width = `${Math.round((macroRun.step + 1) / Math.max(1, m.steps.length) * 100)}%`;
+  }
+  function bindMacroPane() {
+    renderMacros();
+    $('#macro-add').addEventListener('click', () => openMacroDialog(null));
+    $('#macro-list').addEventListener('click', e => {
+      const row = e.target.closest('.macro-row');
+      const m = row && macros.find(x => x.id === row.dataset.macro);
+      if (!m) return;
+      if (e.target.closest('.macro-edit')) openMacroDialog(m);
+      else if (e.target.closest('.macro-run')) runMacro(m);
+    });
+  }
+  async function openMacroDialog(m) {
+    const draft = m ? { ...m, steps: m.steps.map(st => ({ ...st })) } : { id: uid(), name: `Macro ${macros.length + 1}`, key: '', at: '', steps: [{ a: 'auto', v: '' }] };
+    const opts = arg => {
+      if (arg === 'input') return inputs.map((x, i) => [x.id, `${i + 1}. ${x.name}`]);
+      if (arg === 'media') return inputs.filter(x => x.type === 'media' || x.type === 'playlist').map(x => [x.id, x.name]);
+      if (arg === 'ovl') return ovl.map((c, i) => [String(i), `ช่อง ${c.n}${byId(c.inputId) ? ` (${byId(c.inputId).name})` : ''}`]);
+      if (arg === 'effect') return TRANSITIONS.map(t => [t, t.toUpperCase()]);
+      if (arg === 'audio') return [['master', 'Master'], ...audio.channels.map(c => [c.kind === 'mic' ? 'mic:' + c.micId : c.inputId, c.name]).filter(([k]) => k && k !== 'mic:undefined')];
+      return [];
+    };
+    const rowHtml = (st, i) => {
+      const arg = MACRO_ACTIONS[st.a][1], list = opts(arg);
+      if (arg && arg !== 'secs' && !list.some(([k]) => k === st.v)) st.v = list[0] ? list[0][0] : '';
+      return `<div class="mstep" data-i="${i}"><span class="mstep-n">${i + 1}</span>
+        <select class="select" data-k="a">${Object.entries(MACRO_ACTIONS).map(([k, [l]]) => `<option value="${k}" ${k === st.a ? 'selected' : ''}>${l}</option>`).join('')}</select>
+        ${arg === 'secs' ? `<input class="input mono" data-k="v" type="number" min="0.1" max="3600" step="0.1" value="${st.v || 1}">`
+          : arg ? `<select class="select" data-k="v">${list.map(([k, l]) => `<option value="${esc(k)}" ${k === st.v ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>` : '<span></span>'}
+        <span class="mstep-btns"><button type="button" class="mini" data-mv="-1" title="ขึ้น">↑</button><button type="button" class="mini" data-mv="1" title="ลง">↓</button><button type="button" class="mini danger" data-rm title="ลบขั้นตอน">✕</button></span></div>`;
+    };
+    const r = await dialog({
+      title: m ? `แก้ไข Macro — ${m.name}` : 'สร้าง Macro',
+      wide: true,
+      body: `
+        <div class="field-row">
+          <label class="field"><span>ชื่อ</span><input name="mname" class="input" maxlength="40" value="${esc(draft.name)}"></label>
+          <label class="field"><span>ปุ่มลัด</span><select name="mkey" class="select">${MACRO_KEYS.map(k => `<option value="${k}" ${k === draft.key ? 'selected' : ''}>${k || '— ไม่มี —'}</option>`).join('')}</select></label>
+          <label class="field"><span>เริ่มเองเวลา (ไม่บังคับ)</span><input name="mat" class="input mono" type="time" value="${draft.at}"></label>
+        </div>
+        <div class="field"><span>ขั้นตอน (ทำตามลำดับ)</span><div class="msteps"></div>
+          <button type="button" class="btn btn-sm mstep-add">+ เพิ่มขั้นตอน</button></div>
+        <p class="note">กด Macro อีกครั้งระหว่างทำงาน = หยุด · “รอ” ใช้เว้นจังหวะ เช่น โลโก้ขึ้น → รอ 3 วินาที → ตัดเข้ากล้อง · Macro 1–8 ตั้งปุ่ม MIDI ได้ที่ ตั้งค่า → ควบคุม · เวลาเริ่มเองทำงานเมื่อเปิดแอปค้างไว้</p>`,
+      actions: [...(m ? [{ label: 'ลบ Macro', value: 'delete' }] : []), { label: 'ยกเลิก' }, { label: 'บันทึก', primary: true, value: 'save' }],
+      onOpen(modal) {
+        const box = $('.msteps', modal);
+        const paint = () => { box.innerHTML = draft.steps.map(rowHtml).join('') || '<p class="note">ยังไม่มีขั้นตอน</p>'; };
+        paint();
+        box.addEventListener('change', e => {
+          const row = e.target.closest('.mstep'), st = row && draft.steps[+row.dataset.i];
+          if (!st) return;
+          if (e.target.dataset.k === 'a') { st.a = e.target.value; st.v = st.a === 'wait' ? 1 : ''; paint(); }
+          else st.v = e.target.type === 'number' ? +e.target.value : e.target.value;
+        });
+        box.addEventListener('click', e => {
+          const row = e.target.closest('.mstep');
+          if (!row) return;
+          const i = +row.dataset.i;
+          if (e.target.closest('[data-rm]')) { draft.steps.splice(i, 1); paint(); }
+          const mv = e.target.closest('[data-mv]');
+          if (mv) { const j = i + +mv.dataset.mv; if (j >= 0 && j < draft.steps.length) { [draft.steps[i], draft.steps[j]] = [draft.steps[j], draft.steps[i]]; paint(); } }
+        });
+        $('.mstep-add', modal).addEventListener('click', () => { if (draft.steps.length < 60) { draft.steps.push({ a: 'wait', v: 2 }); paint(); } });
+      }
+    });
+    if (r?.value === 'delete') {
+      if (macroRun.id === m.id) macroRun.cancel = true;
+      macros.splice(macros.indexOf(m), 1);
+      renderMacros();
+      toast(`ลบ Macro “${m.name}” แล้ว`);
+      return;
+    }
+    if (r?.value !== 'save') return;
+    const f = r.form;
+    if (f.mkey.value && macros.some(x => x.id !== draft.id && x.key === f.mkey.value)) { toast(`ปุ่ม ${f.mkey.value} ใช้กับ Macro อื่นแล้ว`, 'warn'); return; }
+    const [clean] = sanitizeMacros([{ ...draft, name: f.mname.value.trim() || draft.name, key: f.mkey.value, at: f.mat.value }]);
+    if (m) Object.assign(m, clean); else macros.push(clean);
+    renderMacros();
+    show.autosave(true);
   }
 
   function addVizInput() {
@@ -6114,6 +6313,7 @@ onmessage = async e => {
   function tickClock() {
     updateCardResolutions();
     const now = new Date();
+    macroClock(now);
     $('#clock').textContent = `${pad2(now.getHours())}:${pad2(now.getMinutes())}:${pad2(now.getSeconds())}`;
     $('#onair-timer').textContent = onAirSince ? fmtDuration(Date.now() - onAirSince) : '00:00:00';
     if (streamer.state === 'live') {
@@ -6194,6 +6394,7 @@ onmessage = async e => {
     }));
 
     $('#inputs-grid').addEventListener('click', onGridClick);
+    bindMacroPane();
 
     // มือถือ: แท็บล่าง และปุ่ม "หยุดไลฟ์…" บนแจ้งเตือนของ Android (MainActivity เรียก WebMix.nativeAction)
     setMobileView(['switch', 'audio', 'graphics'].includes(store.get('mview', 'switch')) ? store.get('mview', 'switch') : 'switch');
@@ -6256,6 +6457,9 @@ onmessage = async e => {
         e.preventDefault();
         return;
       }
+      // Macro ที่ตั้งปุ่ม F1–F12 ไว้
+      const fm = /^F([1-9]|1[0-2])$/.test(e.key) && macros.find(m => m.key === e.key);
+      if (fm) { e.preventDefault(); runMacro(fm); return; }
       // รีโมตพรีเซนต์ (ส่ง Page Up/Down หรือลูกศร) — เปลี่ยนหน้าสไลด์ที่อยู่บน Program (ถ้าไม่มี ใช้ตัวใน Preview)
       const slideKey = { PageDown: 1, ArrowRight: 1, PageUp: -1, ArrowLeft: -1 }[e.key];
       if (slideKey && slideStep(slideKey)) { e.preventDefault(); return; }
@@ -6330,6 +6534,7 @@ onmessage = async e => {
         overlays: { pip: overlays.pip.sourceId, key: overlays.key.sourceId },
         // ช่อง Overlay 1–8: Input ที่ผูกไว้และเอฟเฟกต์ (ไม่จำสถานะขึ้นจอ — เปิดหน้าใหม่แล้วไม่มีอะไรขึ้นจอเอง)
         overlayChannels: ovl.map(c => ({ inputId: c.inputId, effect: c.effect, duration: c.duration })),
+        macros: macros.map(m => ({ ...m, steps: m.steps.map(st => ({ ...st })) })),
         audio: {
           master: { db: audio.masterStrip.db === -Infinity ? null : audio.masterStrip.db, muted: audio.masterStrip.muted },
           inputs: Object.fromEntries(audio.channels.filter(c => c.inputId).map(c => [c.inputId, chan(c)])),
@@ -6368,6 +6573,8 @@ onmessage = async e => {
           made.data = { url: String(raw.data.url), header: raw.data.header !== false, row: Math.max(0, +raw.data.row || 0), rows: [], error: '', fetchedAt: 0 };
         }
       }
+      macros.splice(0, macros.length, ...sanitizeMacros(data.macros));
+      renderMacros();
       if (Array.isArray(data.overlayChannels)) {
         data.overlayChannels.slice(0, OVL_COUNT).forEach((c, i) => {
           if (!c) return;
@@ -6683,7 +6890,7 @@ onmessage = async e => {
     $$('#seg-cardsize button').forEach(b => { b.classList.toggle('is-active', b.dataset.size === cardSize()); b.addEventListener('click', () => setCardSize(b.dataset.size)); });
 
     // สำหรับดีบัก/ทดสอบอัตโนมัติ
-    window.webmix = { playlist, dataSources, timerControl, multiview, renderer, gpu, setRenderer: v => { settings.renderer = v; renderer.resolve(); updateStatus(); }, show, ovl, setChannel, toggleInputOverlay, useRecFolder: dir => { recFolder = dir; }, inputs, state, settings, overlays, audio, rec, iso, stinger, replayCapture, slideGo, midi, checkAppUpdate, abr: { state: abr, decide: abrDecide, apply: abrApply, tick: abrTick }, streamer, wireless, cut, autoTransition, setPreview, tr, ftb };
+    window.webmix = { playlist, dataSources, timerControl, multiview, renderer, gpu, setRenderer: v => { settings.renderer = v; renderer.resolve(); updateStatus(); }, show, ovl, setChannel, toggleInputOverlay, useRecFolder: dir => { recFolder = dir; }, inputs, state, settings, overlays, audio, rec, iso, stinger, replayCapture, slideGo, midi, checkAppUpdate, macros, runMacro, abr: { state: abr, decide: abrDecide, apply: abrApply, tick: abrTick }, streamer, wireless, cut, autoTransition, setPreview, tr, ftb };
   }
 
   boot();
