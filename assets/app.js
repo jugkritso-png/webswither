@@ -4274,7 +4274,9 @@
   async function openRecordingSink(name) {
     if (recFolder && recFolder.native) {
       try {
-        return { kind: 'folder', label: recFolder.name, writable: await desktop.createFile(name, recFolder.name) };
+        const writable = await desktop.createFile(name, recFolder.name);
+        recMark(name, 'folder', recFolder.name);
+        return { kind: 'folder', label: recFolder.name, writable };
       } catch (e) { toast('เขียนไฟล์ลงโฟลเดอร์ไม่ได้: ' + e, 'warn'); }
     }
     if (recFolder && !recFolder.native) {
@@ -4283,7 +4285,9 @@
         if (perm !== 'granted') perm = await recFolder.requestPermission({ mode: 'readwrite' });
         if (perm === 'granted') {
           const fh = await recFolder.getFileHandle(name, { create: true });
-          return { kind: 'folder', label: recFolder.name, writable: await fh.createWritable(), handle: fh };
+          const writable = await fh.createWritable();
+          recMark(name, 'folder', recFolder.name);
+          return { kind: 'folder', label: recFolder.name, writable, handle: fh };
         }
         toast('ไม่ได้รับสิทธิ์เขียนโฟลเดอร์บันทึก — ใช้พื้นที่ชั่วคราวแล้วดาวน์โหลดแทน', 'warn');
       } catch (e) { toast('เขียนไฟล์ลงโฟลเดอร์ไม่ได้: ' + e.message, 'warn'); }
@@ -4292,10 +4296,114 @@
       try {
         const root = await navigator.storage.getDirectory();
         const fh = await root.getFileHandle(name, { create: true });
-        return { kind: 'opfs', label: 'ดิสก์', writable: await fh.createWritable(), handle: fh, root };
+        // เขียนตรงลงไฟล์ผ่าน worker (ข้อมูลอยู่บนดิสก์ทันที กู้ได้ถ้าเบราว์เซอร์ปิดกะทันหัน) — ไม่ได้ค่อยใช้ createWritable
+        let writable;
+        try { writable = await opfsDirectWritable(name); } catch (e) { writable = await fh.createWritable(); }
+        recMark(name, 'opfs', 'ดิสก์');
+        return { kind: 'opfs', label: 'ดิสก์', writable, handle: fh, root };
       } catch (e) {}
     }
     return { kind: 'memory', label: 'RAM', chunks: [] };
+  }
+
+  /* ---- กู้งานเมื่อแอป/เบราว์เซอร์ปิดกะทันหัน ----
+     createWritable เก็บข้อมูลไว้ในไฟล์ชั่วคราวจนกว่าจะปิดไฟล์ — ถ้าเบราว์เซอร์ล่มระหว่างบันทึก ข้อมูลหายทั้งไฟล์
+     จึงบันทึกลง OPFS ผ่าน worker ที่ใช้ FileSystemSyncAccessHandle (เขียนลงไฟล์จริงทันที flush ทุก ~4 วินาที)
+     ไฟล์ที่กำลังบันทึกจดชื่อไว้ใน localStorage — เปิดหน้าใหม่แล้วยังมีชื่อค้าง = ปิดไม่สำเร็จ → เสนอให้บันทึกไฟล์ที่กู้ได้ */
+  const OPFS_WORKER_SRC = `let h = null, n = 0;
+onmessage = async e => {
+  const m = e.data;
+  try {
+    if (m.op === 'open') { const root = await navigator.storage.getDirectory(); const fh = await root.getFileHandle(m.name, { create: true }); h = await fh.createSyncAccessHandle(); h.truncate(0); }
+    else if (m.op === 'append') { h.write(new Uint8Array(m.data), { at: h.getSize() }); if (++n % 4 === 0) h.flush(); }
+    else if (m.op === 'patch') h.write(new Uint8Array(m.data), { at: m.position });
+    else if (m.op === 'close') { h.flush(); h.close(); h = null; }
+    postMessage({ id: m.id, ok: true });
+  } catch (err) { postMessage({ id: m.id, ok: false, error: String(err && err.message || err) }); }
+};`;
+  let opfsWorkerUrl = null;
+  function opfsDirectWritable(name) {
+    if (typeof Worker === 'undefined') return Promise.reject(new Error('no worker'));
+    opfsWorkerUrl = opfsWorkerUrl || URL.createObjectURL(new Blob([OPFS_WORKER_SRC], { type: 'text/javascript' }));
+    const w = new Worker(opfsWorkerUrl), pend = new Map();
+    let seq = 0;
+    w.onmessage = e => { const p = pend.get(e.data.id); if (!p) return; pend.delete(e.data.id); e.data.ok ? p.res() : p.rej(new Error(e.data.error)); };
+    w.onerror = () => { for (const p of pend.values()) p.rej(new Error('worker error')); pend.clear(); };
+    const call = (op, extra = {}, transfer = []) => new Promise((res, rej) => { const id = ++seq; pend.set(id, { res, rej }); w.postMessage({ id, op, ...extra }, transfer); });
+    const buf = async d => d instanceof Blob ? d.arrayBuffer() : ArrayBuffer.isView(d) ? d.buffer.slice(d.byteOffset, d.byteOffset + d.byteLength) : d;
+    return call('open', { name }).then(() => ({
+      direct: true,
+      async write(chunk) {
+        if (chunk && chunk.type === 'write') { const b = await buf(chunk.data); return call('patch', { data: b, position: chunk.position }, [b]); }
+        const b = await buf(chunk);
+        return call('append', { data: b }, [b]);
+      },
+      async close() { await call('close'); w.terminate(); }
+    }), e => { w.terminate(); throw e; });
+  }
+  const recMarks = () => { const m = store.get('rec-open', []); return Array.isArray(m) ? m : []; };
+  function recMark(name, kind, where) { store.set('rec-open', [...recMarks().filter(x => x.name !== name), { name, kind, where, at: Date.now() }]); }
+  function recUnmark(name) { store.set('rec-open', recMarks().filter(x => x.name !== name)); }
+  // เปิดหน้าใหม่: ไฟล์ที่ค้าง (ยังไม่ได้ปิด) จากครั้งก่อน
+  async function recoverRecordings() {
+    const marks = recMarks().filter(m => m && typeof m.name === 'string' && /^WebMix-[\w.-]+$/.test(m.name));
+    if (!marks.length) return;
+    const found = [];
+    for (const m of marks) {
+      if (m.kind === 'opfs' && canUseOpfs) {
+        try {
+          const root = await navigator.storage.getDirectory();
+          const file = await (await root.getFileHandle(m.name)).getFile();
+          if (file.size > 0) found.push({ ...m, file });
+          else recUnmark(m.name);
+        } catch (e) { recUnmark(m.name); }
+      } else if (m.kind === 'folder') {
+        found.push(m);
+      } else recUnmark(m.name);
+    }
+    const local = found.filter(f => f.file), folder = found.filter(f => !f.file);
+    if (folder.length) {
+      const native = desktop && !desktop.mobile;
+      toast(`การบันทึกครั้งก่อนหยุดกะทันหัน: ${folder.map(f => f.name).join(', ')} อยู่ในโฟลเดอร์ “${folder[0].where}”${native ? ' — เปิดดูได้ (เลื่อนเวลาอาจไม่ได้ เพราะไฟล์ไม่ได้ปิดตามปกติ)' : ' — ถ้าไม่เห็นไฟล์ ให้หาไฟล์ชื่อเดียวกันที่ลงท้าย .crswap แล้วเปลี่ยนนามสกุลเป็น .webm'}`, 'warn', 15000);
+      folder.forEach(f => recUnmark(f.name));
+    }
+    if (!local.length) return;
+    const total = local.reduce((a, f) => a + f.file.size, 0);
+    toast(`กู้ไฟล์บันทึกที่ค้างจากครั้งก่อนได้ ${local.length} ไฟล์ (${fmtBytes(total)}) — เบราว์เซอร์/แอปปิดกะทันหันระหว่างบันทึก`, 'warn', 60000, {
+      label: 'บันทึกไฟล์ที่กู้ได้',
+      run: async () => {
+        for (const f of local) {
+          const type = /\.mp4$/.test(f.name) ? 'video/mp4' : 'video/webm';
+          // WebM: เติมความยาว + จุดเลื่อนเวลา (ไฟล์ไม่เกิน 1.5 GB — ใหญ่กว่านั้นบันทึกตามเดิม เปิดดูได้แต่เลื่อนเวลาอาจไม่ได้)
+          const out = type === 'video/webm' && f.file.size < 1.5e9 ? await seekableClip(f.file, type) : f.file;
+          downloadBlob(out, f.name.replace(/(\.\w+)$/, '-recovered$1'));
+          recUnmark(f.name);
+          navigator.storage.getDirectory().then(root => setTimeout(() => root.removeEntry(f.name).catch(() => {}), 180000)).catch(() => {});
+        }
+        toast('บันทึกไฟล์ที่กู้ได้แล้ว (ชื่อลงท้าย -recovered)', 'success', 6000);
+      }
+    });
+  }
+
+  // ไลฟ์ค้าง: จดปลายทางที่กำลังไลฟ์ไว้ — เปิดหน้าใหม่หลังแอปปิดกะทันหัน ถามว่าจะไลฟ์ต่อไหม
+  function liveMark() {
+    const ids = [...streamer.dests.entries()].filter(([, st]) => st.state !== 'stopped').map(([id]) => id);
+    if (ids.length && !streamer.testing) store.set('live-open', { ids, at: streamer.start || Date.now() });
+  }
+  async function offerLiveResume() {
+    const m = store.get('live-open', null);
+    store.set('live-open', null);
+    if (!m || !Array.isArray(m.ids) || Date.now() - (+m.at || 0) > 6 * 3600 * 1000) return;
+    const list = settings.destinations.filter(d => m.ids.includes(d.id));
+    if (!list.length) return;
+    const t = new Date(+m.at);
+    const r = await dialog({
+      title: 'ไลฟ์ครั้งก่อนหยุดกะทันหัน',
+      body: `<p class="modal-text">แอปถูกปิดระหว่างไลฟ์ (เริ่มเมื่อ ${pad2(t.getHours())}:${pad2(t.getMinutes())}) ไปยัง ${list.map(d => `<b>${esc(destLabel(d))}</b>`).join(', ')}</p>
+        <p class="note">ตรวจกล้องและเสียงให้พร้อมก่อน แล้วกด “ไลฟ์ต่อ” — ปลายทางเดิมจะเริ่มส่งภาพอีกครั้ง (YouTube / Facebook ส่วนใหญ่ต่อเข้าไลฟ์เดิมได้ถ้าไม่เกินไม่กี่นาที)</p>`,
+      actions: [{ label: 'ไม่ต้อง' }, { label: 'ไลฟ์ต่อ', primary: true, value: 'go' }]
+    });
+    if (r?.value === 'go') startDestinations(list);
   }
 
   // ลบไฟล์ชั่วคราวที่ค้างจากครั้งก่อน (เกิน 1 วัน) ใน OPFS
@@ -4306,7 +4414,8 @@
       for await (const [name, h] of root.entries()) {
         if (h.kind !== 'file' || !/^WebMix-/.test(name)) continue;
         const f = await h.getFile();
-        if (Date.now() - f.lastModified > 86400000) await root.removeEntry(name);
+        const keep = recMarks().some(m => m.name === name) ? 7 * 86400000 : 86400000;
+        if (Date.now() - f.lastModified > keep) await root.removeEntry(name);
       }
     } catch (e) {}
   }
@@ -4375,6 +4484,7 @@
           toast(`บันทึกไฟล์ ${fmtBytes(rec.bytes)} แล้ว`, 'success');
         } else {
           await sink.writable.close();
+          recUnmark(name);
           if (sink.kind === 'folder') {
             toast(`บันทึก ${name} (${fmtBytes(rec.bytes)}) ลงโฟลเดอร์ “${sink.label}” แล้ว`, 'success', 6000);
           } else {
@@ -4426,6 +4536,7 @@
         if (sink.kind === 'memory') { downloadBlob(new Blob(sink.chunks, { type }), name); sink.chunks = []; }
         else {
           await sink.writable.close();
+          recUnmark(name);
           if (sink.kind !== 'folder') {
             downloadBlob(await sink.handle.getFile(), name);
             setTimeout(() => sink.root.removeEntry(name).catch(() => {}), 180000);
@@ -4583,6 +4694,7 @@
 
   function finishStream(byUser, wasLive, reason) {
     cancelReconnect();
+    store.set('live-open', null);
     abrReset(true);
     streamer.abrSwitch = false;
     Object.assign(streamer, { active: false, state: 'idle', ws: null, recorder: null, kbps: 0, queue: [], encoder: null, reconnecting: false, attempt: 0 });
@@ -4787,6 +4899,7 @@
         else if (st.state === 'stopped') toast(`${label}: หยุดสตรีมแล้ว`, 'info', 2500);
       }
       streamer.dests.set(st.id, { state: st.state, message: st.message || '', kbps: st.kbps || 0, lag: +st.lag || 0 });
+      if (st.state === 'live' && (!prev || prev.state !== 'live')) liveMark();
     }
     // ไม่เหลือปลายทางที่ทำงานอยู่ → ปิดการเชื่อมต่อ Gateway เพื่อไม่ส่งข้อมูลเปล่า ๆ
     if (streamer.ws && streamer.active && !destCounts().active) streamer.ws.close(1000, 'all destinations stopped');
@@ -6559,7 +6672,8 @@
 
     wireless.init();
     loadRecFolder();
-    cleanupOpfs();
+    recoverRecordings().finally(cleanupOpfs);
+    setTimeout(() => { if (!shouldOnboard()) offerLiveResume(); }, 1500);
     tickClock();
     setInterval(tickClock, 1000);
     requestAnimationFrame(rafLoop);
