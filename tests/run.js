@@ -10,11 +10,12 @@ const http = require('http');
 const { spawn, spawnSync } = require('child_process');
 const { ROOT, WORK } = require('./lib');
 
-const ALL = ['switcher', 'multistream', 'mobile', 'srt-output', 'srt-input', 'uhd-4k', 'reconnect', 'record-disk', 'audio-fx', 'show', 'gateway-admin', 'overlay', 'gpu', 'guest', 'multiview', 'graphics', 'playlist', 'desktop', 'wcrec', 'onboarding', 'easy-ui', 'scenes', 'rec-backup', 'vertical', 'color'];
+const ALL = ['switcher', 'multistream', 'mobile', 'srt-output', 'srt-input', 'uhd-4k', 'reconnect', 'record-disk', 'audio-fx', 'show', 'gateway-admin', 'overlay', 'gpu', 'guest', 'multiview', 'graphics', 'playlist', 'desktop', 'wcrec', 'onboarding', 'easy-ui', 'scenes', 'rec-backup', 'vertical', 'color',
+  'transitions', 'replay', 'gate', 'midi', 'abr', 'slides', 'viz', 'update', 'recovery', 'macro', 'procam', 'layoutdrag', 'audiosrc'];
 const selected = process.argv.slice(2).length ? process.argv.slice(2) : ALL;
 const SUITE_TIMEOUT = 6 * 60 * 1000;
 
-const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.svg': 'image/svg+xml', '.json': 'application/json', '.txt': 'text/plain' };
+const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.svg': 'image/svg+xml', '.json': 'application/json', '.txt': 'text/plain', '.wav': 'audio/wav' };
 
 function ffmpeg(args) {
   const r = spawnSync('ffmpeg', ['-loglevel', 'error', '-y', ...args], { stdio: 'inherit' });
@@ -42,6 +43,10 @@ function makeFixtures() {
     const xref = pdf.length;
     pdf += `xref\n0 ${objs.length + 1}\n0000000000 65535 f \n${offs.map(o => `${String(o).padStart(10, '0')} 00000 n \n`).join('')}trailer\n<< /Size ${objs.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
     fs.writeFileSync(f('slides.pdf'), pdf);
+  }
+  // แหล่งเสียง: เพลงสองไฟล์ (−6 dBFS) และเสียงเอฟเฟกต์สั้น
+  for (const [name, hz, sec] of [['song1', 440, 3], ['song2', 660, 3], ['clap', 880, 0.6]]) {
+    if (!fs.existsSync(f(name + '.wav'))) ffmpeg(['-f', 'lavfi', '-i', `sine=frequency=${hz}:duration=${sec}:sample_rate=48000,volume=0.5`, '-ac', '2', f(name + '.wav')]);
   }
   if (!fs.existsSync(f('loud.webm'))) ffmpeg(['-f', 'lavfi', '-i', 'testsrc2=size=640x360:rate=30', '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000,volume=7', '-t', '20', '-c:v', 'libvpx', '-b:v', '500k', '-c:a', 'libopus', '-b:a', '128k', '-shortest', f('loud.webm')]);
 }

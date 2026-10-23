@@ -67,7 +67,7 @@ const px = (page, sel, x, y) => page.evaluate(([sel, x, y]) => { const c = docum
   await p.waitForSelector('.modal select[name=mic]'); await p.selectOption('.modal select[name=mic]', { index: 1 });
   await p.click('.modal-foot .btn-primary'); await p.waitForTimeout(600);
   s = await st(); ok('camera with audio -> channel', s.n === 7 && s.ch === 1, JSON.stringify(s));
-  await p.click('[data-action=add-mic]'); await p.waitForSelector('.modal select[name=mic]'); await p.click('.modal-foot .btn-primary'); await p.waitForTimeout(600);
+  await p.click('[data-action=add-audio]'); await p.click('.menu button:has-text("ไมโครโฟน")'); await p.waitForSelector('.modal select[name=mic]'); await p.click('.modal-foot .btn-primary'); await p.waitForTimeout(600);
   s = await st(); ok('add mic', s.ch === 2, JSON.stringify(s));
   // video file + image via filechooser
   let fc = p.waitForEvent('filechooser'); await p.click('[data-action=add-menu]'); await p.click('.menu button:has-text("ไฟล์วิดีโอ")'); await (await fc).setFiles(S + '/clip.webm');

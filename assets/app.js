@@ -273,15 +273,14 @@
       color: TITLE_COLORS.includes(v.color) ? v.color : '#3b82f6', bg: VIZ_BG[v.bg] ? v.bg : 'none',
       imageId: typeof v.imageId === 'string' ? v.imageId.slice(0, 40) : '', sens: clamp(+v.sens || 1, 0.3, 3) };
   }
-  // ช่องเสียงที่เลือก: 'master' · inputId ของแหล่งภาพ · 'mic:<micId>'
+  // ช่องเสียงที่เลือก: 'master' · inputId ของแหล่งภาพ · 'mic:<micId>' · 'src:<srcId>' (ดู chanKey)
   function vizAnalyser(v) {
     if (!audio.ctx) return null;
     if (v.source === 'master') return audio.analyser;
-    const ch = v.source.startsWith('mic:') ? audio.channels.find(c => c.kind === 'mic' && 'mic:' + c.micId === v.source) : audio.channels.find(c => c.inputId === v.source);
+    const ch = chanByKey(v.source);
     return ch ? ch.analyser : null;
   }
-  const vizSourceName = v => v.source === 'master' ? 'Master'
-    : v.source.startsWith('mic:') ? (audio.channels.find(c => c.kind === 'mic' && 'mic:' + c.micId === v.source)?.name || 'ไมค์') : (byId(v.source)?.name || '—');
+  const vizSourceName = v => v.source === 'master' ? 'Master' : chanByKey(v.source)?.name || byId(v.source)?.name || (v.source.startsWith('mic:') ? 'ไมค์' : '—');
   const vizBuf = { freq: new Uint8Array(512), time: new Float32Array(1024) };
   function vizData(inp) {
     const st = inp.vizState || (inp.vizState = { frame: -1, bands: new Float32Array(VIZ_BANDS), wave: new Float32Array(256), level: 0 });
@@ -1617,8 +1616,9 @@
     }
   }
 
-  async function openMicById(micId, label, clean) {
-    const open = id => navigator.mediaDevices.getUserMedia({ audio: { deviceId: { exact: id }, echoCancellation: clean, noiseSuppression: clean, autoGainControl: clean } });
+  const micConstraints = (id, clean, stereo) => ({ audio: { deviceId: { exact: id }, echoCancellation: clean, noiseSuppression: clean, autoGainControl: clean, ...(stereo ? { channelCount: { ideal: 2 } } : {}) } });
+  async function openMicById(micId, label, clean, stereo) {
+    const open = id => navigator.mediaDevices.getUserMedia(micConstraints(id, clean, stereo));
     try { return { stream: await open(micId), micId }; } catch (e) {
       if (e.name !== 'OverconstrainedError' && e.name !== 'NotFoundError') throw e;
       const id = await deviceByLabel('audioinput', label);
@@ -1801,24 +1801,523 @@
         <label class="field"><span>ไมโครโฟน / ออดิโออินเทอร์เฟซ</span><select name="mic" class="select">
           ${mics.map((d, i) => `<option value="${esc(d.deviceId)}">${esc(d.label || 'Microphone ' + (i + 1))}</option>`).join('')}
         </select></label>
+        <label class="field"><span>ช่องสัญญาณ</span><select name="chan" class="select">
+          <option value="all">ทุกช่อง (ปกติ)</option>
+          <option value="0">ช่อง 1 / ซ้าย เท่านั้น</option>
+          <option value="1">ช่อง 2 / ขวา เท่านั้น</option>
+          <option value="split">แยกช่อง 1 และ 2 เป็น 2 ช่องเสียง</option>
+        </select></label>
         <label class="check"><input type="checkbox" name="clean"> ลดเสียงสะท้อนและเสียงรบกวน (เหมาะกับไมค์โน้ตบุ๊ก/มือถือ)</label>
-        <p class="note">ไมค์มืออาชีพหรือมิกเซอร์ภายนอก แนะนำให้ปิดตัวเลือกนี้เพื่อคุณภาพเสียงที่ดีที่สุด</p>`,
+        <p class="note">ออดิโออินเทอร์เฟซที่เสียบไมค์ 2 ตัว (เช่น Focusrite 2i2, Behringer UMC) เลือก “แยกช่อง” แล้วปรับเสียงแต่ละไมค์ได้อิสระ ·
+          ไมค์มืออาชีพหรือมิกเซอร์ภายนอก แนะนำให้ปิดการลดเสียงรบกวนเพื่อคุณภาพเสียงที่ดีที่สุด (เลือกช่องแล้วจะปิดให้อัตโนมัติ)</p>`,
       actions: [{ label: 'ยกเลิก' }, { label: 'เพิ่มไมค์', primary: true, value: 'add' }]
     });
     if (result?.value !== 'add') return;
-    const f = result.form, clean = f.clean.checked;
+    const f = result.form, pick = f.chan.value, split = pick !== 'all';
+    // แยกช่องต้องได้เสียงสเตอริโอดิบ — การลดเสียงรบกวนของเบราว์เซอร์รวมเป็นโมโน
+    const clean = f.clean.checked && !split;
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: { deviceId: { exact: f.mic.value }, echoCancellation: clean, noiseSuppression: clean, autoGainControl: clean }
-      });
+      const stream = await navigator.mediaDevices.getUserMedia(micConstraints(f.mic.value, clean, split));
       const label = f.mic.options[f.mic.selectedIndex].text.replace(/\s*\([0-9a-f]{4}:[0-9a-f]{4}\)\s*$/i, '');
-      audio.addMic(stream, label.slice(0, 24), { micId: f.mic.value, micLabel: f.mic.options[f.mic.selectedIndex].text, clean });
-      toast(`เพิ่ม “${label}” แล้ว`, 'success');
+      const base = { micId: f.mic.value, micLabel: f.mic.options[f.mic.selectedIndex].text, clean };
+      const chans = pick === 'split' ? [0, 1] : pick === 'all' ? [null] : [+pick];
+      for (const c of chans) audio.addMic(stream, (c == null ? label : `${label.slice(0, 19).trimEnd()} CH${c + 1}`).slice(0, 24), { ...base, micChan: c });
+      const got = stream.getAudioTracks()[0]?.getSettings().channelCount;
+      if (split && got === 1 && chans.includes(1)) toast(`“${label}” ส่งเสียงมาช่องเดียว (โมโน) — ช่อง 2 จะไม่มีเสียง`, 'warn', 7000);
+      else toast(`เพิ่ม “${label}” แล้ว`, 'success');
     } catch (e) {
       toast('เปิดไมค์ไม่สำเร็จ: ' + e.message, 'error');
     }
   }
 
+  /* ------------------------------------------------------ audio sources */
+  // แหล่งเสียงที่ไม่มีภาพ อยู่ในมิกเซอร์เท่านั้น: ไมค์ · เสียงจากคอม/แท็บ · เครื่องเล่นเพลง · แผงเสียงเอฟเฟกต์ · สตรีมเสียงจาก URL · สัญญาณทดสอบ
+  // แต่ละช่องมี ch.src = { playing, toggle, next?, prev?, edit?, sub, progress, save } ให้แถบควบคุมใต้ช่องเสียงใช้ร่วมกัน
+  const chanKey = c => c.kind === 'mic' ? (c.micId ? `mic:${c.micId}${c.micChan != null ? '#' + c.micChan : ''}` : '') : c.srcId ? 'src:' + c.srcId : c.inputId || '';
+  const chanByKey = k => k === 'master' ? audio.masterStrip : k ? audio.channels.find(c => chanKey(c) === k) : null;
+  const audioChanOptions = () => audio.channels.map(c => [chanKey(c), c.name]).filter(([k]) => k);
+  const AUDIO_FILES = 'audio/*,.mp3,.wav,.m4a,.aac,.ogg,.opus,.flac';
+  const PAD_SLOTS = [0, 1, 2, 3, 4, 5, 6, 7];
+  const PAD_COLORS = ['#3b82f6', '#22c55e', '#f5a524', '#ef4444', '#a855f7', '#14b8a6', '#ec4899', '#64748b'];
+  const TONES = { k1: ['1 kHz (มาตรฐานตั้งระดับ)', 1000], a440: ['440 Hz', 440], k10: ['10 kHz', 10000], pink: ['Pink noise (เช็กลำโพง/EQ)', 0] };
+  const TONE_LEVELS = [-12, -18, -20];
+  const padChannel = () => audio.channels.find(c => c.kind === 'pad');
+  const fmtClock = sec => !isFinite(sec) || sec < 0 ? '--:--' : `${Math.floor(sec / 60)}:${String(Math.floor(sec % 60)).padStart(2, '0')}`;
+
+  const AUDIO_ADD = () => [['แหล่งเสียง', [
+    ['mic', 'ไมโครโฟน / ออดิโออินเทอร์เฟซ', 'ไมค์ USB มิกเซอร์ภายนอก แยกช่อง 1 / 2 ได้', openMicDialog],
+    ['monitor', 'เสียงจากคอม / แท็บ', 'เพลงจาก YouTube Spotify หรือเสียงโปรแกรมอื่น', addSystemAudio],
+    ['music', 'เครื่องเล่นเพลง', 'MP3 / WAV / M4A หลายไฟล์ เล่นต่อกัน วนซ้ำได้', () => pickFiles(AUDIO_FILES, files => addMusicPlayer(files))],
+    ['grid', 'แผงเสียงเอฟเฟกต์', '8 ปุ่ม เสียงปรบมือ จิงเกิล กดแล้วดังทันที', addSoundPad],
+    ['broadcast', 'วิทยุ / สตรีมเสียงจาก URL', 'สถานีวิทยุออนไลน์ Icecast / Shoutcast หรือไฟล์เสียงบนเว็บ', () => openAudioUrlDialog()],
+    ['bars', 'สัญญาณทดสอบ (Tone)', '1 kHz / Pink noise สำหรับตั้งระดับเสียงกับมิกเซอร์', () => openToneDialog()]]]];
+  function openAudioAddMenu(anchor) { openAddMenu(anchor, AUDIO_ADD(), 'เพิ่มแหล่งเสียง'); }
+
+  function addSourceChannel(node, kind, name, extra = {}) {
+    return audio.addChannel(node, { name: String(name || kind.toUpperCase()).slice(0, 24), kind, ...extra, srcId: extra.srcId || uid() });
+  }
+  function refreshStrip(ch) {
+    const ui = ch.ui?.src;
+    if (!ui) return;
+    const on = ch.src.playing();
+    if (ui.play) { ui.play.classList.toggle('is-on', on); ui.play.innerHTML = icon(on ? 'pause' : 'play'); ui.play.title = on ? 'หยุด' : 'เล่น'; }
+    ui.sub.textContent = ch.src.sub();
+    ui.sub.title = ch.src.sub() + (ch.src.edit ? ' — กดเพื่อตั้งค่า' : '');
+  }
+  function stripSourceHtml(ch) {
+    const s = ch.src;
+    return `<div class="strip-src">
+      <div class="strip-sub" ${s.edit ? 'data-tp="edit" role="button" tabindex="0"' : ''}></div>
+      ${s.progress ? '<div class="strip-prog"><span><i></i></span><b class="strip-time mono"></b></div>' : ''}
+      <div class="strip-tp">
+        ${s.prev ? `<button class="chip-btn" data-tp="prev" title="ก่อนหน้า / เริ่มเพลงใหม่">${icon('skip-back')}</button>` : ''}
+        ${s.toggle ? `<button class="chip-btn tp-play" data-tp="toggle" title="เล่น">${icon('play')}</button>` : ''}
+        ${s.next ? `<button class="chip-btn" data-tp="next" title="ถัดไป">${icon('skip-fwd')}</button>` : ''}
+        ${s.stop ? `<button class="chip-btn" data-tp="stop" title="หยุดทุกเสียง">${icon('stop')}</button>` : ''}
+        ${s.edit && !s.next ? `<button class="chip-btn" data-tp="edit" title="ตั้งค่า">${icon('edit')}</button>` : ''}
+        <button class="chip-btn rm" title="ลบช่องเสียงนี้">✕</button>
+      </div></div>`;
+  }
+  function bindStripSource(el, ch) {
+    ch.ui.src = { play: el.querySelector('[data-tp=toggle]'), sub: el.querySelector('.strip-sub'), bar: el.querySelector('.strip-prog i'), time: el.querySelector('.strip-time') };
+    el.querySelector('.strip-src').addEventListener('click', e => {
+      const b = e.target.closest('[data-tp]');
+      if (!b || !ch.src[b.dataset.tp]) return;
+      audio.ensure();
+      ch.src[b.dataset.tp]();
+      refreshStrip(ch);
+    });
+    refreshStrip(ch);
+  }
+  function stripSourceTick(ch) {
+    const ui = ch.ui?.src;
+    if (ch.kind === 'pad') padTick(ch);
+    if (!ui || !ch.src.progress) return;
+    const [pos, dur] = ch.src.progress();
+    if (ui.bar) ui.bar.style.width = `${dur > 0 && isFinite(dur) ? clamp(pos / dur, 0, 1) * 100 : 0}%`;
+    if (ui.time) ui.time.textContent = isFinite(dur) && dur > 0 ? `-${fmtClock(dur - pos)}` : pos > 0 ? fmtClock(pos) : '';
+    if (!!ui.play?.classList.contains('is-on') !== ch.src.playing()) refreshStrip(ch);
+  }
+
+  // เสียงจากคอม/แท็บ: ใช้ตัวแชร์หน้าจอของเบราว์เซอร์ เก็บเฉพาะเสียง (ไม่บันทึกกับโชว์ — ต้องเลือกใหม่ทุกครั้ง)
+  async function addSystemAudio() {
+    if (!navigator.mediaDevices?.getDisplayMedia) { toast('อุปกรณ์นี้จับเสียงจากคอมไม่ได้ — ใช้ Chrome หรือ Edge บนคอมพิวเตอร์', 'error', 6000); return; }
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }, systemAudio: 'include', selfBrowserSurface: 'exclude' });
+    } catch (e) {
+      if (e.name !== 'NotAllowedError' && e.name !== 'AbortError') toast('จับเสียงไม่สำเร็จ: ' + e.message, 'error');
+      return;
+    }
+    const surface = stream.getVideoTracks()[0]?.getSettings().displaySurface;
+    stream.getVideoTracks().forEach(t => t.stop());
+    const track = stream.getAudioTracks()[0];
+    if (!track) {
+      toast('ไม่ได้เสียงมาด้วย — ตอนเลือกให้ติ๊ก “แชร์เสียง” (Windows: แท็บหรือทั้งหน้าจอ · Mac: เลือกเป็นแท็บของ Chrome)', 'warn', 9000);
+      return;
+    }
+    if (!audio.ensure()) return;
+    const only = new MediaStream([track]);
+    const name = surface === 'browser' ? 'เสียงแท็บ' : surface === 'window' ? 'เสียงโปรแกรม' : 'เสียงคอม';
+    const ch = addSourceChannel(audio.ctx.createMediaStreamSource(only), 'sys', name, { stream: only });
+    ch.src = { playing: () => track.readyState === 'live', sub: () => track.readyState === 'live' ? 'กำลังรับเสียง' : 'หยุดแล้ว' };
+    renderMixer();
+    track.addEventListener('ended', () => {
+      if (!audio.channels.includes(ch)) return;
+      audio.remove(ch);
+      toast(`หยุดรับ “${ch.name}” แล้ว (หยุดแชร์จากเบราว์เซอร์)`, 'warn');
+    });
+    toast(`เพิ่ม “${name}” แล้ว — เสียงเข้ามิกเซอร์เท่านั้น ไม่ดังซ้ำออกลำโพง`, 'success');
+  }
+
+  // เครื่องเล่นเพลง: ไฟล์เสียงหลายไฟล์ เล่นต่อกัน · ไฟล์เก็บใน OPFS เปิดหน้าใหม่แล้วยังอยู่
+  function storeAudioFile(key, file) {
+    mediaStore.put(key, file).then(ok => { if (!ok) toast(`พื้นที่ในเบราว์เซอร์ไม่พอเก็บ “${file.name}” — เปิดหน้าใหม่แล้วต้องเพิ่มไฟล์นี้อีกครั้ง`, 'warn', 7000); });
+  }
+  function addMusicPlayer(files = [], saved = null) {
+    if (!audio.ensure()) return null;
+    const el = new Audio();
+    el.preload = 'auto';
+    const cfg = saved?.cfg || {};
+    const list = {
+      items: (Array.isArray(cfg.items) ? cfg.items : []).slice(0, 200).filter(it => it && typeof it.key === 'string').map(it => ({ key: it.key.slice(0, 60), name: String(it.name || 'เพลง').slice(0, 60) })),
+      index: Math.max(0, +cfg.index || 0), loop: ['all', 'one', 'off'].includes(cfg.loop) ? cfg.loop : 'all'
+    };
+    const n = audio.channels.filter(c => c.kind === 'player').length + 1;
+    const ch = addSourceChannel(audio.ctx.createMediaElementSource(el), 'player', saved?.name || (n > 1 ? `MUSIC ${n}` : 'MUSIC'), { srcId: saved?.srcId, restore: saved || undefined, el, list });
+    let url = '';
+    const load = async (i, play) => {
+      const it = list.items[i];
+      if (!it) return;
+      list.index = i;
+      if (!it.file) it.file = await mediaStore.get(it.key);
+      if (!audio.channels.includes(ch)) return;
+      if (!it.file) { toast(`ไม่พบไฟล์ “${it.name}” — ลบแล้วเพิ่มใหม่ได้ที่ปุ่ม ✎ ของ ${ch.name}`, 'warn', 6000); refreshStrip(ch); return; }
+      if (url) URL.revokeObjectURL(url);
+      el.src = url = URL.createObjectURL(it.file);
+      el.loop = list.loop === 'one';
+      refreshStrip(ch);
+      if (play) el.play().catch(() => {});
+    };
+    const step = d => { if (list.items.length) load((list.index + d + list.items.length) % list.items.length, !el.paused); };
+    el.addEventListener('ended', () => {
+      if (list.index + 1 < list.items.length) load(list.index + 1, true);
+      else if (list.loop === 'all' && list.items.length) load(0, true);
+      else refreshStrip(ch);
+    });
+    ch.src = {
+      playing: () => !el.paused,
+      toggle: () => { if (!el.paused) el.pause(); else if (el.src) el.play().catch(() => {}); else load(list.index, true); },
+      prev: () => { if (el.currentTime > 3) el.currentTime = 0; else step(-1); },
+      next: () => step(1),
+      edit: () => openPlayerDialog(ch),
+      sub: () => list.items[list.index]?.name || 'ยังไม่มีเพลง — กด ✎',
+      progress: () => [el.currentTime || 0, el.duration],
+      save: () => ({ items: list.items.map(it => ({ key: it.key, name: it.name })), index: list.index, loop: list.loop })
+    };
+    ch.addFiles = picked => {
+      for (const file of picked.slice(0, 200 - list.items.length)) {
+        const key = 'aud-' + uid();
+        storeAudioFile(key, file);
+        list.items.push({ key, name: baseName(file.name), file });
+      }
+      if (!el.src && list.items.length) load(list.index < list.items.length ? list.index : 0, false);
+      refreshStrip(ch);
+    };
+    ch.load = load;
+    ch.dispose = () => { el.pause(); el.removeAttribute('src'); el.load(); if (url) URL.revokeObjectURL(url); list.items.forEach(it => mediaStore.del(it.key)); };
+    if (list.index >= list.items.length) list.index = 0;
+    if (files.length) ch.addFiles(files);
+    else if (list.items.length) load(list.index, false);
+    renderMixer();
+    if (files.length) toast(`เพิ่ม ${ch.name} (${files.length} เพลง) แล้ว — กด ▶ ใต้ช่องเสียงเพื่อเล่น`, 'success');
+    return ch;
+  }
+  function openPlayerDialog(ch) {
+    const list = ch.list;
+    dialog({
+      title: `เครื่องเล่นเพลง — ${ch.name}`,
+      body: `
+        <label class="field"><span>ชื่อช่อง</span><input name="pname" class="input" maxlength="24" value="${esc(ch.name)}"></label>
+        <label class="field"><span>เมื่อเล่นจบ</span><select name="loop" class="select">
+          <option value="all" ${list.loop === 'all' ? 'selected' : ''}>เล่นต่อเพลงถัดไป วนทั้งรายการ</option>
+          <option value="one" ${list.loop === 'one' ? 'selected' : ''}>วนเพลงเดิม</option>
+          <option value="off" ${list.loop === 'off' ? 'selected' : ''}>เล่นจนจบรายการแล้วหยุด</option></select></label>
+        <div class="field"><span>รายการเพลง</span><div class="tracks"></div>
+          <button type="button" class="btn btn-sm track-add">+ เพิ่มเพลง</button></div>
+        <p class="note">เพลงจะเล่นเข้ามิกเซอร์ (ไลฟ์/บันทึก) เท่านั้น — กด “ฟังเสียง” ด้านบนเพื่อฟังในหูฟัง · ตั้งปุ่ม MIDI หรือ Macro สั่งเล่น/หยุดได้</p>`,
+      actions: [{ label: 'เสร็จสิ้น', primary: true }],
+      onOpen(modal) {
+        const box = $('.tracks', modal);
+        const paint = () => {
+          box.innerHTML = list.items.map((it, i) => `<div class="track ${i === list.index ? 'is-cur' : ''}" data-i="${i}">
+            <button type="button" class="mini" data-act="play" title="เล่นเพลงนี้">${icon('play')}</button>
+            <span class="track-name" title="${esc(it.name)}">${i + 1}. ${esc(it.name)}</span>
+            <button type="button" class="mini" data-act="up" title="ขึ้น">↑</button><button type="button" class="mini" data-act="down" title="ลง">↓</button>
+            <button type="button" class="mini danger" data-act="rm" title="ลบ">✕</button></div>`).join('') || '<p class="note">ยังไม่มีเพลง</p>';
+        };
+        paint();
+        box.addEventListener('click', e => {
+          const b = e.target.closest('[data-act]');
+          if (!b) return;
+          const i = +b.closest('[data-i]').dataset.i, cur = list.items[list.index];
+          if (b.dataset.act === 'play') { audio.ensure(); ch.load(i, true); }
+          else if (b.dataset.act === 'rm') {
+            const [gone] = list.items.splice(i, 1);
+            mediaStore.del(gone.key);
+            if (gone === cur) { ch.el.pause(); ch.el.removeAttribute('src'); list.index = Math.min(i, Math.max(0, list.items.length - 1)); if (list.items.length) ch.load(list.index, false); }
+            else list.index = Math.max(0, list.items.indexOf(cur));
+          } else {
+            const j = i + (b.dataset.act === 'up' ? -1 : 1);
+            if (j < 0 || j >= list.items.length) return;
+            [list.items[i], list.items[j]] = [list.items[j], list.items[i]];
+            list.index = list.items.indexOf(cur);
+          }
+          paint();
+          refreshStrip(ch);
+        });
+        $('.track-add', modal).addEventListener('click', () => pickFiles(AUDIO_FILES, files => { ch.addFiles(files); paint(); }));
+        modal.addEventListener('change', e => {
+          if (e.target.name === 'loop') { list.loop = e.target.value; ch.el.loop = list.loop === 'one'; }
+        });
+        modal.addEventListener('input', e => { if (e.target.name === 'pname') ch.name = e.target.value.trim().slice(0, 24) || ch.name; });
+      }
+    }).then(() => renderMixer());
+  }
+
+  // แผงเสียงเอฟเฟกต์: 8 ปุ่ม ถอดรหัสเสียงไว้ล่วงหน้า กดแล้วดังทันที · กดซ้ำระหว่างดัง = หยุด · ทุกปุ่มรวมเป็นช่องเสียงเดียว
+  function addSoundPad(saved = null) {
+    const have = padChannel();
+    if (have && !saved?.cfg) { openPadDialog(have); return have; }
+    if (!audio.ensure()) return null;
+    const cfg = saved?.cfg || {};
+    const pads = PAD_SLOTS.map(i => {
+      const p = Array.isArray(cfg.pads) ? cfg.pads[i] : null;
+      return p && typeof p.key === 'string' ? { key: p.key.slice(0, 60), name: String(p.name || `SFX ${i + 1}`).slice(0, 24), loop: !!p.loop, color: PAD_COLORS.includes(p.color) ? p.color : PAD_COLORS[i] } : null;
+    });
+    const sum = audio.ctx.createGain();
+    const ch = addSourceChannel(sum, 'pad', saved?.name || 'SFX', { srcId: saved?.srcId, restore: saved || undefined, pads, buffers: new Map(), active: new Map() });
+    ch.src = {
+      playing: () => ch.active.size > 0,
+      stop: () => { for (const a of [...ch.active.values()]) a.node.stop(); },
+      edit: () => openPadDialog(ch),
+      sub: () => ch.active.size ? `กำลังเล่น ${ch.active.size} เสียง` : `${pads.filter(Boolean).length}/8 ปุ่ม`,
+      save: () => ({ pads: pads.map(p => p && { key: p.key, name: p.name, loop: p.loop, color: p.color }) })
+    };
+    ch.playingPad = i => ch.active.has(i);
+    ch.dispose = () => { for (const a of ch.active.values()) { try { a.node.stop(); } catch (e) {} } pads.forEach(p => p && mediaStore.del(p.key)); renderSfxBar(); };
+    pads.forEach(p => p && padDecode(ch, p));
+    renderMixer();
+    renderSfxBar();
+    if (!saved) openPadDialog(ch);
+    return ch;
+  }
+  async function padDecode(ch, p, file) {
+    try {
+      file = file || await mediaStore.get(p.key);
+      if (!file) { p.missing = true; renderSfxBar(); return null; }
+      const buf = await audio.ctx.decodeAudioData(await file.arrayBuffer());
+      ch.buffers.set(p.key, buf);
+      p.missing = false;
+      renderSfxBar();
+      return buf;
+    } catch (e) {
+      p.missing = true;
+      toast(`เปิดไฟล์เสียง “${p.name}” ไม่ได้ — ไฟล์เสียหายหรือไม่รองรับ`, 'error');
+      renderSfxBar();
+      return null;
+    }
+  }
+  function padFire(ch, i) {
+    const p = ch.pads[i];
+    if (!p) { openPadDialog(ch, i); return; }
+    const cur = ch.active.get(i);
+    if (cur) { cur.node.stop(); return; }
+    const buf = ch.buffers.get(p.key);
+    if (!buf) { toast(p.missing ? `ไม่พบไฟล์ของปุ่ม “${p.name}” — เลือกไฟล์ใหม่ที่ ✎` : `กำลังเตรียมเสียง “${p.name}”…`, 'warn'); return; }
+    audio.ensure();
+    const node = audio.ctx.createBufferSource();
+    node.buffer = buf;
+    node.loop = p.loop;
+    node.connect(ch.node);
+    const entry = { node, at: audio.ctx.currentTime, dur: buf.duration };
+    node.onended = () => { if (ch.active.get(i) === entry) ch.active.delete(i); padTick(ch, true); refreshStrip(ch); };
+    ch.active.set(i, entry);
+    node.start();
+    padTick(ch, true);
+    refreshStrip(ch);
+  }
+  function padTick(ch, force) {
+    const bar = $('#sfx-bar');
+    if (!bar || (!ch.active.size && !force)) return;
+    const now = audio.ctx.currentTime;
+    bar.querySelectorAll('[data-pad]').forEach(b => {
+      const a = ch.active.get(+b.dataset.pad);
+      b.classList.toggle('is-on', !!a);
+      b.style.setProperty('--p', a ? (a.node.loop ? 1 : clamp((now - a.at) / a.dur, 0, 1)) : 0);
+    });
+  }
+  function renderSfxBar() {
+    const bar = $('#sfx-bar');
+    if (!bar) return;
+    const ch = padChannel();
+    bar.hidden = !ch;
+    if (!ch) { bar.innerHTML = ''; return; }
+    bar.innerHTML = ch.pads.map((p, i) => `<button class="sfx-pad ${p ? '' : 'is-empty'} ${p?.missing ? 'is-missing' : ''}" data-pad="${i}" style="--c:${p ? p.color : 'transparent'}"
+        title="${p ? `${esc(p.name)}${p.loop ? ' (วนซ้ำ)' : ''} — กดเพื่อเล่น กดซ้ำเพื่อหยุด` : 'ปุ่มว่าง — กดเพื่อเลือกไฟล์เสียง'}"><b>${i + 1}</b><span>${p ? esc(p.name) : '+'}</span></button>`).join('')
+      + `<button class="sfx-edit mini" title="ตั้งค่าแผงเสียงเอฟเฟกต์">${icon('edit')}</button>`;
+    padTick(ch, true);
+  }
+  function openPadDialog(ch, focus = -1) {
+    const pads = ch.pads;
+    dialog({
+      title: 'แผงเสียงเอฟเฟกต์',
+      wide: true,
+      body: `<div class="pad-rows"></div>
+        <p class="note">ไฟล์เสียงสั้น ๆ เช่น ปรบมือ หัวเราะ จิงเกิลเปิดรายการ · กดปุ่มบนแผงใต้ “เสียง” เพื่อเล่น กดซ้ำเพื่อหยุด · ตั้งปุ่ม MIDI (เสียงเอฟเฟกต์ 1–8) หรือใส่ใน Macro ได้ · ระดับเสียงรวมปรับที่ช่อง ${esc(ch.name)} ในมิกเซอร์</p>`,
+      actions: [{ label: 'เสร็จสิ้น', primary: true }],
+      onOpen(modal) {
+        const box = $('.pad-rows', modal);
+        const paint = () => {
+          box.innerHTML = pads.map((p, i) => `<div class="pad-row" data-i="${i}">
+            <b class="pad-n" style="background:${p ? p.color : 'var(--line-2)'}">${i + 1}</b>
+            ${p ? `<input class="input" data-k="name" maxlength="24" value="${esc(p.name)}">
+              <label class="check"><input type="checkbox" data-k="loop" ${p.loop ? 'checked' : ''}> วน</label>
+              <select class="select" data-k="color">${PAD_COLORS.map(c => `<option value="${c}" ${c === p.color ? 'selected' : ''} style="background:${c}">●</option>`).join('')}</select>
+              <button type="button" class="mini" data-act="test" title="ลองเล่น">${icon('play')}</button>
+              <button type="button" class="mini" data-act="file" title="เปลี่ยนไฟล์">${icon('folder')}</button>
+              <button type="button" class="mini danger" data-act="rm" title="ล้างปุ่ม">✕</button>`
+            : `<span class="note">ว่าง</span><button type="button" class="btn btn-sm" data-act="file">เลือกไฟล์เสียง…</button>`}</div>`).join('');
+        };
+        const assign = (i, file) => {
+          const old = pads[i];
+          if (old) { mediaStore.del(old.key); ch.buffers.delete(old.key); }
+          const p = pads[i] = { key: 'sfx-' + uid(), name: baseName(file.name).slice(0, 24), loop: false, color: old?.color || PAD_COLORS[i] };
+          storeAudioFile(p.key, file);
+          padDecode(ch, p, file);
+        };
+        paint();
+        box.addEventListener('click', e => {
+          const b = e.target.closest('[data-act]');
+          if (!b) return;
+          const i = +b.closest('[data-i]').dataset.i;
+          if (b.dataset.act === 'file') {
+            // เลือกหลายไฟล์ = ใส่ปุ่มนี้และปุ่มว่างถัดไป
+            pickFiles(AUDIO_FILES, files => {
+              const slots = [i, ...PAD_SLOTS.filter(j => j !== i && !pads[j])];
+              files.slice(0, slots.length).forEach((f, k) => assign(slots[k], f));
+              paint(); renderSfxBar(); refreshStrip(ch);
+            });
+          } else if (b.dataset.act === 'test') padFire(ch, i);
+          else if (b.dataset.act === 'rm') {
+            ch.active.get(i)?.node.stop();
+            mediaStore.del(pads[i].key); ch.buffers.delete(pads[i].key);
+            pads[i] = null;
+            paint(); renderSfxBar(); refreshStrip(ch);
+          }
+        });
+        box.addEventListener('input', e => {
+          const k = e.target.dataset.k, p = pads[+e.target.closest('[data-i]')?.dataset.i];
+          if (!k || !p) return;
+          if (k === 'name') p.name = e.target.value.trim().slice(0, 24) || p.name;
+          if (k === 'loop') p.loop = e.target.checked;
+          if (k === 'color') { p.color = e.target.value; e.target.closest('.pad-row').querySelector('.pad-n').style.background = p.color; }
+          renderSfxBar();
+        });
+        if (focus >= 0 && !pads[focus]) box.querySelector(`[data-i="${focus}"] [data-act=file]`)?.click();
+      }
+    });
+  }
+
+  // วิทยุ/สตรีมเสียงจาก URL — เซิร์ฟเวอร์ต้องอนุญาต CORS (สถานี Icecast/Shoutcast ส่วนใหญ่อนุญาต)
+  async function openAudioUrlDialog(ch) {
+    const r = await dialog({
+      title: ch ? `สตรีมเสียง — ${ch.name}` : 'วิทยุ / สตรีมเสียงจาก URL',
+      body: `
+        <label class="field"><span>ลิงก์เสียง</span><input name="url" class="input mono" placeholder="https://stream.example.com/live.mp3" value="${esc(ch?.url || '')}"></label>
+        <label class="field"><span>ชื่อช่อง</span><input name="name" class="input" maxlength="24" value="${esc(ch?.name || 'RADIO')}"></label>
+        <p class="note">ใช้ได้กับสถานีวิทยุออนไลน์ (Icecast / Shoutcast: ลิงก์ที่ลงท้าย .mp3 .aac หรือ /stream) และไฟล์เสียงบนเว็บ ·
+          ลิงก์ต้องเป็น https และเซิร์ฟเวอร์ต้องอนุญาตให้ดึงเสียง (CORS) · ระวังลิขสิทธิ์เพลงเมื่อไลฟ์ขึ้นแพลตฟอร์ม</p>`,
+      actions: [{ label: 'ยกเลิก' }, { label: ch ? 'บันทึก' : 'เพิ่ม', primary: true, value: 'ok' }]
+    });
+    if (r?.value !== 'ok') return;
+    const url = r.form.url.value.trim(), name = r.form.name.value.trim() || 'RADIO';
+    if (!/^https?:\/\/\S+$/i.test(url)) { toast('ลิงก์ต้องขึ้นต้นด้วย https://', 'error'); return; }
+    if (location.protocol === 'https:' && /^http:/i.test(url)) toast('ลิงก์ http อาจถูกเบราว์เซอร์บล็อกในหน้า https — ใช้ลิงก์ https ถ้าสถานีมีให้', 'warn', 7000);
+    if (ch) { ch.name = name.slice(0, 24); ch.setUrl(url); renderMixer(); return; }
+    const made = addAudioUrl({ name, cfg: { url } });
+    if (made) { made.src.toggle(); toast(`เพิ่ม “${made.name}” แล้ว — กำลังเชื่อมต่อ…`, 'success'); }
+  }
+  function addAudioUrl(saved) {
+    if (!audio.ensure()) return null;
+    const el = new Audio();
+    el.crossOrigin = 'anonymous';
+    el.preload = 'none';
+    const ch = addSourceChannel(audio.ctx.createMediaElementSource(el), 'url', saved.name || 'RADIO', { srcId: saved.srcId, restore: saved.db !== undefined ? saved : undefined, el, url: String(saved.cfg?.url || '').slice(0, 500) });
+    let state = 'idle';
+    const set = s => { state = s; refreshStrip(ch); };
+    el.addEventListener('playing', () => set('playing'));
+    el.addEventListener('waiting', () => set('loading'));
+    el.addEventListener('pause', () => set('idle'));
+    el.addEventListener('error', () => {
+      if (!el.getAttribute('src')) return;
+      set('error');
+      toast(`เปิด “${ch.name}” ไม่ได้ — ลิงก์ผิด สถานีปิดอยู่ หรือเซิร์ฟเวอร์ไม่อนุญาตให้ดึงเสียง (CORS)`, 'error', 7000);
+    });
+    // สตรีมสด: หยุดแล้วเล่นใหม่ให้ต่อที่เสียงปัจจุบัน ไม่ใช่เสียงที่ค้างในบัฟเฟอร์
+    const live = () => !isFinite(el.duration);
+    ch.setUrl = url => { ch.url = url; el.pause(); el.removeAttribute('src'); el.load(); set('idle'); };
+    ch.src = {
+      playing: () => !el.paused,
+      toggle: () => {
+        if (!el.paused) { el.pause(); if (live()) { el.removeAttribute('src'); el.load(); } return; }
+        if (!el.getAttribute('src')) el.src = ch.url;
+        set('loading');
+        el.play().catch(e => { if (e.name !== 'AbortError') set('error'); });
+      },
+      edit: () => openAudioUrlDialog(ch),
+      sub: () => ({ playing: live() ? 'สด' : 'กำลังเล่น', loading: 'กำลังเชื่อมต่อ…', error: 'เชื่อมต่อไม่ได้', idle: 'หยุดอยู่' })[state],
+      progress: () => [el.currentTime || 0, live() ? NaN : el.duration],
+      save: () => ({ url: ch.url })
+    };
+    ch.dispose = () => { el.pause(); el.removeAttribute('src'); el.load(); };
+    renderMixer();
+    return ch;
+  }
+
+  // สัญญาณทดสอบ: Sine ที่ระดับ peak ตามที่เลือก (−18 dBFS = มาตรฐานตั้งระดับ EBU) หรือ Pink noise
+  async function openToneDialog(ch) {
+    const t = ch?.tone || { type: 'k1', level: -18 };
+    const r = await dialog({
+      title: 'สัญญาณทดสอบ (Tone)',
+      body: `
+        <label class="field"><span>สัญญาณ</span><select name="type" class="select">${Object.entries(TONES).map(([k, [l]]) => `<option value="${k}" ${k === t.type ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+        <label class="field"><span>ระดับ</span><select name="level" class="select">${TONE_LEVELS.map(l => `<option value="${l}" ${l === t.level ? 'selected' : ''}>${l} dBFS</option>`).join('')}</select></label>
+        <p class="note">ใช้ตั้งระดับเสียงกับมิกเซอร์/เครื่องบันทึกปลายทาง: เฟดเดอร์ 0 dB แล้วมิเตอร์ต้องอยู่ที่ระดับนี้พอดี · ช่องนี้เริ่มแบบปิดเสียง (M) กันเผลอดังออกไลฟ์ — กด M เพื่อเปิด</p>`,
+      actions: [{ label: 'ยกเลิก' }, { label: ch ? 'บันทึก' : 'เพิ่ม', primary: true, value: 'ok' }]
+    });
+    if (r?.value !== 'ok') return;
+    const tone = { type: r.form.type.value, level: +r.form.level.value };
+    if (ch) { ch.setTone(tone); refreshStrip(ch); return; }
+    const made = addTone({ cfg: tone });
+    if (made) toast('เพิ่มสัญญาณทดสอบแล้ว (ปิดเสียงไว้ — กด M เพื่อเปิด)', 'success');
+  }
+  function sanitizeTone(t) {
+    t = t || {};
+    return { type: TONES[t.type] ? t.type : 'k1', level: TONE_LEVELS.includes(+t.level) ? +t.level : -18 };
+  }
+  function addTone(saved) {
+    if (!audio.ensure()) return null;
+    const ctx = audio.ctx, out = ctx.createGain();
+    const ch = addSourceChannel(out, 'tone', saved.name || 'TONE', { srcId: saved.srcId, restore: saved.db !== undefined ? saved : { muted: true, db: 0 }, tone: sanitizeTone(saved.cfg) });
+    let gen = null;
+    ch.setTone = tone => {
+      ch.tone = sanitizeTone(tone);
+      if (gen) { try { gen.stop(); gen.disconnect(); } catch (e) {} }
+      const [, hz] = TONES[ch.tone.type];
+      if (hz) { gen = ctx.createOscillator(); gen.frequency.value = hz; }
+      else {
+        // Pink noise (Paul Kellet) 4 วินาที วนซ้ำ — ปรับให้ peak = 1 แล้วลดตามระดับที่เลือก
+        const len = ctx.sampleRate * 4, buf = ctx.createBuffer(1, len, ctx.sampleRate), d = buf.getChannelData(0);
+        let b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0, peak = 0;
+        for (let i = 0; i < len; i++) {
+          const w = Math.random() * 2 - 1;
+          b0 = 0.99886 * b0 + w * 0.0555179; b1 = 0.99332 * b1 + w * 0.0750759; b2 = 0.969 * b2 + w * 0.153852;
+          b3 = 0.8665 * b3 + w * 0.3104856; b4 = 0.55 * b4 + w * 0.5329522; b5 = -0.7616 * b5 - w * 0.016898;
+          d[i] = b0 + b1 + b2 + b3 + b4 + b5 + b6 + w * 0.5362; b6 = w * 0.115926;
+          peak = Math.max(peak, Math.abs(d[i]));
+        }
+        for (let i = 0; i < len; i++) d[i] /= peak;
+        gen = ctx.createBufferSource(); gen.buffer = buf; gen.loop = true;
+      }
+      out.gain.value = dbToGain(ch.tone.level);
+      gen.connect(out);
+      gen.start();
+    };
+    ch.src = {
+      playing: () => !ch.muted,
+      edit: () => openToneDialog(ch),
+      sub: () => `${TONES[ch.tone.type][0].split(' (')[0]} · ${ch.tone.level} dBFS`,
+      save: () => ({ ...ch.tone })
+    };
+    ch.dispose = () => { try { gen.stop(); } catch (e) {} };
+    ch.setTone(ch.tone);
+    renderMixer();
+    return ch;
+  }
+
+  // สร้างแหล่งเสียงกลับจากโชว์ที่บันทึกไว้
+  function restoreAudioSource(s) {
+    if (!s || typeof s !== 'object') return;
+    const saved = { ...s, srcId: typeof s.srcId === 'string' && s.srcId ? s.srcId.slice(0, 40) : uid(), name: String(s.name || '').slice(0, 24) };
+    try {
+      if (s.kind === 'player') addMusicPlayer([], saved);
+      else if (s.kind === 'pad' && !padChannel()) addSoundPad(saved);
+      else if (s.kind === 'url' && /^https?:\/\//i.test(s.cfg?.url || '')) addAudioUrl(saved);
+      else if (s.kind === 'tone') addTone(saved);
+    } catch (e) { console.warn('restore audio source', e); }
+  }
+  const audioSourceKeys = () => audio.channels.flatMap(c => c.kind === 'player' ? c.list.items.map(it => it.key) : c.kind === 'pad' ? c.pads.filter(Boolean).map(p => p.key) : []);
 
   /* ------------------------------------------------------ overlay controls */
   function playIfMedia(inp) {
@@ -2666,6 +3165,9 @@
       ['slnext', 'สไลด์ถัดไป', () => slideStep(1)], ['slprev', 'สไลด์ก่อนหน้า', () => slideStep(-1)],
       ...nums.map(n => [`mac${n}`, `Macro ${n}`, () => { if (macros[n - 1]) runMacro(macros[n - 1]); }]),
       ['rec', 'เริ่ม / หยุดบันทึก', toggleRecord],
+      ...nums.map(n => [`sfx${n}`, `เสียงเอฟเฟกต์ ${n}`, () => { const ch = padChannel(); if (ch) padFire(ch, n - 1); }]),
+      ['music', 'เครื่องเล่นเพลง: เล่น / หยุด', () => audio.channels.find(c => c.kind === 'player')?.src.toggle()],
+      ['musicnext', 'เครื่องเล่นเพลง: เพลงถัดไป', () => audio.channels.find(c => c.kind === 'player')?.src.next()],
       ...nums.map(n => [`pvw${n}`, `Preview ${n}`, () => pick(n, false)]),
       ...nums.map(n => [`pgm${n}`, `ตัดเข้า Program ${n}`, () => pick(n, true)]),
       ...ovl.map((c, i) => [`ovl${i + 1}`, `Overlay ${c.n}`, () => setChannel(i, !ovl[i].on)]),
@@ -3067,7 +3569,9 @@
     ftbOn: ['จอดำ (FTB) เปิด', ''], ftbOff: ['จอดำ (FTB) ปิด', ''], mute: ['ปิดเสียงช่อง', 'audio'], unmute: ['เปิดเสียงช่อง', 'audio'],
     play: ['เล่นวิดีโอ / Playlist จากต้น', 'media'], recStart: ['เริ่มบันทึก', ''], recStop: ['หยุดบันทึก', ''],
     liveStart: ['เริ่มไลฟ์ (ปลายทางที่เปิดใช้)', ''], liveStop: ['หยุดไลฟ์ทั้งหมด', ''], replay: ['Instant Replay', ''],
-    slideNext: ['สไลด์ถัดไป', ''], slidePrev: ['สไลด์ก่อนหน้า', ''], wait: ['รอ (วินาที)', 'secs']
+    slideNext: ['สไลด์ถัดไป', ''], slidePrev: ['สไลด์ก่อนหน้า', ''],
+    sfx: ['เล่นเสียงเอฟเฟกต์', 'pad'], musicPlay: ['เครื่องเล่นเพลง: เล่น', 'player'], musicStop: ['เครื่องเล่นเพลง: หยุด', 'player'], musicNext: ['เครื่องเล่นเพลง: เพลงถัดไป', 'player'],
+    wait: ['รอ (วินาที)', 'secs']
   };
   const MACRO_KEYS = ['', 'F1', 'F2', 'F3', 'F4', 'F6', 'F7', 'F8', 'F9', 'F10', 'F12'];
   const macros = [];
@@ -3085,7 +3589,7 @@
     }));
   }
   const sleepCancellable = async ms => { const end = performance.now() + ms; while (!macroRun.cancel && performance.now() < end) await new Promise(r => setTimeout(r, Math.min(100, end - performance.now()))); };
-  const macroChannel = v => v.startsWith('mic:') ? audio.channels.find(c => c.kind === 'mic' && 'mic:' + c.micId === v) : v === 'master' ? audio.masterStrip : audio.channels.find(c => c.inputId === v);
+  const macroChannel = v => chanByKey(v);
   async function macroStep(st) {
     const v = st.v;
     switch (st.a) {
@@ -3123,6 +3627,14 @@
       case 'replay': await replayCapture(); break;
       case 'slideNext': slideStep(1); break;
       case 'slidePrev': slideStep(-1); break;
+      case 'sfx': { const ch = padChannel(); if (ch && !ch.playingPad(+v)) padFire(ch, +v); break; }
+      case 'musicPlay': case 'musicStop': case 'musicNext': {
+        const ch = chanByKey(v);
+        if (!ch?.src) break;
+        if (st.a === 'musicNext') ch.src.next?.();
+        else if (ch.src.playing() !== (st.a === 'musicPlay')) ch.src.toggle();
+        break;
+      }
       case 'wait': await sleepCancellable(v * 1000); break;
     }
   }
@@ -3157,7 +3669,8 @@
     const [label, arg] = MACRO_ACTIONS[st.a] || ['?', ''];
     const v = st.v;
     const what = arg === 'input' || arg === 'media' ? byId(v)?.name || '—' : arg === 'ovl' ? `ช่อง ${+v + 1}` : arg === 'effect' ? String(v).toUpperCase()
-      : arg === 'audio' ? (v === 'master' ? 'Master' : macroChannel(v)?.name || byId(v)?.name || '—') : arg === 'secs' ? `${v} วินาที` : '';
+      : arg === 'audio' ? (v === 'master' ? 'Master' : macroChannel(v)?.name || byId(v)?.name || '—') : arg === 'secs' ? `${v} วินาที`
+      : arg === 'player' ? chanByKey(v)?.name || '—' : arg === 'pad' ? padChannel()?.pads[+v]?.name || `ปุ่ม ${+v + 1}` : '';
     return what ? `${label}: ${what}` : label;
   };
   function renderMacros() {
@@ -3195,7 +3708,9 @@
       if (arg === 'media') return inputs.filter(x => x.type === 'media' || x.type === 'playlist').map(x => [x.id, x.name]);
       if (arg === 'ovl') return ovl.map((c, i) => [String(i), `ช่อง ${c.n}${byId(c.inputId) ? ` (${byId(c.inputId).name})` : ''}`]);
       if (arg === 'effect') return TRANSITIONS.map(t => [t, t.toUpperCase()]);
-      if (arg === 'audio') return [['master', 'Master'], ...audio.channels.map(c => [c.kind === 'mic' ? 'mic:' + c.micId : c.inputId, c.name]).filter(([k]) => k && k !== 'mic:undefined')];
+      if (arg === 'audio') return [['master', 'Master'], ...audioChanOptions()];
+      if (arg === 'player') return audio.channels.filter(c => c.kind === 'player' || c.kind === 'url').map(c => [chanKey(c), c.name]);
+      if (arg === 'pad') return PAD_SLOTS.map(i => [String(i), `ปุ่ม ${i + 1}${padChannel()?.pads[i] ? ` (${padChannel().pads[i].name})` : ''}`]);
       return [];
     };
     const rowHtml = (st, i) => {
@@ -3376,7 +3891,7 @@
   }
   async function openVizDialog(inp) {
     const before = { ...inp.viz };
-    const chans = audio.channels.map(c => ({ id: c.kind === 'mic' ? 'mic:' + c.micId : c.inputId, name: c.name })).filter(c => c.id && c.id !== 'mic:undefined');
+    const chans = audioChanOptions().map(([id, name]) => ({ id, name }));
     const imgs = inputs.filter(i => i.type === 'image');
     const v = inp.viz;
     const r = await dialog({
@@ -3688,14 +4203,26 @@
         this.addChannel(this.ctx.createMediaElementSource(el), { name: inp.name, inputId: inp.id, kind: 'input' });
       } catch (e) { console.warn('audio element', e); }
     },
+    // micChan: null = ทุกช่อง · 0/1 = ใช้เฉพาะช่อง 1 หรือ 2 ของออดิโออินเทอร์เฟซ (ไมค์คนละตัวบนช่องซ้าย/ขวา)
     addMic(stream, name, extra = {}) {
       if (!this.ensure()) return;
-      this.addChannel(this.ctx.createMediaStreamSource(stream), { name, kind: 'mic', stream, ...extra });
+      const src = this.ctx.createMediaStreamSource(stream);
+      let node = src, dispose = null;
+      if (extra.micChan != null) {
+        const split = this.ctx.createChannelSplitter(2);
+        node = this.ctx.createGain();
+        node.channelCount = 1; node.channelCountMode = 'explicit';
+        src.connect(split); split.connect(node, extra.micChan);
+        dispose = () => { try { src.disconnect(); split.disconnect(); } catch (e) {} };
+      }
+      return this.addChannel(node, { name, kind: 'mic', stream, dispose, ...extra });
     },
     remove(ch) {
       try { ch.node.disconnect(); ch.afvGain.disconnect(); } catch (e) {}
-      if (ch.stream) ch.stream.getTracks().forEach(t => t.stop());
+      if (ch.dispose) ch.dispose();
       this.channels.splice(this.channels.indexOf(ch), 1);
+      // ไมค์ที่แยกช่อง 1/2 ใช้อุปกรณ์เดียวกัน — ปิดอุปกรณ์เมื่อไม่มีช่องไหนใช้แล้ว
+      if (ch.stream && !this.channels.some(c => c.stream === ch.stream)) ch.stream.getTracks().forEach(t => t.stop());
       renderMixer();
     },
     // เสียงที่ส่งกลับให้แขก: ทุกช่องในรายการ ยกเว้นเสียงของแขกคนนั้นเอง (กันเสียงสะท้อน/ดีเลย์ตัวเอง)
@@ -3770,6 +4297,7 @@
       const lim = this.masterStrip.ui?.lim;
       if (lim) lim.classList.toggle('is-active', this.masterStrip.limiter && this.limiter.reduction < -0.5);
       for (const ch of this.channels) if (ch.ui?.fxBtn) ch.ui.fxBtn.classList.toggle('is-active', ch.fx.comp && ch.comp.reduction < -1);
+      for (const ch of this.channels) if (ch.src) stripSourceTick(ch);
     }
   };
 
@@ -3781,14 +4309,14 @@
     if (!audio.channels.length) {
       const hint = document.createElement('div');
       hint.className = 'mixer-empty';
-      hint.textContent = 'ยังไม่มีช่องเสียง — กด “เพิ่มไมค์” หรือเพิ่มกล้อง/ไฟล์วิดีโอที่มีเสียง';
+      hint.textContent = 'ยังไม่มีช่องเสียง — กด “เพิ่มแหล่งเสียง” (ไมค์ เพลง เสียงเอฟเฟกต์ เสียงจากคอม) หรือเพิ่มกล้อง/ไฟล์วิดีโอที่มีเสียง';
       mixer.appendChild(hint);
     }
   }
 
   function buildStrip(ch, isMaster) {
     const el = document.createElement('div');
-    el.className = 'strip' + (isMaster ? ' master' : '');
+    el.className = 'strip' + (isMaster ? ' master' : '') + (!isMaster && ch.src ? ' has-src' : '');
     el.innerHTML = `
       <div class="strip-name" title="${esc(ch.name)}">${esc(ch.name)}</div>
       <div class="strip-body">
@@ -3801,8 +4329,9 @@
         ${isMaster ? `<button class="chip-btn lim ${ch.limiter ? 'is-on' : ''}" title="ลิมิตเตอร์ — กันเสียงแตกในไฟล์บันทึกและสตรีม (ไฟแดง = กำลังลดระดับเสียง)">LIM</button>` : ''}
         ${!isMaster && ch.inputId ? `<button class="chip-btn afv ${ch.afv ? 'is-on' : ''}" title="Audio Follow Video — เปิดเสียงเฉพาะตอนภาพนี้อยู่ใน Program">AFV</button>` : ''}
         ${!isMaster ? `<button class="chip-btn fx ${fxActive(ch) ? 'is-on' : ''}" title="ดีเลย์ / EQ / คอมเพรสเซอร์">FX</button>` : ''}
-        ${!isMaster && ch.kind === 'mic' ? '<button class="chip-btn rm" title="ลบช่องเสียงนี้">✕</button>' : ''}
-      </div>`;
+        ${!isMaster && !ch.inputId && !ch.src ? '<button class="chip-btn rm" title="ลบช่องเสียงนี้">✕</button>' : ''}
+      </div>
+      ${!isMaster && ch.src ? stripSourceHtml(ch) : ''}`;
     ch.ui = { cover: el.querySelector('.meter-cover'), peak: el.querySelector('.meter-peak'), lim: el.querySelector('.lim'), fxBtn: el.querySelector('.fx') };
     const dbEl = ch.ui.db = el.querySelector('.strip-db');
     ch.ui.fader = makeFader(el.querySelector('.vfader'), {
@@ -3816,6 +4345,7 @@
       }
     });
     bindStripButtons(el, ch, isMaster);
+    if (!isMaster && ch.src) bindStripSource(el, ch);
     return el;
   }
 
@@ -3839,7 +4369,7 @@
       audio.applyAfv();
     });
     el.querySelector('.rm')?.addEventListener('click', async () => {
-      if (await confirmDialog(`ลบช่องเสียง “${ch.name}”`, 'ไมค์นี้จะถูกปิดและนำออกจากมิกเซอร์', 'ลบ')) audio.remove(ch);
+      if (await confirmDialog(`ลบช่องเสียง “${ch.name}”`, 'แหล่งเสียงนี้จะถูกปิดและนำออกจากมิกเซอร์', 'ลบ')) audio.remove(ch);
     });
   }
 
@@ -6444,26 +6974,29 @@ onmessage = async e => {
       ['grid', 'ป้ายคะแนน', 'คะแนนสองทีม พร้อมเวลาแข่ง', addScoreInput],
       ['type', 'ตัววิ่งข่าว', 'ข้อความวิ่งด้านล่างจอ', addTickerInput],
       ['sliders', 'Audio Visualizer', 'กราฟิกขยับตามเสียง สำหรับพอดแคสต์ / เพลง / แขกที่ไม่เปิดกล้อง', addVizInput]]],
+    ['เสียง (ไม่มีภาพ)', [
+      ['music', 'แหล่งเสียง', 'ไมค์ เครื่องเล่นเพลง เสียงเอฟเฟกต์ เสียงจากคอม วิทยุออนไลน์', () => setTimeout(() => openAudioAddMenu($('[data-action=add-audio]')))]]],
     ['ภาพพื้นฐาน', [
       ['type', 'Slate ข้อความ', 'จอข้อความ เช่น “เริ่มเร็ว ๆ นี้”', () => addGenerator('slate')],
       ['clock', 'นาฬิกา', 'เวลาปัจจุบันเต็มจอ', () => addGenerator('clock')],
       ['bars', 'Color Bars', 'แถบสีสำหรับทดสอบภาพ', () => addGenerator('bars')],
       ['square', 'Black', 'จอดำ', () => addGenerator('black')]]]
   ];
-  function openAddMenu(anchor) {
+  function openAddMenu(anchor, groups = ADD_GROUPS(), title = 'เพิ่มแหล่งภาพ') {
     closeMenu();
-    const groups = ADD_GROUPS();
     const items = groups.flatMap(g => g[1]);
     let n = 0;
     const menu = document.createElement('div');
     menu.className = 'menu add-sheet';
     menu.setAttribute('role', 'menu');
-    menu.setAttribute('aria-label', 'เพิ่มแหล่งภาพ');
-    menu.innerHTML = '<div class="add-sheet-title">เพิ่มแหล่งภาพ</div>' + groups.map(([label, list]) => `
+    menu.setAttribute('aria-label', title);
+    menu.innerHTML = `<div class="add-sheet-title">${esc(title)}</div>` + groups.map(([label, list]) => `
       <div class="menu-label">${esc(label)}</div>
       <div class="add-grid">${list.map(it => `<button role="menuitem" class="add-tile" data-i="${n++}">${icon(it[0])}<span><b>${esc(it[1])}</b><small>${esc(it[2])}</small></span></button>`).join('')}</div>`).join('');
     document.body.appendChild(menu);
-    const r = anchor.getBoundingClientRect();
+    // ปุ่มที่ซ่อนอยู่ (เช่น แผงเสียงบนมือถือ) — วางเมนูกลางจอแทน
+    let r = anchor.getBoundingClientRect();
+    if (!r.width) r = { right: innerWidth / 2 + menu.offsetWidth / 2, top: innerHeight / 3, bottom: innerHeight / 3 };
     const mw = menu.offsetWidth, mh = menu.offsetHeight;
     menu.style.left = `${clamp(r.right - mw, 8, innerWidth - mw - 8)}px`;
     menu.style.top = `${r.bottom + 6 + mh > innerHeight ? Math.max(8, r.top - mh - 6) : r.bottom + 6}px`;
@@ -6669,6 +7202,7 @@ onmessage = async e => {
       if (!b) return;
       audio.ensure();
       if (b.dataset.action === 'add-menu') { openAddMenu(b); return; }
+      if (b.dataset.action === 'add-audio') { openAudioAddMenu(b); return; }
       actions[b.dataset.action]?.();
     });
 
@@ -6779,7 +7313,9 @@ onmessage = async e => {
         audio: {
           master: { db: audio.masterStrip.db === -Infinity ? null : audio.masterStrip.db, muted: audio.masterStrip.muted },
           inputs: Object.fromEntries(audio.channels.filter(c => c.inputId).map(c => [c.inputId, chan(c)])),
-          mics: audio.channels.filter(c => c.kind === 'mic' && c.micId).map(c => ({ name: c.name, micId: c.micId, label: c.micLabel || '', clean: !!c.clean, ...chan(c) }))
+          mics: audio.channels.filter(c => c.kind === 'mic' && c.micId).map(c => ({ name: c.name, micId: c.micId, label: c.micLabel || '', clean: !!c.clean, channel: c.micChan ?? null, ...chan(c) })),
+          // เสียงจากคอม/แท็บไม่บันทึก — เบราว์เซอร์ให้เลือกใหม่ทุกครั้ง
+          sources: audio.channels.filter(c => c.srcId && c.src?.save).map(c => ({ kind: c.kind, srcId: c.srcId, name: c.name, cfg: c.src.save(), ...chan(c) }))
         }
       };
     },
@@ -6837,11 +7373,13 @@ onmessage = async e => {
       if (mics.length && needMedia()) {
         for (const mc of mics) {
           waitingMics++;
-          openMicById(String(mc.micId), String(mc.label || ''), !!mc.clean)
-            .then(({ stream, micId }) => audio.addMic(stream, String(mc.name || 'MIC').slice(0, 24), { micId, micLabel: String(mc.label || ''), clean: !!mc.clean, restore: mc }))
+          const micChan = mc.channel === 0 || mc.channel === 1 ? mc.channel : null;
+          openMicById(String(mc.micId), String(mc.label || ''), !!mc.clean, micChan != null)
+            .then(({ stream, micId }) => audio.addMic(stream, String(mc.name || 'MIC').slice(0, 24), { micId, micLabel: String(mc.label || ''), clean: !!mc.clean, micChan, restore: mc }))
             .catch(() => toast(`เปิดไมค์ “${mc.name}” ไม่ได้ — เพิ่มใหม่จากปุ่ม + ในมิกเซอร์`, 'warn', 6000));
         }
       }
+      for (const src of Array.isArray(data.audio?.sources) ? data.audio.sources.slice(0, 16) : []) restoreAudioSource(src);
       renderInputs();
       refreshSourceSelects();
       renderMixer();
@@ -7116,7 +7654,16 @@ onmessage = async e => {
     show.autosave(true);
     setInterval(() => show.autosave(), 1500);
     addEventListener('pagehide', () => show.autosave());
-    mediaStore.prune(new Set(['stinger', ...inputs.filter(i => i.type === 'media' || i.type === 'image' || i.type === 'slides').map(i => i.id), ...playlist.keys()]));
+    mediaStore.prune(new Set(['stinger', ...inputs.filter(i => i.type === 'media' || i.type === 'image' || i.type === 'slides').map(i => i.id), ...playlist.keys(), ...audioSourceKeys()]));
+
+    $('#sfx-bar').addEventListener('click', e => {
+      const ch = padChannel();
+      if (!ch) return;
+      audio.ensure();
+      const b = e.target.closest('[data-pad]');
+      if (b) padFire(ch, +b.dataset.pad);
+      else if (e.target.closest('.sfx-edit')) openPadDialog(ch);
+    });
 
     wireless.init();
     loadRecFolder();
@@ -7131,7 +7678,7 @@ onmessage = async e => {
     $$('#seg-cardsize button').forEach(b => { b.classList.toggle('is-active', b.dataset.size === cardSize()); b.addEventListener('click', () => setCardSize(b.dataset.size)); });
 
     // สำหรับดีบัก/ทดสอบอัตโนมัติ
-    window.webmix = { playlist, dataSources, timerControl, multiview, renderer, gpu, setRenderer: v => { settings.renderer = v; renderer.resolve(); updateStatus(); }, show, ovl, setChannel, toggleInputOverlay, useRecFolder: dir => { recFolder = dir; }, inputs, state, settings, overlays, audio, rec, iso, stinger, replayCapture, slideGo, midi, checkAppUpdate, macros, runMacro, openCamControl, abr: { state: abr, decide: abrDecide, apply: abrApply, tick: abrTick }, streamer, wireless, cut, autoTransition, setPreview, tr, ftb };
+    window.webmix = { playlist, dataSources, timerControl, multiview, renderer, gpu, setRenderer: v => { settings.renderer = v; renderer.resolve(); updateStatus(); }, show, ovl, setChannel, toggleInputOverlay, useRecFolder: dir => { recFolder = dir; }, inputs, state, settings, overlays, audio, rec, iso, stinger, replayCapture, slideGo, midi, checkAppUpdate, macros, runMacro, openCamControl, abr: { state: abr, decide: abrDecide, apply: abrApply, tick: abrTick }, streamer, wireless, cut, autoTransition, setPreview, tr, ftb, padFire, chanKey };
   }
 
   boot();

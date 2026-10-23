@@ -27,7 +27,7 @@ const results = []; const ok = (n, c, x = '') => results.push(`${c ? 'PASS' : 'F
   await p.click('[data-action=add-menu]'); await p.click('.menu button:has-text("กล้อง")');
   await p.waitForSelector('.modal select[name=mic]'); await p.selectOption('.modal select[name=mic]', { index: 1 });
   await p.click('.modal-foot .btn-primary'); await p.waitForTimeout(1500);
-  await p.click('[data-action=add-mic]'); await p.waitForSelector('.modal select[name=mic]'); await p.click('.modal-foot .btn-primary'); await p.waitForTimeout(800);
+  await p.click('[data-action=add-audio]'); await p.click('.menu button:has-text("ไมโครโฟน")'); await p.waitForSelector('.modal select[name=mic]'); await p.click('.modal-foot .btn-primary'); await p.waitForTimeout(800);
   // rename the slate, change its text; set buses; tweak audio
   await p.evaluate(() => {
     const w = window.webmix; const slate = w.inputs.find(i => i.type === 'slate');

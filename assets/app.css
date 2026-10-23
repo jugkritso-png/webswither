@@ -1562,3 +1562,49 @@ html[data-cards=l] .card-num, html[data-cards=l] .card-tally { font-size: 14px; 
 .key-ovl { position: relative; min-width: 0; overflow: hidden; }
 .key-ovl.has-src::after { content: ""; position: absolute; top: 5px; right: 5px; width: 5px; height: 5px; border-radius: 50%; background: var(--muted); }
 .key-ovl.is-on.has-src::after { background: #fecaca; }
+
+/* แหล่งเสียง: แถบควบคุมใต้ช่องเสียง (เครื่องเล่นเพลง / วิทยุ / แผงเสียง / Tone) */
+.strip-src { width: 100%; display: flex; flex-direction: column; gap: 3px; }
+.strip-sub { font-size: 9.5px; color: var(--muted); text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.strip-prog { display: flex; align-items: center; gap: 4px; height: 11px; }
+.strip-prog span { flex: 1; height: 3px; border-radius: 2px; background: var(--line-2); overflow: hidden; }
+.strip-prog i { display: block; height: 100%; width: 0; background: #3b82f6; }
+.strip-time { font-size: 9px; font-weight: 400; color: var(--dim); font-variant-numeric: tabular-nums; }
+.strip.has-src .strip-body { min-height: 48px; }
+.strip.has-src { gap: 4px; }
+.mixer:has(.has-src) { overflow-y: auto; }
+.strip-sub[data-tp] { cursor: pointer; border-radius: 3px; }
+.strip-sub[data-tp]:hover { color: var(--text); background: var(--line); }
+.strip-tp { display: flex; gap: 3px; }
+.strip-tp .chip-btn { min-width: 0; }
+.strip-tp:empty { display: none; }
+.strip-tp .chip-btn { display: grid; place-items: center; }
+.strip-tp .chip-btn .i { width: 11px; height: 11px; }
+.chip-btn.tp-play.is-on { background: #14532d; border-color: #22c55e; color: #bbf7d0; }
+
+/* แผงเสียงเอฟเฟกต์ */
+.sfx-bar { display: flex; gap: 5px; padding: 8px 10px 0; overflow-x: auto; flex: none; scrollbar-width: thin; }
+.sfx-bar[hidden] { display: none; }
+.sfx-pad { position: relative; flex: 1 0 86px; max-width: 160px; display: flex; align-items: center; gap: 5px; min-width: 0; height: 34px; padding: 0 7px; overflow: hidden;
+  border-radius: 6px; border: 1px solid var(--line-2); border-left: 3px solid var(--c); background: #0b0d12; color: var(--text); font-size: 11px; cursor: pointer; }
+.sfx-pad::before { content: ""; position: absolute; inset: 0; background: var(--c); opacity: .28; transform-origin: left; transform: scaleX(var(--p, 0)); pointer-events: none; }
+.sfx-pad b { font-family: var(--mono); color: var(--muted); font-size: 10px; }
+.sfx-pad span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; position: relative; }
+.sfx-pad.is-on { border-color: var(--c); box-shadow: 0 0 10px color-mix(in srgb, var(--c) 45%, transparent); }
+.sfx-pad.is-empty { color: var(--dim); border-style: dashed; border-left-width: 1px; }
+.sfx-pad.is-missing span { text-decoration: line-through; color: var(--dim); }
+.sfx-pad:hover { border-color: #3d4556; }
+.sfx-edit { flex: none; width: 30px; height: 34px; }
+@media (hover: none) { .sfx-pad, .sfx-edit { height: 44px; } }
+
+/* หน้าต่างรายการเพลง / แผงเสียง */
+.tracks { display: flex; flex-direction: column; gap: 4px; max-height: 300px; overflow: auto; margin-bottom: 6px; }
+.track { display: flex; align-items: center; gap: 6px; padding: 4px 6px; border-radius: 6px; border: 1px solid var(--line); }
+.track.is-cur { border-color: #22c55e; background: rgba(34, 197, 94, .08); }
+.track-name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 13px; }
+.pad-rows { display: flex; flex-direction: column; gap: 6px; }
+.pad-row { display: flex; align-items: center; gap: 8px; }
+.pad-row .input { flex: 1; min-width: 0; }
+.pad-row .select { width: 64px; flex: none; }
+.pad-row > .note { flex: 1; margin: 0; }
+.pad-n { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 6px; color: #fff; font-family: var(--mono); font-size: 12px; flex: none; }
