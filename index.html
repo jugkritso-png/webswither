@@ -27,6 +27,7 @@
   <script src="assets/js/caller.js" defer></script>
   <script src="assets/js/procam.js" defer></script>
   <script src="assets/js/graphics.js" defer></script>
+  <script src="assets/js/chat.js" defer></script>
   <script src="assets/js/multiview.js" defer></script>
   <script src="assets/js/manual.js" defer></script>
   <script src="assets/js/desktop.js" defer></script>
@@ -199,6 +200,7 @@
           <button class="tab th" data-tab="title" role="tab">ป้ายชื่อ<span class="live-dot"></span></button>
           <button class="tab th" data-tab="pip" role="tab">ภาพซ้อนมุม<span class="live-dot"></span></button>
           <button class="tab th" data-tab="key" role="tab">ฉากเขียว<span class="live-dot"></span></button>
+          <button class="tab th" data-tab="chat" role="tab">คอมเมนต์<span class="live-dot"></span></button>
           <button class="tab th" data-tab="macro" role="tab">Macro<span class="live-dot"></span></button>
         </div>
 
@@ -228,6 +230,17 @@
             </div>
           </div>
           <button id="btn-pip" class="btn btn-take" data-action="pip">TAKE PIP<kbd>P</kbd></button>
+        </div>
+
+        <div class="pane" data-pane="chat">
+          <div id="chat-now" class="chat-now"></div>
+          <div id="chat-conn" class="chat-conn"></div>
+          <div id="chat-list" class="chat-list"></div>
+          <form id="chat-manual" class="chat-manual" autocomplete="off">
+            <input name="who" class="input" maxlength="40" placeholder="ชื่อ" aria-label="ชื่อผู้คอมเมนต์">
+            <input name="text" class="input" maxlength="300" placeholder="พิมพ์เอง / วางคอมเมนต์จาก Facebook" aria-label="ข้อความคอมเมนต์">
+            <button class="btn btn-sm" type="submit">เพิ่ม</button>
+          </form>
         </div>
 
         <div class="pane" data-pane="macro">

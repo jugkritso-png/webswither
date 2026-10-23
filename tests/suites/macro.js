@@ -14,7 +14,7 @@ const results = []; const ok = (n, c, x = '') => results.push(`${c ? 'PASS' : 'F
   await p.waitForTimeout(600);
   const ids = await p.evaluate(() => { const w = window.webmix; const img = w.inputs.find(i => i.type === 'image').id; w.ovl[0].inputId = img; w.state.programId = w.inputs.find(i => i.type === 'slate').id; return { img, bars: w.inputs.find(i => i.type === 'bars').id }; });
   await p.click('.tab[data-tab=macro]');
-  ok('Macro tab sits next to the other four', (await p.locator('.tabs .tab').count()) === 5 && await p.isVisible('#macro-add'));
+  ok('Macro tab sits with the other graphics tabs on one line', (await p.locator('.tabs .tab').count()) === 6 && await p.isVisible('#macro-add') && await p.evaluate(() => { const t = [...document.querySelectorAll('.tabs .tab')]; return t.every(x => Math.abs(x.getBoundingClientRect().top - t[0].getBoundingClientRect().top) < 2); }));
   await p.click('#macro-add'); await p.waitForSelector('.modal .mstep');
   await p.fill('.modal input[name=mname]', 'เปิดรายการ'); await p.selectOption('.modal select[name=mkey]', 'F2');
   await p.selectOption('.mstep[data-i="0"] select[data-k=a]', 'ovlOn');

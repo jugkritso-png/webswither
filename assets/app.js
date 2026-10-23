@@ -9,7 +9,7 @@
     downloadBlob, store, toast, keepScreenOn, b64url, unb64url, peerOptionsFromSig, initCaller,
     fillBlack, drawFit, fitFont, drawBars, drawSlate, drawClock, RELINK_HINT, drawNoSignal, drawTitle, TITLE_STYLES, drawTitleInput,
     createKeyer, createGpu, idb, canUseOpfs, mediaStore, createMultiview, SHORTCUTS, MANUAL,
-    TIMER_MODES, TIMER_STYLES, timerText, drawTimer, drawScore, TICKER_BAR, drawTickerBar, drawTicker, sheetCsvUrl, parseCsv, desktop } = window.WebMix;
+    TIMER_MODES, TIMER_STYLES, timerText, drawTimer, drawScore, TICKER_BAR, drawTickerBar, drawTicker, sheetCsvUrl, parseCsv, desktop, chat: chatLib } = window.WebMix;
   /* ====================================================================== */
   /*  PHONE CAMERA MODE (?call=<studio id>)                                  */
   /* ====================================================================== */
@@ -247,10 +247,11 @@
     scene: { icon: 'grid', label: 'SCENE' },
     replay: { icon: 'restart', label: 'REPLAY' },
     slides: { icon: 'image', label: 'SLIDES' },
-    visualizer: { icon: 'sliders', label: 'VISUALIZER' }
+    visualizer: { icon: 'sliders', label: 'VISUALIZER' },
+    chat: { icon: 'type', label: 'COMMENTS' }
   };
   // กราฟิกที่วาดบนพื้นโปร่งใส (ซ้อนเป็น Overlay ได้ทันที)
-  const GRAPHIC_TYPES = ['title', 'timer', 'score', 'ticker', 'visualizer'];
+  const GRAPHIC_TYPES = ['title', 'timer', 'score', 'ticker', 'visualizer', 'chat'];
   const clockOf = inp => inp.type === 'timer' ? inp.timer : inp.type === 'score' && inp.score.clock && inp.score.clock.mode !== 'none' ? inp.score.clock : null;
   const scoreClockText = inp => { const c = clockOf(inp); return inp.type === 'score' && c ? timerText(c).text : ''; };
   // วาดกราฟิกลงพื้นที่ w×h (ไม่มีพื้นหลัง)
@@ -260,6 +261,7 @@
     else if (inp.type === 'score') drawScore(ctx, w, h, inp, scoreClockText(inp));
     else if (inp.type === 'ticker') drawTicker(ctx, w, h, inp);
     else if (inp.type === 'visualizer') drawViz(ctx, inp, w, h);
+    else if (inp.type === 'chat') chatLib.drawChat(ctx, w, h, chatFeed.shown, inp.chat.style, chatAnim());
   }
 
   /* ---- Audio Visualizer: กราฟิกที่ขยับตามเสียง (แท่งความถี่ / คลื่นเสียง / วงกลมรอบรูป / แท่งสะท้อนกลางจอ) ----
@@ -383,7 +385,7 @@
       case 'black': fillBlack(ctx, w, h); break;
       case 'slate': drawSlate(ctx, w, h, inp); break;
       case 'clock': drawClock(ctx, w, h, inp); break;
-      case 'title': case 'timer': case 'score': case 'ticker': case 'visualizer': fillBlack(ctx, w, h); drawGraphic(ctx, inp, w, h); break;
+      case 'title': case 'timer': case 'score': case 'ticker': case 'visualizer': case 'chat': fillBlack(ctx, w, h); drawGraphic(ctx, inp, w, h); break;
       case 'scene': drawScene(ctx, inp, w, h); break;
       case 'slides': {
         const c = slideCanvas(inp);
@@ -599,7 +601,7 @@
   // วาดแหล่งภาพแบบพื้นหลังโปร่งใส (รูป PNG, วิดีโอที่มี alpha, Title) — ไม่มีสัญญาณก็ไม่วาดอะไรทับ Program
   function drawSourceT(ctx, inp, w, h) {
     switch (inp.type) {
-      case 'title': case 'timer': case 'score': case 'ticker': case 'visualizer': drawGraphic(ctx, inp, w, h); return;
+      case 'title': case 'timer': case 'score': case 'ticker': case 'visualizer': case 'chat': drawGraphic(ctx, inp, w, h); return;
       case 'image': if (inp.status === 'live') drawFitColored(ctx, inp, inp.el, inp.el.naturalWidth, inp.el.naturalHeight, w, h); return;
       case 'bars': case 'black': case 'slate': case 'clock': case 'scene': drawSource(ctx, inp, w, h); return;
       case 'playlist':
@@ -768,6 +770,10 @@
         return { e: genTexture('g:' + inp.id, `${scoreClockText(inp)}|${JSON.stringify(inp.score)}`, W, H, (c, w, h) => drawScore(c, w, h, inp, scoreClockText(inp))), full: true, under: transparent ? null : [0, 0, 0, 1] };
       case 'visualizer':
         return { e: genTexture('g:' + inp.id, frameNo, GW, GH, (c, w, h) => drawViz(c, inp, w, h)), full: true, under: transparent ? null : [0, 0, 0, 1] };
+      case 'chat': {
+        const a = chatAnim();
+        return { e: genTexture('g:' + inp.id, `${chatFeed.shown?.id}|${a.toFixed(3)}|${inp.chat.style}`, W, H, (c, w, h) => drawGraphic(c, inp, w, h)), full: true, under: transparent ? null : [0, 0, 0, 1] };
+      }
       case 'ticker': {
         // ตัววิ่งเลื่อนทุกเฟรม: วาดและส่งขึ้น GPU เฉพาะแถบ ไม่ใช่ทั้งจอ
         const bh = Math.round(H * TICKER_BAR.h);
@@ -1504,6 +1510,7 @@
     if (inp.type === 'replay') return openReplayDialog(inp);
     if (inp.type === 'slides') return openSlidesDialog(inp);
     if (inp.type === 'visualizer') return openVizDialog(inp);
+    if (inp.type === 'chat') return openChatInputDialog(inp);
     if (inp.type === 'srt' && inp.srt.mode === 'rtsp') return openRtspDialog(inp);
     if (inp.type === 'srt' && inp.srt.mode === 'rtmp') return showRtmpSenderInfo(inp);
     if (inp.type === 'title') return openTitleDialog(inp);
@@ -1828,6 +1835,174 @@
     } catch (e) {
       toast('เปิดไมค์ไม่สำเร็จ: ' + e.message, 'error');
     }
+  }
+
+  /* ------------------------------------------------------ viewer comments */
+  // คอมเมนต์จาก YouTube / Twitch / พิมพ์เอง เข้ารายการในแท็บ "คอมเมนต์" — กดคอมเมนต์เพื่อขึ้นจอผ่านแหล่งภาพ COMMENTS
+  const chatFeed = { list: [], conns: {}, status: { youtube: ['off', ''], twitch: ['off', ''] }, shown: null, at: 0, hideAt: 0, autoHide: +store.get('chat-autohide', 0) || 0 };
+  const CHAT_AUTOHIDE = [0, 8, 15, 30];
+  function chatAnim() {
+    if (!chatFeed.shown) return 0;
+    const now = performance.now();
+    if (chatFeed.hideAt) {
+      const a = 1 - (now - chatFeed.hideAt) / 250;
+      if (a > 0) return a;
+      chatFeed.shown = null; chatFeed.hideAt = 0;
+      queueMicrotask(renderChat);
+      return 0;
+    }
+    return Math.min(1, (now - chatFeed.at) / 350);
+  }
+  function chatAdd(m) {
+    if (!m || !m.text && !m.amount || chatFeed.list.some(x => x.id === m.id)) return;
+    chatFeed.list.push({ ...m, name: String(m.name || 'ผู้ชม').slice(0, 40), text: String(m.text || '').slice(0, 300) });
+    if (chatFeed.list.length > 300) chatFeed.list.splice(0, chatFeed.list.length - 300);
+    renderChatSoon();
+  }
+  let chatRenderQueued = false;
+  function renderChatSoon() {
+    if (chatRenderQueued) return;
+    chatRenderQueued = true;
+    requestAnimationFrame(() => { chatRenderQueued = false; renderChat(); });
+    setTimeout(() => { if (chatRenderQueued) { chatRenderQueued = false; renderChat(); } }, 300);
+  }
+  function chatShow(m) {
+    chatFeed.shown = m; chatFeed.at = performance.now(); chatFeed.hideAt = 0;
+    ensureChatOnAir();
+    renderChat();
+  }
+  function chatHide() {
+    if (chatFeed.shown && !chatFeed.hideAt) { chatFeed.hideAt = performance.now(); renderChat(); }
+  }
+  // ให้การ์ดคอมเมนต์ขึ้นจอจริง: ยังไม่มีแหล่งภาพ COMMENTS → สร้างให้ · ยังไม่อยู่บน Program/Overlay → ใส่ช่อง Overlay ว่างแล้วเปิด
+  function ensureChatOnAir() {
+    let inp = inputs.find(i => i.type === 'chat');
+    if (!inp) inp = addChatInput(true);
+    if (inp.id === state.programId || onOverlay(inp.id)) return;
+    let i = ovl.findIndex(c => c.inputId === inp.id);
+    if (i < 0) {
+      i = ovl.findIndex(c => !c.on && !byId(c.inputId));
+      if (i < 0) { toast('ไม่มีช่อง Overlay ว่าง — เลือก COMMENTS ใส่ช่อง Overlay ในแท็บ ซ้อนภาพ', 'warn', 6000); return; }
+      ovl[i].inputId = inp.id;
+      refreshOverlaySelects();
+    }
+    setChannel(i, true);
+  }
+  function chatStatus(platform, st, text) {
+    chatFeed.status[platform] = [st, text];
+    renderChatConn();
+  }
+  function chatConnect(cfg) {
+    for (const c of Object.values(chatFeed.conns)) c.stop();
+    chatFeed.conns = {};
+    chatFeed.status = { youtube: ['off', ''], twitch: ['off', ''] };
+    const on = platform => ({ message: chatAdd, status: (st, text) => chatStatus(platform, st, text) });
+    if (cfg.yt) chatFeed.conns.youtube = chatLib.connectYouTube({ video: cfg.yt, key: cfg.key }, on('youtube'));
+    if (cfg.tw) chatFeed.conns.twitch = chatLib.connectTwitch(cfg.tw, on('twitch'));
+    renderChatConn();
+  }
+  function renderChatConn() {
+    const box = $('#chat-conn');
+    if (!box) return;
+    const LABEL = { live: 'เชื่อมต่อแล้ว', connecting: 'กำลังเชื่อมต่อ', error: 'ผิดพลาด' };
+    const chips = Object.entries(chatFeed.status).filter(([, [st]]) => st !== 'off')
+      .map(([k, [st, text]]) => `<span class="chat-chip is-${st}" title="${esc(text)}"><i style="background:${chatLib.PLATFORMS[k].color}"></i>${chatLib.PLATFORMS[k].label}: ${esc(st === 'error' ? text : LABEL[st])}</span>`).join('');
+    box.innerHTML = (chips || '<span class="note">ยังไม่ได้เชื่อมต่อแชต — พิมพ์คอมเมนต์เองด้านล่างได้</span>')
+      + '<button type="button" class="btn btn-sm" data-chat="connect">เชื่อมต่อแชต…</button>';
+  }
+  function renderChat() {
+    const list = $('#chat-list');
+    if (!list) return;
+    const sh = chatFeed.shown && !chatFeed.hideAt ? chatFeed.shown : null;
+    $('#chat-now').innerHTML = sh
+      ? `<span class="chat-now-txt"><b>บนจอ:</b> ${esc(sh.name)} — ${esc(sh.text)}</span><button type="button" class="btn btn-sm btn-danger" data-chat="hide">ซ่อน</button>`
+      : '<span class="note">กดคอมเมนต์เพื่อขึ้นจอ (ขึ้นผ่านแหล่งภาพ COMMENTS บน Overlay)</span>';
+    const items = chatFeed.list.slice(-80).reverse();
+    list.innerHTML = items.map(m => `<button type="button" class="chat-item ${sh && sh.id === m.id ? 'is-shown' : ''}" data-id="${esc(m.id)}" title="กดเพื่อขึ้นจอ">
+        <i style="background:${m.amount ? '#f5a524' : (chatLib.PLATFORMS[m.platform] || chatLib.PLATFORMS.manual).color}"></i>
+        <b>${esc(m.name)}</b>${m.amount ? `<em>${esc(m.amount)}</em>` : ''}<span>${esc(m.text)}</span></button>`).join('')
+      || '<p class="note">คอมเมนต์ใหม่จะขึ้นที่นี่</p>';
+    $('.tab[data-tab="chat"]')?.classList.toggle('is-live', !!sh);
+  }
+  async function openChatConnectDialog() {
+    const src = store.get('chat-src', {}) || {};
+    const r = await dialog({
+      title: 'เชื่อมต่อแชตสด',
+      body: `
+        <div class="help"><h3>YouTube Live</h3></div>
+        <label class="field"><span>ลิงก์ไลฟ์ (หรือรหัสวิดีโอ)</span><input name="yt" class="input mono" placeholder="https://www.youtube.com/live/xxxxxxxxxxx" value="${esc(src.yt || '')}"></label>
+        <label class="field"><span>YouTube Data API key</span><input name="key" class="input mono" type="password" autocomplete="off" placeholder="AIza…" value="${esc(store.get('chat-ytkey', '') || '')}"></label>
+        <p class="note">สร้างฟรีที่ Google Cloud Console → เปิดใช้ “YouTube Data API v3” → Credentials → Create API key · key เก็บไว้ในเบราว์เซอร์เครื่องนี้เท่านั้น ไม่อยู่ในไฟล์โชว์ ·
+          โควตาฟรีพอดึงแชตได้ราว 3–4 ชั่วโมงต่อวัน</p>
+        <div class="help"><h3>Twitch</h3></div>
+        <label class="field"><span>ชื่อช่อง Twitch (ไม่ต้องมี key)</span><input name="tw" class="input mono" placeholder="channelname" value="${esc(src.tw || '')}"></label>
+        <label class="field"><span>ซ่อนคอมเมนต์บนจอเองหลัง</span><select name="autohide" class="select">${CHAT_AUTOHIDE.map(v => `<option value="${v}" ${v === chatFeed.autoHide ? 'selected' : ''}>${v ? `${v} วินาที` : 'ไม่ซ่อนเอง (กดซ่อน)'}</option>`).join('')}</select></label>
+        <p class="note">Facebook / TikTok / LINE: ยังดึงอัตโนมัติไม่ได้ (ต้องใช้สิทธิ์ของเพจ) — คัดลอกคอมเมนต์มาวางในช่อง “พิมพ์เอง” ใต้รายการคอมเมนต์</p>`,
+      actions: [{ label: 'ยกเลิก' }, { label: 'ตัดการเชื่อมต่อ', value: 'off' }, { label: 'เชื่อมต่อ', primary: true, value: 'ok' }]
+    });
+    if (!r?.value) return;
+    chatFeed.autoHide = CHAT_AUTOHIDE.includes(+r.form.autohide.value) ? +r.form.autohide.value : 0;
+    store.set('chat-autohide', chatFeed.autoHide);
+    if (r.value === 'off') { chatConnect({}); return; }
+    const cfg = { yt: r.form.yt.value.trim(), tw: r.form.tw.value.trim(), key: r.form.key.value.trim() };
+    if (cfg.yt && !chatLib.youtubeId(cfg.yt)) { toast('ลิงก์ YouTube ไม่ถูกต้อง', 'error'); return; }
+    store.set('chat-src', { yt: cfg.yt, tw: cfg.tw });
+    store.set('chat-ytkey', cfg.key);
+    chatConnect(cfg);
+  }
+  function addChatInput(silent) {
+    const n = inputs.filter(i => i.type === 'chat').length + 1;
+    const inp = addInput({ type: 'chat', name: n > 1 ? `COMMENTS ${n}` : 'COMMENTS', chat: { style: 'lower' } });
+    if (!silent) {
+      openChatInputDialog(inp);
+      $('.tab[data-tab="chat"]')?.click();
+    }
+    return inp;
+  }
+  async function openChatInputDialog(inp) {
+    const before = inp.chat.style;
+    // ตัวอย่างระหว่างเลือกรูปแบบ (ถ้ายังไม่มีคอมเมนต์บนจอ)
+    const demo = !chatFeed.shown;
+    if (demo) { chatFeed.shown = { id: 'demo', platform: 'youtube', name: 'ตัวอย่างผู้ชม', text: 'สวัสดีครับ ติดตามรายการทุกสัปดาห์เลย 👋' }; chatFeed.at = performance.now() - 400; chatFeed.hideAt = 0; }
+    const r = await dialog({
+      title: 'คอมเมนต์ผู้ชม',
+      body: `
+        <label class="field"><span>ชื่อแหล่งภาพ</span><input name="name" class="input" maxlength="40" value="${esc(inp.name)}"></label>
+        <label class="field"><span>รูปแบบการ์ด</span><select name="style" class="select">${Object.entries(chatLib.CHAT_STYLES).map(([k, t]) => `<option value="${k}" ${k === inp.chat.style ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
+        <p class="note">เลือกคอมเมนต์ในแท็บ “คอมเมนต์” (แผงกราฟิก) แล้วการ์ดจะขึ้นบนจอเอง — แหล่งภาพนี้พื้นโปร่งใส ใช้ซ้อนบน Program ผ่าน Overlay</p>`,
+      actions: [{ label: 'ยกเลิก' }, { label: 'บันทึก', primary: true, value: 'save' }],
+      onOpen(modal) { modal.addEventListener('change', e => { if (e.target.name === 'style') inp.chat.style = e.target.value; }); }
+    });
+    if (demo && chatFeed.shown?.id === 'demo') chatFeed.shown = null;
+    if (r?.value !== 'save') { inp.chat.style = before; return; }
+    inp.name = String(r.form.name.value || '').trim().slice(0, 40) || inp.name;
+    renderInputs(); refreshSourceSelects();
+  }
+  function bindChatPane() {
+    const pane = $('[data-pane="chat"]');
+    pane.addEventListener('click', e => {
+      const b = e.target.closest('[data-chat]');
+      if (b?.dataset.chat === 'hide') chatHide();
+      else if (b?.dataset.chat === 'connect') openChatConnectDialog();
+      const item = e.target.closest('.chat-item');
+      if (!item) return;
+      const m = chatFeed.list.find(x => x.id === item.dataset.id);
+      if (!m) return;
+      if (chatFeed.shown?.id === m.id && !chatFeed.hideAt) chatHide();
+      else chatShow(m);
+    });
+    $('#chat-manual').addEventListener('submit', e => {
+      e.preventDefault();
+      const f = e.target, text = f.text.value.trim();
+      if (!text) return;
+      chatAdd({ id: 'm-' + uid(), platform: 'manual', name: f.who.value.trim() || 'ผู้ชม', text, at: Date.now() });
+      f.text.value = '';
+    });
+    setInterval(() => {
+      if (chatFeed.autoHide && chatFeed.shown && !chatFeed.hideAt && performance.now() - chatFeed.at > chatFeed.autoHide * 1000) chatHide();
+    }, 250);
+    renderChatConn();
+    renderChat();
   }
 
   /* ------------------------------------------------------ audio sources */
@@ -3166,6 +3341,7 @@
       ...nums.map(n => [`mac${n}`, `Macro ${n}`, () => { if (macros[n - 1]) runMacro(macros[n - 1]); }]),
       ['rec', 'เริ่ม / หยุดบันทึก', toggleRecord],
       ...nums.map(n => [`sfx${n}`, `เสียงเอฟเฟกต์ ${n}`, () => { const ch = padChannel(); if (ch) padFire(ch, n - 1); }]),
+      ['chathide', 'ซ่อนคอมเมนต์บนจอ', () => chatHide()],
       ['music', 'เครื่องเล่นเพลง: เล่น / หยุด', () => audio.channels.find(c => c.kind === 'player')?.src.toggle()],
       ['musicnext', 'เครื่องเล่นเพลง: เพลงถัดไป', () => audio.channels.find(c => c.kind === 'player')?.src.next()],
       ...nums.map(n => [`pvw${n}`, `Preview ${n}`, () => pick(n, false)]),
@@ -3570,7 +3746,7 @@
     play: ['เล่นวิดีโอ / Playlist จากต้น', 'media'], recStart: ['เริ่มบันทึก', ''], recStop: ['หยุดบันทึก', ''],
     liveStart: ['เริ่มไลฟ์ (ปลายทางที่เปิดใช้)', ''], liveStop: ['หยุดไลฟ์ทั้งหมด', ''], replay: ['Instant Replay', ''],
     slideNext: ['สไลด์ถัดไป', ''], slidePrev: ['สไลด์ก่อนหน้า', ''],
-    sfx: ['เล่นเสียงเอฟเฟกต์', 'pad'], musicPlay: ['เครื่องเล่นเพลง: เล่น', 'player'], musicStop: ['เครื่องเล่นเพลง: หยุด', 'player'], musicNext: ['เครื่องเล่นเพลง: เพลงถัดไป', 'player'],
+    chatHide: ['ซ่อนคอมเมนต์บนจอ', ''], sfx: ['เล่นเสียงเอฟเฟกต์', 'pad'], musicPlay: ['เครื่องเล่นเพลง: เล่น', 'player'], musicStop: ['เครื่องเล่นเพลง: หยุด', 'player'], musicNext: ['เครื่องเล่นเพลง: เพลงถัดไป', 'player'],
     wait: ['รอ (วินาที)', 'secs']
   };
   const MACRO_KEYS = ['', 'F1', 'F2', 'F3', 'F4', 'F6', 'F7', 'F8', 'F9', 'F10', 'F12'];
@@ -3627,6 +3803,7 @@
       case 'replay': await replayCapture(); break;
       case 'slideNext': slideStep(1); break;
       case 'slidePrev': slideStep(-1); break;
+      case 'chatHide': chatHide(); break;
       case 'sfx': { const ch = padChannel(); if (ch && !ch.playingPad(+v)) padFire(ch, +v); break; }
       case 'musicPlay': case 'musicStop': case 'musicNext': {
         const ch = chanByKey(v);
@@ -7022,7 +7199,8 @@ onmessage = async e => {
       ['clock', 'นาฬิกานับถอยหลัง / จับเวลา', 'นับถอยหลังก่อนเริ่ม หรือจับเวลาการแข่ง', addTimerInput],
       ['grid', 'ป้ายคะแนน', 'คะแนนสองทีม พร้อมเวลาแข่ง', addScoreInput],
       ['type', 'ตัววิ่งข่าว', 'ข้อความวิ่งด้านล่างจอ', addTickerInput],
-      ['sliders', 'Audio Visualizer', 'กราฟิกขยับตามเสียง สำหรับพอดแคสต์ / เพลง / แขกที่ไม่เปิดกล้อง', addVizInput]]],
+      ['sliders', 'Audio Visualizer', 'กราฟิกขยับตามเสียง สำหรับพอดแคสต์ / เพลง / แขกที่ไม่เปิดกล้อง', addVizInput],
+      ['type', 'คอมเมนต์ผู้ชม', 'ดึงแชต YouTube / Twitch แล้วเลือกขึ้นจอ', () => addChatInput()]]],
     ['เสียง (ไม่มีภาพ)', [
       ['music', 'แหล่งเสียง', 'ไมค์ เครื่องเล่นเพลง เสียงเอฟเฟกต์ เสียงจากคอม วิทยุออนไลน์', () => setTimeout(() => openAudioAddMenu($('[data-action=add-audio]')))]]],
     ['ภาพพื้นฐาน', [
@@ -7118,6 +7296,7 @@ onmessage = async e => {
       return ['MOBILE', st.height ? `${resTag(st.width, st.height)} ${st.fps}` : '', c.battery ? `🔋${Math.round(c.battery.level * 100)}%` : '', c.rec ? '● REC' : '', c.stats && c.stats.limit && c.stats.limit !== 'none' ? '⚠ เน็ต' : ''].filter(Boolean).join(' · ');
     }
     if (inp.type === 'visualizer') return `VISUALIZER · ${VIZ_STYLES[inp.viz.style]} · ${vizSourceName(inp.viz)}`;
+    if (inp.type === 'chat') return `COMMENTS · ${chatFeed.shown && !chatFeed.hideAt ? 'กำลังแสดง' : 'รอเลือกคอมเมนต์'}`;
     if (inp.type === 'slides') return inp.slides.count ? `SLIDES · หน้า ${inp.slides.page}/${inp.slides.count}` : 'SLIDES';
     if (inp.type === 'playlist') return inp.list.items.length ? `${inp.list.index + 1}/${inp.list.items.length}` : 'ว่าง';
     const meta = TYPE_META[inp.type];
@@ -7315,7 +7494,7 @@ onmessage = async e => {
      - ไฟล์วิดีโอ/รูปเก็บสำเนาไว้ในพื้นที่ของเบราว์เซอร์ (OPFS) จึงไม่ต้องเลือกไฟล์ใหม่
      - บันทึกเป็นไฟล์ .webmix.json เพื่อย้ายเครื่องหรือเก็บหลายรายการ (ไฟล์สื่อไม่ได้รวมอยู่ในไฟล์ ต้องเลือกใหม่บนเครื่องอื่น) */
 
-  const SHOW_TYPES = ['bars', 'black', 'slate', 'clock', 'image', 'media', 'camera', 'screen', 'wireless', 'srt', 'title', 'guest', 'timer', 'score', 'ticker', 'playlist', 'scene', 'replay', 'slides', 'visualizer'];
+  const SHOW_TYPES = ['bars', 'black', 'slate', 'clock', 'image', 'media', 'camera', 'screen', 'wireless', 'srt', 'title', 'guest', 'timer', 'score', 'ticker', 'playlist', 'scene', 'replay', 'slides', 'visualizer', 'chat'];
   const show = {
     ready: false, last: '', savedAt: 0,
     get name() { return store.get('showName', '') || 'โชว์ใหม่'; },
@@ -7348,6 +7527,7 @@ onmessage = async e => {
           if (i.type === 'scene') o.scene = { ...i.scene, slots: [...i.scene.slots] };
           if (i.type === 'replay') o.replay = { ...i.replay };
           if (i.type === 'visualizer') o.viz = { ...i.viz };
+          if (i.type === 'chat') o.chat = { ...i.chat };
           if (i.type === 'slides') o.slides = { page: i.slides.page, file: i.fileName || '' };
           if (i.layout) o.layout = JSON.parse(JSON.stringify(i.layout));
           if (i.color) o.color = { ...i.color };
@@ -7452,6 +7632,9 @@ onmessage = async e => {
           break;
         case 'replay':
           createReplayInput({ ...base, replay: raw.replay });
+          break;
+        case 'chat':
+          addInput({ type: 'chat', ...base, chat: { style: chatLib.CHAT_STYLES[raw.chat?.style] ? raw.chat.style : 'lower' } });
           break;
         case 'visualizer':
           addInput({ type: 'visualizer', ...base, viz: sanitizeViz(raw.viz) });
@@ -7705,6 +7888,7 @@ onmessage = async e => {
     addEventListener('pagehide', () => show.autosave());
     mediaStore.prune(new Set(['stinger', ...inputs.filter(i => i.type === 'media' || i.type === 'image' || i.type === 'slides').map(i => i.id), ...playlist.keys(), ...audioSourceKeys()]));
 
+    bindChatPane();
     $('#sfx-bar').addEventListener('click', e => {
       const ch = padChannel();
       if (!ch) return;
@@ -7727,7 +7911,7 @@ onmessage = async e => {
     $$('#seg-cardsize button').forEach(b => { b.classList.toggle('is-active', b.dataset.size === cardSize()); b.addEventListener('click', () => setCardSize(b.dataset.size)); });
 
     // สำหรับดีบัก/ทดสอบอัตโนมัติ
-    window.webmix = { playlist, dataSources, timerControl, multiview, renderer, gpu, setRenderer: v => { settings.renderer = v; renderer.resolve(); updateStatus(); }, show, ovl, setChannel, toggleInputOverlay, useRecFolder: dir => { recFolder = dir; }, inputs, state, settings, overlays, audio, rec, iso, stinger, replayCapture, slideGo, midi, checkAppUpdate, macros, runMacro, openCamControl, abr: { state: abr, decide: abrDecide, apply: abrApply, tick: abrTick }, streamer, wireless, cut, autoTransition, setPreview, tr, ftb, padFire, chanKey };
+    window.webmix = { chatFeed, chatAdd, chatShow, chatHide, playlist, dataSources, timerControl, multiview, renderer, gpu, setRenderer: v => { settings.renderer = v; renderer.resolve(); updateStatus(); }, show, ovl, setChannel, toggleInputOverlay, useRecFolder: dir => { recFolder = dir; }, inputs, state, settings, overlays, audio, rec, iso, stinger, replayCapture, slideGo, midi, checkAppUpdate, macros, runMacro, openCamControl, abr: { state: abr, decide: abrDecide, apply: abrApply, tick: abrTick }, streamer, wireless, cut, autoTransition, setPreview, tr, ftb, padFire, chanKey };
   }
 
   boot();

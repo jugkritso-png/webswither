@@ -11,7 +11,7 @@ const { spawn, spawnSync } = require('child_process');
 const { ROOT, WORK } = require('./lib');
 
 const ALL = ['switcher', 'multistream', 'mobile', 'srt-output', 'srt-input', 'uhd-4k', 'reconnect', 'record-disk', 'audio-fx', 'show', 'gateway-admin', 'overlay', 'gpu', 'guest', 'multiview', 'graphics', 'playlist', 'desktop', 'wcrec', 'onboarding', 'easy-ui', 'scenes', 'rec-backup', 'vertical', 'color',
-  'transitions', 'replay', 'gate', 'midi', 'abr', 'slides', 'viz', 'update', 'recovery', 'macro', 'procam', 'layoutdrag', 'audiosrc', 'duck'];
+  'transitions', 'replay', 'gate', 'midi', 'abr', 'slides', 'viz', 'update', 'recovery', 'macro', 'procam', 'layoutdrag', 'audiosrc', 'duck', 'chat'];
 const selected = process.argv.slice(2).length ? process.argv.slice(2) : ALL;
 const SUITE_TIMEOUT = 6 * 60 * 1000;
 

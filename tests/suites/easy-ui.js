@@ -38,7 +38,7 @@ async function setup(ctx) {
   await p.click('[data-action=add-menu]'); await p.waitForSelector('.add-sheet');
   const sheet = await p.evaluate(() => ({ tiles: document.querySelectorAll('.add-sheet .add-tile').length, groups: document.querySelectorAll('.add-sheet .menu-label').length,
     desc: [...document.querySelectorAll('.add-sheet .add-tile small')].every(s => s.textContent.trim().length > 3), fits: (() => { const r = document.querySelector('.add-sheet').getBoundingClientRect(); return r.left >= 0 && r.right <= innerWidth && r.bottom <= innerHeight; })() }));
-  ok('add sheet: 23 tiles in 6 groups, each with a description, on screen', sheet.tiles === 23 && sheet.groups === 6 && sheet.desc && sheet.fits, JSON.stringify(sheet));
+  ok('add sheet: 24 tiles in 6 groups, each with a description, on screen', sheet.tiles === 24 && sheet.groups === 6 && sheet.desc && sheet.fits, JSON.stringify(sheet));
   await p.screenshot({ path: S + '/ez-add.png' });
   const n0 = (await names()).length;
   await p.click('.menu button:has-text("Color Bars")'); await p.waitForTimeout(300);
