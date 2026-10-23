@@ -937,10 +937,8 @@ kbd {
 .deck-ovl { display: flex; flex-direction: column; }
 .ovl-keys { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; }
 .key-ovl { min-height: 46px; padding: 4px 2px; gap: 1px; font-size: 15px; color: var(--muted); border-color: var(--line-2); background: linear-gradient(#1c2029, #14171e); }
-.key-ovl span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 9px; font-weight: 600; letter-spacing: 0; color: var(--dim); }
 .key-ovl.is-staged { border-color: var(--pvw); color: #bbf7d0; }
 .key-ovl.is-on { color: #fff; background: linear-gradient(#c22a2a, #8f1d1d); border-color: #f87171; box-shadow: 0 0 14px var(--pgm-glow); }
-.key-ovl.is-on span { color: #fecaca; }
 .ovl-rows { display: flex; flex-direction: column; gap: 8px; }
 .ovl-row { display: grid; grid-template-columns: 44px minmax(0, 1fr) minmax(0, 0.55fr) 46px; grid-template-areas: "take src src pvw" "take fx dur pvw"; gap: 4px 6px; align-items: stretch;
   padding: 6px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); }
@@ -1073,7 +1071,6 @@ kbd {
   /* ปุ่ม Overlay 1–8 แถวเดียว ให้แหล่งภาพขึ้นมาในจอ */
   .ovl-keys { grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 4px; }
   .key-ovl { min-height: 44px; }
-  .key-ovl span { display: none; }
 }
 .dest-paste { display: none; }
 @media (max-width: 760px) {
@@ -1561,3 +1558,7 @@ html[data-cards=l] .card-num, html[data-cards=l] .card-tally { font-size: 14px; 
 .layout-preview { touch-action: none; cursor: default; }
 .layout-preview:focus-visible { outline: 2px solid var(--amber, #f5a524); outline-offset: 2px; }
 .layout-hint { margin-top: -4px; }
+/* ปุ่ม Overlay 1–8: จุดเล็กบอกว่าช่องนี้ผูกแหล่งภาพไว้แล้ว (ไม่แสดงชื่อ เพื่อไม่ให้ปุ่มล้น) */
+.key-ovl { position: relative; min-width: 0; overflow: hidden; }
+.key-ovl.has-src::after { content: ""; position: absolute; top: 5px; right: 5px; width: 5px; height: 5px; border-radius: 50%; background: var(--muted); }
+.key-ovl.is-on.has-src::after { background: #fecaca; }

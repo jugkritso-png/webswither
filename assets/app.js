@@ -1852,7 +1852,7 @@
   }
 
   function renderOverlayControls() {
-    $('#ovl-keys').innerHTML = ovl.map((c, i) => `<button class="key key-ovl" data-ovl="${i}" title="Overlay ${c.n} — เปิด/ปิดบน Program (${ovlKeyLabel(i)})"><b>${c.n}</b><span></span><kbd>${ovlKeyLabel(i)}</kbd></button>`).join('');
+    $('#ovl-keys').innerHTML = ovl.map((c, i) => `<button class="key key-ovl" data-ovl="${i}" title="Overlay ${c.n} — เปิด/ปิดบน Program (${ovlKeyLabel(i)})"><b>${c.n}</b><kbd>${ovlKeyLabel(i)}</kbd></button>`).join('');
     $('#ovl-rows').innerHTML = ovl.map((c, i) => `
       <div class="ovl-row" data-row="${i}">
         <button type="button" class="ovl-take" data-ovl="${i}" title="Overlay ${c.n} — เปิด/ปิดบน Program (${ovlKeyLabel(i)})">${c.n}</button>
@@ -1928,7 +1928,9 @@
       if (key) {
         key.classList.toggle('is-on', c.on);
         key.classList.toggle('is-staged', c.staged && !c.on);
-        key.querySelector('span').textContent = inp ? inp.name : '—';
+        // ไม่แสดงชื่อแหล่งภาพบนปุ่ม (ชื่อไฟล์ยาวทำให้ปุ่มล้น) — ดูได้จากคำอธิบายเมื่อชี้ และจุดบอกว่าช่องนี้มีภาพผูกไว้
+        key.classList.toggle('has-src', !!inp);
+        key.title = `Overlay ${c.n}${inp ? ` — ${inp.name}` : ' — ยังไม่ได้เลือกแหล่งภาพ'} · เปิด/ปิดบน Program (${ovlKeyLabel(i)})`;
       }
       const take = $(`.ovl-take[data-ovl="${i}"]`);
       if (take) take.classList.toggle('is-on', c.on);

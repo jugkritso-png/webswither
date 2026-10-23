@@ -32,7 +32,7 @@ const results = []; const ok = (n, c, x = '') => results.push(`${c ? 'PASS' : 'F
   await card(title).locator('[data-card-ovl="0"]').click(); await p.waitForTimeout(800);
   ok('card button 1 puts the title on Overlay 1', near(await titlePx(), [239, 68, 68]), JSON.stringify(await titlePx()));
   ok('transparent: program still visible around the title', near(await pgm(0.5, 0.3), [0, 0, 0], 10));
-  ok('deck key OV1 lit + shows input name', await p.evaluate(() => { const k = document.querySelector('.key-ovl[data-ovl="0"]'); return k.classList.contains('is-on') && /TITLE 1/.test(k.textContent); }));
+  ok('deck key OV1 lit, name only in the tooltip (button stays compact)', await p.evaluate(() => { const k = document.querySelector('.key-ovl[data-ovl="0"]'); return k.classList.contains('is-on') && k.classList.contains('has-src') && /TITLE 1/.test(k.title) && !/TITLE 1/.test(k.textContent) && k.scrollWidth <= k.clientWidth + 1; }));
   ok('card tally OV1 + red card button', await card(title).locator('.card-tally').textContent() === 'OV1' && await card(title).locator('[data-card-ovl="0"]').evaluate(e => e.classList.contains('is-on')));
   ok('OVERLAY tab shows live dot', await p.evaluate(() => document.querySelector('.tab[data-tab="overlay"]').classList.contains('is-live')));
   await p.keyboard.press('q'); await p.waitForTimeout(800);
