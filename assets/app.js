@@ -246,10 +246,11 @@
     playlist: { icon: 'film', label: 'PLAYLIST' },
     scene: { icon: 'grid', label: 'SCENE' },
     replay: { icon: 'restart', label: 'REPLAY' },
-    slides: { icon: 'image', label: 'SLIDES' }
+    slides: { icon: 'image', label: 'SLIDES' },
+    visualizer: { icon: 'sliders', label: 'VISUALIZER' }
   };
   // กราฟิกที่วาดบนพื้นโปร่งใส (ซ้อนเป็น Overlay ได้ทันที)
-  const GRAPHIC_TYPES = ['title', 'timer', 'score', 'ticker'];
+  const GRAPHIC_TYPES = ['title', 'timer', 'score', 'ticker', 'visualizer'];
   const clockOf = inp => inp.type === 'timer' ? inp.timer : inp.type === 'score' && inp.score.clock && inp.score.clock.mode !== 'none' ? inp.score.clock : null;
   const scoreClockText = inp => { const c = clockOf(inp); return inp.type === 'score' && c ? timerText(c).text : ''; };
   // วาดกราฟิกลงพื้นที่ w×h (ไม่มีพื้นหลัง)
@@ -258,6 +259,112 @@
     else if (inp.type === 'timer') drawTimer(ctx, w, h, inp);
     else if (inp.type === 'score') drawScore(ctx, w, h, inp, scoreClockText(inp));
     else if (inp.type === 'ticker') drawTicker(ctx, w, h, inp);
+    else if (inp.type === 'visualizer') drawViz(ctx, inp, w, h);
+  }
+
+  /* ---- Audio Visualizer: กราฟิกที่ขยับตามเสียง (แท่งความถี่ / คลื่นเสียง / วงกลมรอบรูป / แท่งสะท้อนกลางจอ) ----
+     อ่านค่าจากตัววิเคราะห์เสียงของช่องที่เลือก (หรือ Master) ครั้งเดียวต่อเฟรม — ใช้ร่วมกันทั้ง Program / Preview / การ์ด */
+  const VIZ_STYLES = { bars: 'แท่งความถี่', wave: 'เส้นคลื่นเสียง', circle: 'วงกลมรอบรูป / โลโก้', mirror: 'แท่งสะท้อนกลางจอ' };
+  const VIZ_BG = { none: 'โปร่งใส (ซ้อนบนภาพอื่น)', dark: 'พื้นเข้ม', black: 'พื้นดำ' };
+  const VIZ_BANDS = 48;
+  function sanitizeViz(v) {
+    v = v || {};
+    return { style: VIZ_STYLES[v.style] ? v.style : 'bars', source: typeof v.source === 'string' && v.source ? v.source.slice(0, 80) : 'master',
+      color: TITLE_COLORS.includes(v.color) ? v.color : '#3b82f6', bg: VIZ_BG[v.bg] ? v.bg : 'none',
+      imageId: typeof v.imageId === 'string' ? v.imageId.slice(0, 40) : '', sens: clamp(+v.sens || 1, 0.3, 3) };
+  }
+  // ช่องเสียงที่เลือก: 'master' · inputId ของแหล่งภาพ · 'mic:<micId>'
+  function vizAnalyser(v) {
+    if (!audio.ctx) return null;
+    if (v.source === 'master') return audio.analyser;
+    const ch = v.source.startsWith('mic:') ? audio.channels.find(c => c.kind === 'mic' && 'mic:' + c.micId === v.source) : audio.channels.find(c => c.inputId === v.source);
+    return ch ? ch.analyser : null;
+  }
+  const vizSourceName = v => v.source === 'master' ? 'Master'
+    : v.source.startsWith('mic:') ? (audio.channels.find(c => c.kind === 'mic' && 'mic:' + c.micId === v.source)?.name || 'ไมค์') : (byId(v.source)?.name || '—');
+  const vizBuf = { freq: new Uint8Array(512), time: new Float32Array(1024) };
+  function vizData(inp) {
+    const st = inp.vizState || (inp.vizState = { frame: -1, bands: new Float32Array(VIZ_BANDS), wave: new Float32Array(256), level: 0 });
+    if (st.frame === frameNo) return st;
+    st.frame = frameNo;
+    // ลดลงตามเวลาจริง (ไม่ขึ้นกับเฟรมเรต): ราว 0.86 ต่อ 1/60 วินาที
+    const t = performance.now(), fall = Math.pow(0.86, Math.min(0.5, (t - (st.t || t)) / 1000) * 60), fallLv = Math.pow(0.9, Math.min(0.5, (t - (st.t || t)) / 1000) * 60);
+    st.t = t;
+    const an = vizAnalyser(inp.viz), k = inp.viz.sens;
+    if (!an) { st.bands.fill(0); st.wave.fill(0); st.level = 0; return st; }
+    // ตัวอย่างนุ่มนวลของ AnalyserNode ทำงานต่อการเรียกหนึ่งครั้ง (ช้าลงเมื่อเฟรมเรตต่ำ) — ปิดไว้ แล้วทำให้นุ่มนวลตามเวลาเองด้านล่าง
+    // (มิเตอร์เสียงใช้แค่ข้อมูลคลื่น ไม่ได้รับผลจากค่านี้)
+    if (an.smoothingTimeConstant) an.smoothingTimeConstant = 0;
+    if (vizBuf.freq.length !== an.frequencyBinCount) vizBuf.freq = new Uint8Array(an.frequencyBinCount);
+    if (vizBuf.time.length !== an.fftSize) vizBuf.time = new Float32Array(an.fftSize);
+    an.getByteFrequencyData(vizBuf.freq);
+    an.getFloatTimeDomainData(vizBuf.time);
+    // แบ่งช่วงความถี่แบบลอการิทึม 40 Hz – 16 kHz · ขึ้นไวลงช้าให้ดูนุ่มนวล
+    const nyq = audio.ctx.sampleRate / 2, bins = vizBuf.freq.length;
+    for (let b = 0; b < VIZ_BANDS; b++) {
+      const f0 = 40 * Math.pow(400, b / VIZ_BANDS), f1 = 40 * Math.pow(400, (b + 1) / VIZ_BANDS);
+      const i0 = Math.max(1, Math.floor(f0 / nyq * bins)), i1 = Math.max(i0 + 1, Math.ceil(f1 / nyq * bins));
+      let m = 0;
+      for (let i = i0; i < i1 && i < bins; i++) m = Math.max(m, vizBuf.freq[i]);
+      const v = clamp(m / 255 * k, 0, 1);
+      st.bands[b] = v > st.bands[b] ? v : Math.max(v, st.bands[b] * fall);
+    }
+    let peak = 0;
+    const step = vizBuf.time.length / st.wave.length;
+    for (let i = 0; i < st.wave.length; i++) { const x = vizBuf.time[Math.floor(i * step)]; st.wave[i] = clamp(x * k * 2, -1, 1); peak = Math.max(peak, Math.abs(x)); }
+    const lv = clamp(peak * k * 1.6, 0, 1);
+    st.level = lv > st.level ? lv : Math.max(lv, st.level * fallLv);
+    return st;
+  }
+  function drawViz(ctx, inp, w, h) {
+    const v = inp.viz, st = vizData(inp), s = h / 720;
+    if (v.bg !== 'none') {
+      const g = ctx.createLinearGradient(0, 0, 0, h);
+      if (v.bg === 'dark') { g.addColorStop(0, '#111827'); g.addColorStop(1, '#030712'); } else { g.addColorStop(0, '#000'); g.addColorStop(1, '#000'); }
+      ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
+    }
+    ctx.save();
+    ctx.fillStyle = ctx.strokeStyle = v.color;
+    ctx.shadowColor = v.color; ctx.shadowBlur = 14 * s;
+    const n = VIZ_BANDS;
+    if (v.style === 'bars' || v.style === 'mirror') {
+      const mx = w * 0.08, gap = (w - mx * 2) / n, bw = gap * 0.62;
+      const base = v.style === 'bars' ? h * 0.88 : h / 2, maxH = v.style === 'bars' ? h * 0.62 : h * 0.36;
+      for (let b = 0; b < n; b++) {
+        const bh = Math.max(3 * s, st.bands[b] * maxH), x = mx + b * gap + (gap - bw) / 2;
+        ctx.globalAlpha = 0.55 + 0.45 * st.bands[b];
+        if (v.style === 'bars') ctx.fillRect(x, base - bh, bw, bh);
+        else ctx.fillRect(x, base - bh, bw, bh * 2);
+      }
+    } else if (v.style === 'wave') {
+      ctx.lineWidth = 4 * s; ctx.lineJoin = 'round';
+      ctx.beginPath();
+      for (let i = 0; i < st.wave.length; i++) {
+        const x = w * 0.05 + (w * 0.9) * i / (st.wave.length - 1), y = h / 2 + st.wave[i] * h * 0.32;
+        i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+      }
+      ctx.stroke();
+    } else {
+      // วงกลม: รูปตรงกลาง (ถ้าเลือก) ขยายตามความดัง + แท่งรอบวง
+      const cx = w / 2, cy = h / 2, r = h * 0.2 * (1 + st.level * 0.08);
+      for (let b = 0; b < n * 2; b++) {
+        const lv = st.bands[b < n ? b : n * 2 - 1 - b], a = b / (n * 2) * Math.PI * 2 - Math.PI / 2;
+        const len = 6 * s + lv * h * 0.16;
+        ctx.globalAlpha = 0.5 + 0.5 * lv;
+        ctx.lineWidth = Math.max(2, (Math.PI * 2 * r) / (n * 2) * 0.55); ctx.lineCap = 'round';
+        ctx.beginPath(); ctx.moveTo(cx + Math.cos(a) * (r + 8 * s), cy + Math.sin(a) * (r + 8 * s)); ctx.lineTo(cx + Math.cos(a) * (r + 8 * s + len), cy + Math.sin(a) * (r + 8 * s + len)); ctx.stroke();
+      }
+      ctx.globalAlpha = 1; ctx.shadowBlur = 0;
+      const img = byId(v.imageId), el = img && img.status === 'live' && img.el, iw = el && (el.naturalWidth || el.videoWidth), ih = el && (el.naturalHeight || el.videoHeight);
+      ctx.save();
+      ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.clip();
+      if (iw && ih) { const k = Math.max(2 * r / iw, 2 * r / ih); ctx.drawImage(el, cx - iw * k / 2, cy - ih * k / 2, iw * k, ih * k); }
+      else { ctx.fillStyle = '#1f2937'; ctx.fillRect(cx - r, cy - r, 2 * r, 2 * r); }
+      ctx.restore();
+      ctx.lineWidth = 4 * s; ctx.globalAlpha = 0.9;
+      ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.stroke();
+    }
+    ctx.restore();
   }
   const LIVE_TYPES = ['camera', 'screen', 'wireless'];
 
@@ -277,7 +384,7 @@
       case 'black': fillBlack(ctx, w, h); break;
       case 'slate': drawSlate(ctx, w, h, inp); break;
       case 'clock': drawClock(ctx, w, h, inp); break;
-      case 'title': case 'timer': case 'score': case 'ticker': fillBlack(ctx, w, h); drawGraphic(ctx, inp, w, h); break;
+      case 'title': case 'timer': case 'score': case 'ticker': case 'visualizer': fillBlack(ctx, w, h); drawGraphic(ctx, inp, w, h); break;
       case 'scene': drawScene(ctx, inp, w, h); break;
       case 'slides': {
         const c = slideCanvas(inp);
@@ -493,7 +600,7 @@
   // วาดแหล่งภาพแบบพื้นหลังโปร่งใส (รูป PNG, วิดีโอที่มี alpha, Title) — ไม่มีสัญญาณก็ไม่วาดอะไรทับ Program
   function drawSourceT(ctx, inp, w, h) {
     switch (inp.type) {
-      case 'title': case 'timer': case 'score': case 'ticker': drawGraphic(ctx, inp, w, h); return;
+      case 'title': case 'timer': case 'score': case 'ticker': case 'visualizer': drawGraphic(ctx, inp, w, h); return;
       case 'image': if (inp.status === 'live') drawFitColored(ctx, inp, inp.el, inp.el.naturalWidth, inp.el.naturalHeight, w, h); return;
       case 'bars': case 'black': case 'slate': case 'clock': case 'scene': drawSource(ctx, inp, w, h); return;
       case 'playlist':
@@ -660,6 +767,8 @@
       }
       case 'score':
         return { e: genTexture('g:' + inp.id, `${scoreClockText(inp)}|${JSON.stringify(inp.score)}`, W, H, (c, w, h) => drawScore(c, w, h, inp, scoreClockText(inp))), full: true, under: transparent ? null : [0, 0, 0, 1] };
+      case 'visualizer':
+        return { e: genTexture('g:' + inp.id, frameNo, GW, GH, (c, w, h) => drawViz(c, inp, w, h)), full: true, under: transparent ? null : [0, 0, 0, 1] };
       case 'ticker': {
         // ตัววิ่งเลื่อนทุกเฟรม: วาดและส่งขึ้น GPU เฉพาะแถบ ไม่ใช่ทั้งจอ
         const bh = Math.round(H * TICKER_BAR.h);
@@ -1393,6 +1502,7 @@
     if (inp.type === 'scene') return openSceneDialog(inp);
     if (inp.type === 'replay') return openReplayDialog(inp);
     if (inp.type === 'slides') return openSlidesDialog(inp);
+    if (inp.type === 'visualizer') return openVizDialog(inp);
     if (inp.type === 'srt' && inp.srt.mode === 'rtsp') return openRtspDialog(inp);
     if (inp.type === 'srt' && inp.srt.mode === 'rtmp') return showRtmpSenderInfo(inp);
     if (inp.type === 'title') return openTitleDialog(inp);
@@ -1766,7 +1876,7 @@
   }
 
   // มือถือ (แท็บกราฟิก): การ์ดกราฟิก แตะครั้งเดียว = ขึ้นจอ / แตะอีกครั้ง = เอาออก (ใช้ช่อง Overlay ที่ว่างให้เอง)
-  const GFX_LABEL = { title: 'ป้ายชื่อ', timer: 'นับเวลา', score: 'ป้ายคะแนน', ticker: 'ตัววิ่ง', image: 'ภาพ / โลโก้', playlist: 'Playlist' };
+  const GFX_LABEL = { title: 'ป้ายชื่อ', timer: 'นับเวลา', score: 'ป้ายคะแนน', ticker: 'ตัววิ่ง', visualizer: 'คลื่นเสียง', image: 'ภาพ / โลโก้', playlist: 'Playlist' };
   function renderQuickGfx() {
     const box = $('#m-gfx');
     if (!box) return;
@@ -2840,6 +2950,48 @@
     readDataFields(inp, f);
     renderInputs();
     refreshSourceSelects();
+  }
+
+  function addVizInput() {
+    audio.ensure();
+    const n = inputs.filter(i => i.type === 'visualizer').length + 1;
+    const inp = addInput({ type: 'visualizer', name: n > 1 ? `VISUALIZER ${n}` : 'VISUALIZER', viz: sanitizeViz({ bg: 'dark' }) });
+    openVizDialog(inp);
+    return inp;
+  }
+  async function openVizDialog(inp) {
+    const before = { ...inp.viz };
+    const chans = audio.channels.map(c => ({ id: c.kind === 'mic' ? 'mic:' + c.micId : c.inputId, name: c.name })).filter(c => c.id && c.id !== 'mic:undefined');
+    const imgs = inputs.filter(i => i.type === 'image');
+    const v = inp.viz;
+    const r = await dialog({
+      title: 'Audio Visualizer',
+      body: `
+        <label class="field"><span>ชื่อแหล่งภาพ</span><input name="name" class="input" maxlength="40" value="${esc(inp.name)}"></label>
+        <label class="field"><span>รูปแบบ</span><select name="style" class="select">${Object.entries(VIZ_STYLES).map(([k, t]) => `<option value="${k}" ${k === v.style ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
+        <label class="field"><span>ฟังเสียงจาก</span><select name="source" class="select"><option value="master">Master (เสียงรวมที่ออกอากาศ)</option>${chans.map(c => `<option value="${esc(c.id)}" ${c.id === v.source ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></label>
+        <div class="field-row">
+          <label class="field"><span>สี</span><select name="color" class="select">${TITLE_COLORS.map(c => `<option value="${c}" ${c === v.color ? 'selected' : ''}>${c}</option>`).join('')}</select></label>
+          <label class="field"><span>พื้นหลัง</span><select name="bg" class="select">${Object.entries(VIZ_BG).map(([k, t]) => `<option value="${k}" ${k === v.bg ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
+        </div>
+        <label class="field viz-img" ${v.style === 'circle' ? '' : 'hidden'}><span>รูปตรงกลาง (เช่น รูปแขก / โลโก้รายการ)</span><select name="imageId" class="select"><option value="">— ไม่มี —</option>${imgs.map(i => `<option value="${i.id}" ${i.id === v.imageId ? 'selected' : ''}>${esc(i.name)}</option>`).join('')}</select></label>
+        <label class="field"><span>ความไวต่อเสียง <b class="mono viz-sens">${v.sens.toFixed(1)}×</b></span><input name="sens" class="range" type="range" min="0.3" max="3" step="0.1" value="${v.sens}"></label>
+        <p class="note">เห็นผลทันทีบนการ์ด/Preview · ใช้เต็มจอ หรือกด 1–8 ใต้การ์ดเพื่อซ้อนบน Program (เลือกพื้นหลัง “โปร่งใส”)</p>`,
+      actions: [{ label: 'ยกเลิก' }, { label: 'บันทึก', primary: true, value: 'save' }],
+      onOpen(modal) {
+        const f = $('form', modal);
+        const apply = () => {
+          inp.viz = sanitizeViz({ style: f.style.value, source: f.source.value, color: f.color.value, bg: f.bg.value, imageId: f.imageId.value, sens: f.sens.value });
+          $('.viz-img', modal).hidden = f.style.value !== 'circle';
+          $('.viz-sens', modal).textContent = (+f.sens.value).toFixed(1) + '×';
+        };
+        modal.addEventListener('input', apply);
+        modal.addEventListener('change', apply);
+      }
+    });
+    if (r?.value !== 'save') { inp.viz = before; return; }
+    inp.name = String(r.form.name.value || '').trim().slice(0, 40) || inp.name;
+    renderInputs(); refreshSourceSelects();
   }
 
   function addTickerInput() {
@@ -5673,7 +5825,8 @@
       ['type', 'Title กราฟิกข้อความ', 'ป้ายชื่อ/ข้อความบนพื้นโปร่งใส', addTitleInput],
       ['clock', 'นาฬิกานับถอยหลัง / จับเวลา', 'นับถอยหลังก่อนเริ่ม หรือจับเวลาการแข่ง', addTimerInput],
       ['grid', 'ป้ายคะแนน', 'คะแนนสองทีม พร้อมเวลาแข่ง', addScoreInput],
-      ['type', 'ตัววิ่งข่าว', 'ข้อความวิ่งด้านล่างจอ', addTickerInput]]],
+      ['type', 'ตัววิ่งข่าว', 'ข้อความวิ่งด้านล่างจอ', addTickerInput],
+      ['sliders', 'Audio Visualizer', 'กราฟิกขยับตามเสียง สำหรับพอดแคสต์ / เพลง / แขกที่ไม่เปิดกล้อง', addVizInput]]],
     ['ภาพพื้นฐาน', [
       ['type', 'Slate ข้อความ', 'จอข้อความ เช่น “เริ่มเร็ว ๆ นี้”', () => addGenerator('slate')],
       ['clock', 'นาฬิกา', 'เวลาปัจจุบันเต็มจอ', () => addGenerator('clock')],
@@ -5761,6 +5914,7 @@
     if (inp.status !== 'live') return 'ไม่มีสัญญาณ';
     if (inp.data && inp.data.error) return 'DATA ERROR';
     if (inp.type === 'title' && inp.data && inp.data.rows && inp.data.rows.length) return `${inp.data.row + 1}/${inp.data.rows.length}`;
+    if (inp.type === 'visualizer') return `VISUALIZER · ${VIZ_STYLES[inp.viz.style]} · ${vizSourceName(inp.viz)}`;
     if (inp.type === 'slides') return inp.slides.count ? `SLIDES · หน้า ${inp.slides.page}/${inp.slides.count}` : 'SLIDES';
     if (inp.type === 'playlist') return inp.list.items.length ? `${inp.list.index + 1}/${inp.list.items.length}` : 'ว่าง';
     const meta = TYPE_META[inp.type];
@@ -5952,7 +6106,7 @@
      - ไฟล์วิดีโอ/รูปเก็บสำเนาไว้ในพื้นที่ของเบราว์เซอร์ (OPFS) จึงไม่ต้องเลือกไฟล์ใหม่
      - บันทึกเป็นไฟล์ .webmix.json เพื่อย้ายเครื่องหรือเก็บหลายรายการ (ไฟล์สื่อไม่ได้รวมอยู่ในไฟล์ ต้องเลือกใหม่บนเครื่องอื่น) */
 
-  const SHOW_TYPES = ['bars', 'black', 'slate', 'clock', 'image', 'media', 'camera', 'screen', 'wireless', 'srt', 'title', 'guest', 'timer', 'score', 'ticker', 'playlist', 'scene', 'replay', 'slides'];
+  const SHOW_TYPES = ['bars', 'black', 'slate', 'clock', 'image', 'media', 'camera', 'screen', 'wireless', 'srt', 'title', 'guest', 'timer', 'score', 'ticker', 'playlist', 'scene', 'replay', 'slides', 'visualizer'];
   const show = {
     ready: false, last: '', savedAt: 0,
     get name() { return store.get('showName', '') || 'โชว์ใหม่'; },
@@ -5984,6 +6138,7 @@
           if (i.type === 'guest') o.guest = i.guest;
           if (i.type === 'scene') o.scene = { ...i.scene, slots: [...i.scene.slots] };
           if (i.type === 'replay') o.replay = { ...i.replay };
+          if (i.type === 'visualizer') o.viz = { ...i.viz };
           if (i.type === 'slides') o.slides = { page: i.slides.page, file: i.fileName || '' };
           if (i.layout) o.layout = JSON.parse(JSON.stringify(i.layout));
           if (i.color) o.color = { ...i.color };
@@ -6081,6 +6236,9 @@
           break;
         case 'replay':
           createReplayInput({ ...base, replay: raw.replay });
+          break;
+        case 'visualizer':
+          addInput({ type: 'visualizer', ...base, viz: sanitizeViz(raw.viz) });
           break;
         case 'slides': {
           const inp = createSlidesInput({ ...base, fileName: String(raw.slides?.file || '').slice(0, 120), missing: true }, Math.max(1, +raw.slides?.page || 1));
