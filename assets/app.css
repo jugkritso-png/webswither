@@ -1608,3 +1608,8 @@ html[data-cards=l] .card-num, html[data-cards=l] .card-tally { font-size: 14px; 
 .pad-row .select { width: 64px; flex: none; }
 .pad-row > .note { flex: 1; margin: 0; }
 .pad-n { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 6px; color: #fff; font-family: var(--mono); font-size: 12px; flex: none; }
+
+/* Ducking: ไฟม่วงเมื่อกำลังลดเสียง */
+.duck-led { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-left: 6px; vertical-align: middle; background: #241a33; box-shadow: inset 0 0 0 1px #4c3a6b; }
+.duck-led.on { background: #a855f7; box-shadow: 0 0 8px rgba(168, 85, 247, .7); }
+.chip-btn.fx.is-on.is-duck { background: #6d28d9; border-color: #a855f7; color: #fff; }
