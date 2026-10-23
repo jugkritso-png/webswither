@@ -1557,3 +1557,7 @@ html[data-cards=l] .card-num, html[data-cards=l] .card-tally { font-size: 14px; 
 .cam-seg { grid-auto-columns: minmax(0, 1fr); }
 .cam-seg button { padding: 0 6px; letter-spacing: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mini.is-rec { color: #ef4444; box-shadow: inset 0 0 0 1px #ef4444; }
+/* ลากวางในภาพตัวอย่างตำแหน่ง (เมาส์และนิ้ว) */
+.layout-preview { touch-action: none; cursor: default; }
+.layout-preview:focus-visible { outline: 2px solid var(--amber, #f5a524); outline-offset: 2px; }
+.layout-hint { margin-top: -4px; }

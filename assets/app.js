@@ -1979,7 +1979,8 @@
     const result = await dialog({
       title: `ตำแหน่ง — ${inp.name}`,
       body: `
-        <canvas class="layout-preview" width="480" height="270"></canvas>
+        <canvas class="layout-preview" width="960" height="540" tabindex="0" aria-label="ลากเพื่อย้าย · ลากมุมเพื่อย่อ/ขยาย · ลากขอบเพื่อครอป"></canvas>
+        <p class="note layout-hint">ลากภาพเพื่อย้าย · ลาก<b>มุม</b>เพื่อย่อ/ขยาย · ลาก<b>ขีดกลางขอบ</b>เพื่อครอป · ดับเบิลคลิก = เต็มจอ · ปุ่มลูกศรขยับทีละนิด (Shift = มากขึ้น) · ติดแนวกลาง/ขอบเอง (กด Alt ค้างเพื่อไม่ให้ติด)</p>
         <div class="layout-presets">${LAYOUT_PRESETS.map(([label], i) => `<button type="button" data-preset="${i}">${label}</button>`).join('')}</div>
         <div class="layout-grid">
           ${slider('x', 'แนวนอน (X) %', -20, 120, pct(L.x))}${slider('y', 'แนวตั้ง (Y) %', -20, 120, pct(L.y))}
@@ -2017,13 +2018,114 @@
           if (p) { Object.assign(L, LAYOUT_PRESETS[+p.dataset.preset][1]); sync(); }
           if (k) { L.key = k.dataset.value; paintSeg(); }
         });
-        // ภาพตัวอย่าง: Program ปัจจุบันจาง ๆ เป็นพื้นหลัง แล้ววาด Input นี้ตามตำแหน่ง
+        // ภาพตัวอย่าง: Program ปัจจุบันจาง ๆ เป็นพื้นหลัง แล้ววาด Input นี้ตามตำแหน่ง — ลากวางได้โดยตรง
         const cv = $('.layout-preview', modal), ctx = cv.getContext('2d');
+        const CW = cv.width, CH = cv.height;
+        // ขนาดจุดจับเป็นพิกเซลบนจอ (ภาพตัวอย่างถูกย่อลงตามความกว้างหน้าต่าง) — นิ้วได้พื้นที่จับใหญ่กว่าเมาส์
+        const px = () => CW / Math.max(1, cv.getBoundingClientRect().width);
+        let HS = 12 * px(), drag = null, hover = null, snapLines = [];
+        // จุดจับ: มุม 4 จุด (ย่อ/ขยาย) และกลางขอบ 4 จุด (ครอป) บนส่วนที่มองเห็น
+        const handles = () => {
+          const { vis: v } = layoutRects(L, CW, CH), mx = v.x + v.w / 2, my = v.y + v.h / 2;
+          return [['nw', v.x, v.y], ['ne', v.x + v.w, v.y], ['sw', v.x, v.y + v.h], ['se', v.x + v.w, v.y + v.h],
+            ['l', v.x, my], ['r', v.x + v.w, my], ['t', mx, v.y], ['b', mx, v.y + v.h]];
+        };
+        const hitTest = (x, y) => {
+          const h = handles().find(([, hx, hy]) => Math.abs(x - hx) <= HS && Math.abs(y - hy) <= HS);
+          if (h) return h[0];
+          const { vis: v } = layoutRects(L, CW, CH);
+          return x >= v.x && x <= v.x + v.w && y >= v.y && y <= v.y + v.h ? 'move' : null;
+        };
+        const CURSOR = { nw: 'nwse-resize', se: 'nwse-resize', ne: 'nesw-resize', sw: 'nesw-resize', l: 'ew-resize', r: 'ew-resize', t: 'ns-resize', b: 'ns-resize', move: 'move' };
+        const toCanvas = e => { const r = cv.getBoundingClientRect(); return [(e.clientX - r.left) * CW / r.width, (e.clientY - r.top) * CH / r.height]; };
+        // ติดแนว: กึ่งกลาง ขอบจอ และขอบปลอดภัย 5% (ห่างไม่เกิน ~1% ของจอ)
+        const snapMove = noSnap => {
+          snapLines = [];
+          if (noSnap) return;
+          const { vis: v } = layoutRects(L, CW, CH), th = CW * 0.012;
+          const tryAxis = (edges, targets, axis) => {
+            let best = null;
+            for (const [e, off] of edges) for (const t of targets) { const d = t - e; if (Math.abs(d) <= th && (!best || Math.abs(d) < Math.abs(best.d))) best = { d, t }; }
+            if (!best) return;
+            if (axis === 'x') L.x += best.d / CW; else L.y += best.d / CH;
+            snapLines.push([axis, best.t]);
+          };
+          tryAxis([[v.x], [v.x + v.w / 2], [v.x + v.w]], [0, CW * 0.05, CW / 2, CW * 0.95, CW], 'x');
+          tryAxis([[v.y], [v.y + v.h / 2], [v.y + v.h]], [0, CH * 0.05, CH / 2, CH * 0.95, CH], 'y');
+        };
+        cv.addEventListener('pointerdown', e => {
+          HS = (e.pointerType === 'touch' ? 22 : 12) * px();
+          const [x, y] = toCanvas(e), mode = hitTest(x, y);
+          if (!mode) return;
+          e.preventDefault();
+          cv.setPointerCapture(e.pointerId);
+          cv.focus();
+          const { box, vis } = layoutRects(L, CW, CH);
+          drag = { mode, x0: x, y0: y, L0: JSON.parse(JSON.stringify(L)), box, vis };
+        });
+        cv.addEventListener('pointermove', e => {
+          const [x, y] = toCanvas(e);
+          if (!drag) { HS = 12 * px(); hover = hitTest(x, y); cv.style.cursor = CURSOR[hover] || 'default'; return; }
+          const d = drag, L0 = d.L0, dx = x - d.x0, dy = y - d.y0;
+          if (d.mode === 'move') {
+            L.x = L0.x + dx / CW; L.y = L0.y + dy / CH;
+            snapMove(e.altKey);
+          } else if (d.mode.length === 2) {
+            // มุม: มุมตรงข้ามอยู่กับที่ ย่อ/ขยายแบบคงสัดส่วน
+            const left = d.mode[1] === 'e', top = d.mode[0] === 's';
+            const fx = left ? d.vis.x : d.vis.x + d.vis.w, fy = top ? d.vis.y : d.vis.y + d.vis.h;
+            const fw = 1 - L0.crop.l - L0.crop.r, fh = 1 - L0.crop.t - L0.crop.b;
+            const s = clamp(Math.max(Math.abs(x - fx) / (CW * fw), Math.abs(y - fy) / (CH * fh)), 0.05, 1);
+            const bw = CW * s, bh = CH * s;
+            const visX = left ? fx : fx - bw * fw, visY = top ? fy : fy - bh * fh;
+            L.scale = s;
+            L.x = (visX - bw * L0.crop.l + bw / 2) / CW;
+            L.y = (visY - bh * L0.crop.t + bh / 2) / CH;
+            snapLines = [];
+          } else {
+            // ขอบ: ครอปด้านนั้น (กรอบภาพไม่ขยับ)
+            const b = d.box, c = L.crop, lim = (v, other) => clamp(v, 0, Math.min(0.45, 0.9 - other));
+            if (d.mode === 'l') c.l = lim((x - b.x) / b.w, c.r);
+            if (d.mode === 'r') c.r = lim((b.x + b.w - x) / b.w, c.l);
+            if (d.mode === 't') c.t = lim((y - b.y) / b.h, c.b);
+            if (d.mode === 'b') c.b = lim((b.y + b.h - y) / b.h, c.t);
+          }
+          L.x = clamp(L.x, -0.5, 1.5); L.y = clamp(L.y, -0.5, 1.5);
+          sync();
+        });
+        const endDrag = () => { drag = null; snapLines = []; };
+        cv.addEventListener('pointerup', endDrag);
+        cv.addEventListener('pointercancel', endDrag);
+        cv.addEventListener('dblclick', () => { Object.assign(L, { x: 0.5, y: 0.5, scale: 1 }); sync(); });
+        cv.addEventListener('keydown', e => {
+          const step = e.shiftKey ? 0.05 : 0.005, mv = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step] }[e.key];
+          if (!mv) return;
+          e.preventDefault(); e.stopPropagation();
+          L.x = clamp(L.x + mv[0], -0.5, 1.5); L.y = clamp(L.y + mv[1], -0.5, 1.5);
+          sync();
+        });
         const draw = () => {
           if (!document.body.contains(cv)) return;
-          ctx.clearRect(0, 0, cv.width, cv.height);
-          ctx.globalAlpha = 0.35; ctx.drawImage(pgmCanvas, 0, 0, cv.width, cv.height); ctx.globalAlpha = 1;
-          ctx.save(); ctx.globalAlpha = L.opacity; drawLayout(ctx, inp, L, cv.width, cv.height); ctx.restore();
+          ctx.clearRect(0, 0, CW, CH);
+          ctx.globalAlpha = 0.35; ctx.drawImage(pgmCanvas, 0, 0, CW, CH); ctx.globalAlpha = 1;
+          ctx.save(); ctx.globalAlpha = L.opacity; drawLayout(ctx, inp, L, CW, CH); ctx.restore();
+          // กรอบที่ครอปออก (จาง) + กรอบที่มองเห็น + จุดจับ
+          const { box, vis } = layoutRects(L, CW, CH);
+          ctx.save();
+          ctx.setLineDash([6, 6]); ctx.strokeStyle = 'rgba(255,255,255,.35)'; ctx.lineWidth = 1.5;
+          if (L.crop.l || L.crop.r || L.crop.t || L.crop.b) ctx.strokeRect(box.x, box.y, box.w, box.h);
+          ctx.setLineDash([]); ctx.strokeStyle = '#f5a524'; ctx.lineWidth = 2 * px(); ctx.strokeRect(vis.x, vis.y, vis.w, vis.h);
+          const u = px();
+          for (const [k, hx, hy] of handles()) {
+            const r = (k.length === 2 ? 6 : 5) * u;
+            ctx.fillStyle = (drag && drag.mode === k) || hover === k ? '#f5a524' : '#fff';
+            ctx.strokeStyle = '#111'; ctx.lineWidth = 1.5 * u;
+            if (k.length === 2) { ctx.fillRect(hx - r, hy - r, r * 2, r * 2); ctx.strokeRect(hx - r, hy - r, r * 2, r * 2); }
+            else { ctx.beginPath(); ctx.ellipse(hx, hy, k === 'l' || k === 'r' ? r * 0.6 : r * 1.4, k === 'l' || k === 'r' ? r * 1.4 : r * 0.6, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); }
+          }
+          ctx.strokeStyle = '#22d3ee'; ctx.lineWidth = 1.5 * px();
+          for (const [axis, t] of snapLines) { ctx.beginPath(); if (axis === 'x') { ctx.moveTo(t, 0); ctx.lineTo(t, CH); } else { ctx.moveTo(0, t); ctx.lineTo(CW, t); } ctx.stroke(); }
+          ctx.restore();
           requestAnimationFrame(draw);
         };
         draw();
