@@ -4440,7 +4440,7 @@ dependencies = [
 
 [[package]]
 name = "webmix-desktop"
-version = "1.1.8"
+version = "1.1.9"
 dependencies = [
  "getrandom 0.3.4",
  "jni 0.21.1",
@@ -4457,7 +4457,7 @@ dependencies = [
 
 [[package]]
 name = "webmix-gateway"
-version = "1.1.8"
+version = "1.1.9"
 dependencies = [
  "futures-util",
  "serde",
