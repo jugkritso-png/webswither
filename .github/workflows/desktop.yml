@@ -12,8 +12,9 @@ on:
         type: boolean
         default: false
 
+# รอบออก release (workflow_dispatch) แยกกลุ่มจากรอบ push — push ใหม่ระหว่าง build จะได้ไม่ยกเลิก release
 concurrency:
-  group: desktop-${{ github.ref }}
+  group: desktop-${{ github.ref }}-${{ github.event_name == 'workflow_dispatch' && 'release' || 'push' }}
   cancel-in-progress: true
 
 permissions:
