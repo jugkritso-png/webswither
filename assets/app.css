@@ -1869,3 +1869,21 @@ html.remote-mode body > *:not(#remote):not(svg):not(.toasts):not(.modal-backdrop
 #remote[data-tally=pvw] .rmt-tally-box { background: #0f7a32; border-color: #3ddc75; }
 #remote[data-tally=pvw] .rmt-tally-state, #remote[data-tally=pvw] .rmt-tally-name { color: #fff; }
 html.remote-mode:has(#remote[data-tally=pgm]) body { background: #4a0606; }
+
+/* ทอล์กแบ็ก */
+.btn-talk { gap: 5px; padding: 0 10px; touch-action: none; user-select: none; -webkit-user-select: none; }
+.btn-talk .talk-who { font-style: normal; font-size: 11px; color: #86efac; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.btn-talk .talk-who:empty { display: none; }
+.btn-talk.is-hearing { box-shadow: 0 0 0 2px #22c55e; }
+.btn-talk.is-on { background: #b91c1c; border-color: #ef4444; color: #fff; }
+.rt-talkvol { margin-top: 10px; }
+.rt-talkvol input { width: 100%; accent-color: #f5a524; }
+
+.rmt-talking { padding: 3px 8px; border-radius: 6px; background: #14532d; color: #bbf7d0; font-size: 12px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 40vw; animation: tp-blink 1s steps(2) infinite; }
+.rmt-talking[hidden] { display: none; }
+.rmt-talkbar { position: sticky; bottom: 0; order: 99; display: flex; gap: 8px; padding: 8px 0 max(8px, env(safe-area-inset-bottom)); background: linear-gradient(transparent, var(--bg, #0b0d12) 30%); z-index: 6; }
+.rmt-talkbar[hidden] { display: none; }
+.rmt-ptt { flex: 1; height: 56px; border-radius: 12px; border: 1px solid var(--line-2); background: var(--panel-2); color: var(--text); font-size: 17px; font-weight: 800; cursor: pointer; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+.rmt-ptt.is-on { background: #b91c1c; border-color: #ef4444; color: #fff; }
+.rmt-listen { width: 56px; height: 56px; border-radius: 12px; border: 1px solid var(--line-2); background: var(--panel-2); font-size: 22px; cursor: pointer; opacity: .55; }
+.rmt-listen.is-on { opacity: 1; border-color: #22c55e; }

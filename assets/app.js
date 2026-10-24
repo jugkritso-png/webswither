@@ -5247,6 +5247,7 @@
     },
     onCall(call) {
       if (this.blocked.has(call.peer)) { call.close(); return; }
+      if (call.metadata && call.metadata.talk) { remoteCtl.talkCall(call); return; }
       if (call.metadata && call.metadata.guest) { this.onGuestCall(call, String(call.metadata.guest)); return; }
       call.answer();
       call.on('stream', remote => {
@@ -5409,6 +5410,7 @@
         this.conns.set(conn, m);
         this.last = '';
         conn.send({ type: 'r-hello', role: m.role, name: m.name, msgs: this.msgs.slice(-20) });
+        conn.send({ type: 'r-talking', names: [...this.talking].concat(this.hostTalking ? ['เครื่องหลัก'] : []) });
         toast(`${m.name} (${REMOTE_ROLES[m.role].label}) เข้าร่วมแล้ว`, 'success', 3000);
         this.start();
         this.push(true);
@@ -5417,12 +5419,88 @@
       conn.on('data', msg => { const m = this.conns.get(conn); if (m) this.command(msg, m, conn); });
       conn.on('close', () => {
         const m = this.conns.get(conn);
-        if (m && this.conns.delete(conn)) { toast(`${m.name} ออกจากทีม`, 'info', 2500); this.changed(); }
+        if (m && this.conns.delete(conn)) {
+          toast(`${m.name} ออกจากทีม`, 'info', 2500);
+          if (!this.online(m) && this.talks.get(m)) this.talkDrop(m, this.talks.get(m));
+          this.changed();
+        }
       });
+    },
+    // ---- ทอล์กแบ็ก (อินเตอร์คอมแบบ party line): ทุกเครื่องได้ยินกันหมด ยกเว้นเสียงตัวเอง · ไม่เข้า Program
+    // เสียงจากรีโมตแต่ละเครื่อง → gain → ปลายทางของเครื่องอื่นทุกเครื่อง + ลำโพงเครื่องหลัก · ไมค์เครื่องหลัก (กดค้าง) → ทุกเครื่อง
+    talks: new Map(), talking: new Set(), talkMic: null, talkMicGain: null, talkMon: null, hostTalking: false,
+    talkMonitor() {
+      if (!this.talkMon) {
+        this.talkMon = audio.ctx.createGain();
+        this.talkMon.gain.value = +store.get('talkVol', 1);
+        this.talkMon.connect(audio.ctx.destination);
+      }
+      return this.talkMon;
+    },
+    talkCall(call) {
+      const md = call.metadata || {};
+      const m = this.team().find(t => t.dev === md.dev && t.token && t.token === md.token);
+      if (!m) { try { call.close(); } catch (e) {} return; }
+      if (!audio.ensure()) { try { call.close(); } catch (e) {} return; }
+      const ctx = audio.ctx;
+      const old = this.talks.get(m);
+      if (old) this.talkDrop(m, old);
+      const e = { call, dest: ctx.createMediaStreamDestination(), gain: ctx.createGain(), src: null, el: null };
+      for (const o of this.talks.values()) { o.gain.connect(e.dest); e.gain.connect(o.dest); }
+      if (this.talkMicGain) this.talkMicGain.connect(e.dest);
+      e.gain.connect(this.talkMonitor());
+      this.talks.set(m, e);
+      call.answer(e.dest.stream);
+      call.on('stream', s => {
+        if (this.talks.get(m) !== e || e.src) return;
+        // Chrome ส่งเสียงจาก WebRTC เข้า Web Audio ได้ก็ต่อเมื่อผูกกับ <audio> ด้วย (ปิดเสียงไว้)
+        e.el = new Audio(); e.el.muted = true; e.el.srcObject = s; e.el.play().catch(() => {});
+        e.src = ctx.createMediaStreamSource(s);
+        e.src.connect(e.gain);
+      });
+      call.on('close', () => { if (this.talks.get(m) === e) this.talkDrop(m, e); });
+    },
+    talkDrop(m, e) {
+      this.talks.delete(m);
+      for (const n of [e.src, e.gain]) { try { n && n.disconnect(); } catch (x) {} }
+      for (const o of this.talks.values()) { try { o.gain.disconnect(e.dest); } catch (x) {} }
+      if (this.talkMicGain) { try { this.talkMicGain.disconnect(e.dest); } catch (x) {} }
+      try { e.call.close(); } catch (x) {}
+      if (e.el) e.el.srcObject = null;
+      if (this.talking.delete(m.name)) this.talkState();
+    },
+    talkState() {
+      const names = [...this.talking].concat(this.hostTalking ? ['เครื่องหลัก'] : []);
+      this.send({ type: 'r-talking', names });
+      const b = $('#btn-talk');
+      if (b) {
+        const others = [...this.talking];
+        b.classList.toggle('is-hearing', others.length > 0);
+        $('.talk-who', b).textContent = others.length ? others.join(', ') : '';
+      }
+    },
+    async hostTalk(on) {
+      this.hostTalking = on;
+      if (on && !this.talkMic) {
+        if (!audio.ensure()) return;
+        try {
+          this.talkMic = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+        } catch (e) { toast('ใช้ไมค์สำหรับทอล์กแบ็กไม่ได้ — อนุญาตไมค์ให้หน้านี้ก่อน', 'error'); this.hostTalking = false; return; }
+        const src = audio.ctx.createMediaStreamSource(this.talkMic);
+        this.talkMicGain = audio.ctx.createGain();
+        this.talkMicGain.gain.value = 0;
+        src.connect(this.talkMicGain);
+        for (const o of this.talks.values()) this.talkMicGain.connect(o.dest);
+      }
+      if (this.talkMicGain) this.talkMicGain.gain.setTargetAtTime(this.hostTalking ? 1 : 0, audio.ctx.currentTime, 0.02);
+      $('#btn-talk')?.classList.toggle('is-on', this.hostTalking);
+      this.talkState();
     },
     online(m) { return [...this.conns.values()].includes(m); },
     // รายชื่อทีมส่งให้ทุกเครื่อง + รีเฟรชหน้าต่างทีมงานถ้าเปิดอยู่
     changed() {
+      const tb = $('#btn-talk');
+      if (tb) tb.hidden = !this.conns.size;
       this.send({ type: 'r-team', members: this.team().map(m => ({ name: m.name, role: m.role, on: this.online(m) })) });
       if (this.renderList) this.renderList();
     },
@@ -5510,6 +5588,7 @@
     command(m, mem) {
       if (!m || typeof m !== 'object') return;
       if (m.type === 'r-msg') { this.message(m.text, mem.name, mem.role); return; }
+      if (m.type === 'r-talk') { if (m.on) this.talking.add(mem.name); else this.talking.delete(mem.name); this.talkState(); return; }
       if (m.type !== 'r-cmd') return;
       const allow = REMOTE_ALLOW[mem.role];
       if (allow !== '*' && !(allow || []).includes(m.cmd)) return;
@@ -5605,7 +5684,8 @@
           <h4 class="rt-h">ทีมงานที่จับคู่แล้ว</h4>
           <div id="remote-team" class="rt-team"></div>
           <div class="rt-msgs" id="remote-msgs"></div>
-          <div class="rt-send"><input id="remote-msg" class="input" maxlength="200" placeholder="ส่งข้อความถึงทุกตำแหน่ง เช่น “เตรียมตัด กล้อง 2”"><button type="button" class="btn" id="remote-msg-send">ส่ง</button></div>`,
+          <div class="rt-send"><input id="remote-msg" class="input" maxlength="200" placeholder="ส่งข้อความถึงทุกตำแหน่ง เช่น “เตรียมตัด กล้อง 2”"><button type="button" class="btn" id="remote-msg-send">ส่ง</button></div>
+          <label class="field rt-talkvol"><span>ทอล์กแบ็ก: ระดับเสียงทีมที่เครื่องนี้ (ไม่เข้า Program — ใช้หูฟังกันเสียงย้อนเข้าไมค์รายการ) · พูดกลับ: กดค้างปุ่ม 🎙 ด้านบน</span><input type="range" id="remote-talkvol" min="0" max="2" step="0.05" value="${+store.get('talkVol', 1)}"></label>`,
         actions: [{ label: 'เปลี่ยนรหัสจับคู่', value: 'repin' }, { label: 'คัดลอกลิงก์', value: 'copy' }, { label: 'ปิด', primary: true }],
         onOpen: modal => {
           const showRole = k => {
@@ -5633,6 +5713,7 @@
           $('#remote-team', modal).addEventListener('click', e => { const row = e.target.closest('[data-i]'); if (row && e.target.dataset.f === 'unpair') this.unpair(this.team()[+row.dataset.i]); });
           const sendMsg = () => { const el = $('#remote-msg', modal); this.message(el.value, 'เครื่องหลัก', 'host'); el.value = ''; };
           $('#remote-msg-send', modal).addEventListener('click', sendMsg);
+          $('#remote-talkvol', modal).addEventListener('input', e => { store.set('talkVol', +e.target.value); if (this.talkMon) this.talkMon.gain.value = +e.target.value; });
           $('#remote-msg', modal).addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); sendMsg(); } });
         }
       });
@@ -8258,6 +8339,11 @@ onmessage = async e => {
     setMobileView(['switch', 'audio', 'graphics'].includes(store.get('mview', 'switch')) ? store.get('mview', 'switch') : 'switch');
     transport.init();
     $('#lufs').addEventListener('click', e => { audio.ensure(); lufs.openMenu(e.currentTarget); });
+    // ทอล์กแบ็ก: กดค้างเพื่อพูด
+    const talkBtn = $('#btn-talk');
+    const talkOff = () => { if (remoteCtl.hostTalking) remoteCtl.hostTalk(false); };
+    talkBtn.addEventListener('pointerdown', e => { e.preventDefault(); try { talkBtn.setPointerCapture(e.pointerId); } catch (x) {} remoteCtl.hostTalk(true); });
+    for (const ev of ['pointerup', 'pointercancel', 'lostpointercapture']) talkBtn.addEventListener(ev, talkOff);
     $('#m-tabs').addEventListener('click', e => {
       const v = e.target.closest('button[data-mview]');
       if (v) { setMobileView(v.dataset.mview); return; }

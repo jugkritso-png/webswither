@@ -44,7 +44,7 @@
     root.id = 'remote';
     root.innerHTML = `
       <header class="rmt-head"><span class="rmt-dot"></span><b>WebMix</b><span class="rmt-role"></span><span class="rmt-status">กำลังเชื่อมต่อ…</span>
-        <span class="rmt-badges"></span><button class="rmt-teambtn" data-r="team" aria-label="ทีมงานและข้อความ">${icon('users')}<i class="rmt-unread" hidden></i></button></header>
+        <span class="rmt-badges"></span><span class="rmt-talking" hidden></span><button class="rmt-teambtn" data-r="team" aria-label="ทีมงานและข้อความ">${icon('users')}<i class="rmt-unread" hidden></i></button></header>
       <form class="rmt-pair" hidden>
         <h2>จับคู่กับเครื่องหลัก</h2>
         <p class="rmt-pair-msg note">ใส่รหัสจับคู่ 6 หลักที่แสดงบนเครื่องหลัก (ปุ่ม “รีโมต” ด้านบนของเครื่องหลัก)</p>
@@ -59,6 +59,10 @@
         <div class="rmt-send"><input class="input" maxlength="200" placeholder="ข้อความถึงทีม"><button class="btn" data-r="send">ส่ง</button></div>
         <div class="rmt-quick">${['พร้อม', 'รอสักครู่', 'ตัดได้', 'มีปัญหา'].map(t => `<button data-r="quick" data-v="${t}">${t}</button>`).join('')}</div>
       </aside>
+      <div class="rmt-talkbar" hidden>
+        <button class="rmt-listen is-on" data-r="listen" title="ฟังเสียงทีม (ทอล์กแบ็ก) — แตะเพื่อปิด/เปิด">🔊</button>
+        <button class="rmt-ptt" data-r="ptt" title="กดค้างเพื่อพูดกับทีม">🎙 กดค้างเพื่อพูด</button>
+      </div>
       <div class="rmt-body">
         <section data-sec="tally" class="rmt-tally">
           <label class="rmt-tally-pick"><span>กล้องของฉัน</span><select class="select"></select></label>
@@ -99,6 +103,48 @@
     const form = $('.rmt-pair', root);
 
     let peer = null, conn = null, st = null, retry = 0, stopped = false, unread = 0, team = [], msgs = [];
+    // ทอล์กแบ็ก: ต่อสายเสียงกับเครื่องหลักด้วยเสียงเงียบก่อน (ไม่ต้องขอไมค์) — กดค้างปุ่มพูดจึงขอไมค์และสลับเข้าแทน
+    const talk = { call: null, ctx: null, mic: null, sender: null, el: new Audio(), pressing: false, listen: store.get('rmtListen', true) };
+    talk.el.autoplay = true;
+    WM.remoteTalk = talk;
+    function talkStart() {
+      if (!peer || !peer.open || !mem.token || (talk.call && talk.call.open !== false && talk.callPeer === peer)) return;
+      try {
+        if (!talk.ctx) talk.ctx = new (window.AudioContext || window.webkitAudioContext)();
+        const silent = talk.ctx.createMediaStreamDestination();
+        const c = peer.call(target, silent.stream, { metadata: { talk: 1, dev, token: mem.token } });
+        if (!c) return;
+        talk.call = c; talk.callPeer = peer; talk.sender = null;
+        c.on('stream', s => { talk.el.srcObject = s; talk.el.muted = !talk.listen; talk.el.play().catch(() => {}); });
+        c.on('close', () => { if (talk.call === c) { talk.call = null; setTimeout(() => { if (conn && conn.open) talkStart(); }, 3000); } });
+        c.on('error', () => {});
+        $('.rmt-talkbar', root).hidden = false;
+      } catch (e) {}
+    }
+    async function talkOn() {
+      talk.pressing = true;
+      $('.rmt-ptt', root).classList.add('is-on');
+      if (!talk.call || !talk.call.peerConnection) talkStart();
+      try {
+        if (!talk.mic) talk.mic = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+        const track = talk.mic.getAudioTracks()[0];
+        const pc = talk.call && talk.call.peerConnection;
+        const sender = pc && pc.getSenders().find(x => !x.track || x.track.kind === 'audio');
+        if (sender && sender.track !== track) await sender.replaceTrack(track);
+        track.enabled = talk.pressing;
+        if (talk.pressing) send({ type: 'r-talk', on: true });
+      } catch (e) {
+        talk.pressing = false; $('.rmt-ptt', root).classList.remove('is-on');
+        toast('ใช้ไมค์ไม่ได้ — อนุญาตไมค์ให้หน้านี้ในการตั้งค่าเบราว์เซอร์');
+      }
+    }
+    function talkOff() {
+      if (!talk.pressing) return;
+      talk.pressing = false;
+      $('.rmt-ptt', root).classList.remove('is-on');
+      if (talk.mic) talk.mic.getAudioTracks().forEach(t => { t.enabled = false; });
+      send({ type: 'r-talk', on: false });
+    }
     const setStatus = (text, cls) => {
       $('.rmt-status', root).textContent = text;
       root.dataset.conn = cls;
@@ -207,9 +253,17 @@
         if (m.msgs) { msgs = m.msgs; renderTeam(); }
         if (m.type === 'r-role') toast(`เครื่องหลักเปลี่ยนตำแหน่งของคุณเป็น “${ROLES[role].label}”`);
         applyRole();
+        if (m.type === 'r-hello') talkStart();
         return;
       }
       if (m.type === 'r-team') { team = m.members || []; renderTeam(); return; }
+      if (m.type === 'r-talking') {
+        const names = (m.names || []).filter(n => n !== mem.name);
+        const t = $('.rmt-talking', root);
+        t.hidden = !names.length;
+        t.textContent = names.length ? `🔊 ${names.join(', ')}` : '';
+        return;
+      }
       if (m.type === 'r-msg') {
         msgs = msgs.concat(m).slice(-50);
         renderTeam();
@@ -388,6 +442,13 @@
       const b = e.target.closest('[data-r]');
       if (!b || b.tagName === 'INPUT' || b.disabled) return;
       const r = b.dataset.r, v = b.dataset.v;
+      if (r === 'listen') {
+        talk.listen = !talk.listen; store.set('rmtListen', talk.listen);
+        talk.el.muted = !talk.listen; if (talk.listen) talk.el.play().catch(() => {});
+        b.classList.toggle('is-on', talk.listen); b.textContent = talk.listen ? '🔊' : '🔇';
+        return;
+      }
+      if (r === 'ptt') return;
       if (r === 'team') {
         const p = $('.rmt-team', root); p.hidden = !p.hidden;
         if (!p.hidden) { unread = 0; $('.rmt-unread', root).hidden = true; }
@@ -421,6 +482,15 @@
       else cmd(r);
       if (navigator.vibrate) navigator.vibrate(15);
     });
+    // เบราว์เซอร์มือถือเล่นเสียงได้หลังผู้ใช้แตะจอ — แตะครั้งแรกเปิดเสียงทอล์กแบ็กให้
+    root.addEventListener('pointerdown', () => {
+      if (talk.ctx && talk.ctx.state === 'suspended') talk.ctx.resume().catch(() => {});
+      if (talk.listen && talk.el.srcObject && talk.el.paused) talk.el.play().catch(() => {});
+    }, true);
+    const ptt = $('.rmt-ptt', root);
+    ptt.addEventListener('pointerdown', e => { e.preventDefault(); try { ptt.setPointerCapture(e.pointerId); } catch (x) {} talkOn(); });
+    for (const ev of ['pointerup', 'pointercancel', 'lostpointercapture']) ptt.addEventListener(ev, talkOff);
+    ptt.addEventListener('contextmenu', e => e.preventDefault());
     root.addEventListener('change', e => {
       if (!e.target.closest('.rmt-tally-pick')) return;
       mem.cam = e.target.value; store.set(memKey, { ...mem, role });
