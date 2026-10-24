@@ -39,7 +39,8 @@ const results = []; const ok = (n, c, x = '') => results.push(`${c ? 'PASS' : 'F
   await p.evaluate(() => { window.webmix.macros[0].steps = [{ a: 'wait', v: 5 }, { a: 'ftbOn', v: '' }]; });
   await p.click('.macro-run'); await p.waitForTimeout(300); await p.click('.macro-run'); await p.waitForTimeout(800);
   ok('pressing it again stops it', await p.evaluate(() => !document.querySelector('.macro-row.is-running') && !window.webmix.ftb.target));
-  // เริ่มเองตามเวลา
+  // เริ่มเองตามเวลา — ถ้าเหลือไม่ถึง 4 วินาทีจะขึ้นนาทีใหม่ รอให้ขึ้นนาทีใหม่ก่อน (กันนาทีเปลี่ยนระหว่างรอ)
+  await p.waitForFunction(() => new Date().getSeconds() < 56, null, { timeout: 10000 });
   await p.evaluate(() => { const d = new Date(); const m = window.webmix.macros[0]; m.steps = [{ a: 'ftbOn', v: '' }]; m.at = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; });
   await p.waitForTimeout(1500);
   ok('runs by itself at its start time', await p.evaluate(() => window.webmix.ftb.target === 1));
