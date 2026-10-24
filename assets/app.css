@@ -219,6 +219,8 @@ button { -webkit-appearance: none; appearance: none; }
 .btn-sm { height: 28px; padding: 0 9px; font-size: 11.5px; }
 .btn-icon { width: 34px; padding: 0; }
 .btn-sm.btn-icon { width: 28px; }
+.btn-remote { padding: 0 10px; }
+@media (max-width: 1180px) { .btn-remote span { display: none; } .btn-remote { width: 34px; padding: 0; } }
 .btn-primary { background: linear-gradient(#2f6fe8, #2158c9); border-color: #4f86f0; color: #fff; }
 .btn-primary:hover { background: linear-gradient(#3b7af0, #2a62d4); border-color: #6a99f3; }
 .btn-green { background: linear-gradient(#18a34c, #12803b); border-color: #2fc463; color: #fff; }

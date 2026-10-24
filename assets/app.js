@@ -6963,6 +6963,7 @@ onmessage = async e => {
       ['folder', 'โชว์: บันทึก / เปิด / เริ่มใหม่', openShowDialog],
       ['phone', 'เชื่อมกล้องมือถือเครื่องอื่น (QR)', showWirelessDialog],
       ['grid', 'Multiview — ดูทุกภาพ แตะเพื่อสลับ', () => multiview.open()],
+      ['phone', 'รีโมตคอนโทรล — สั่งงานจากแท็บเล็ต/มือถืออีกเครื่อง', () => remoteCtl.openDialog()],
       ...(desktop && desktop.mobile ? [] : [['external', 'หน้าต่าง Program Output', openOutputWindow]]),
       ['sliders', 'ตั้งค่า', () => openSettings()],
       ['sliders', 'ควบคุมด้วย MIDI / Stream Deck', () => openSettings('control')],
