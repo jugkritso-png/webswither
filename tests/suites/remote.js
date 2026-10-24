@@ -128,6 +128,27 @@ const until = async (fn, ms = 15000) => { const end = Date.now() + ms; while (Da
   ok('unpaired device drops back to the pairing form', await until(() => sw.evaluate(() => !document.querySelector('.rmt-pair').hidden && /ยกเลิกการจับคู่/.test(document.querySelector('.rmt-pair-msg').textContent))));
   await host.click('.modal-foot .btn-primary');
 
+  // ตากล้อง: ไฟ Tally เต็มจอ
+  await host.click('[data-action=remote]'); await host.waitForSelector('#remote-link');
+  const camLink = await linkFor('camera'); await host.click('.modal-foot .btn-primary');
+  const cam = await join(camLink, 'อี');
+  ok('camera operator pairs; sees only the tally panel', await until(async () => (await conn(cam)) === 'ok' && await cam.isVisible('.rmt-tally-box')) && !(await cam.isVisible('.rmt-mons')) && !(await cam.isVisible('.rmt-btn.cut')));
+  const tid = await host.evaluate(() => { const w = window.webmix; return w.inputs.find(i => i.id !== w.state.programId && i.id !== w.state.previewId && i.type !== 'title').id; });
+  await cam.selectOption('.rmt-tally-pick select', tid);
+  const tally = () => cam.evaluate(() => [document.getElementById('remote').dataset.tally || '', document.querySelector('.rmt-tally-state').textContent]);
+  ok('standby while the camera is not used', await until(async () => (await tally()).join() === ',STANDBY'), JSON.stringify(await tally()));
+  await host.evaluate(id => window.webmix.setPreview(id), tid);
+  ok('green PREVIEW when it is in Preview', await until(async () => (await tally()).join() === 'pvw,PREVIEW'), JSON.stringify(await tally()));
+  await host.evaluate(() => window.webmix.cut());
+  ok('red ON AIR when it is cut to Program', await until(async () => (await tally()).join() === 'pgm,ON AIR'), JSON.stringify(await tally()));
+  ok('the camera\'s own picture is shown', await until(() => cam.evaluate(() => (document.querySelector('.rmt-tally-img').src || '').startsWith('data:image/jpeg'))));
+  await cam.screenshot({ path: S + '/remote-tally.png' });
+  await host.evaluate(() => window.webmix.cut());
+  await host.evaluate(id => { const w = window.webmix; w.toggleInputOverlay(id, 3); }, tid);
+  ok('also ON AIR while it is on an overlay', await until(async () => (await tally())[0] === 'pgm'));
+  await host.evaluate(id => window.webmix.toggleInputOverlay(id, 3), tid);
+  ok('camera position cannot switch', await host.evaluate(() => { const r = window.webmix.remote; const m = [...r.conns.values()].find(x => x.role === 'camera'); const before = window.webmix.state.programId; r.command({ type: 'r-cmd', cmd: 'cut' }, m); return window.webmix.state.programId === before; }));
+
   // เปลี่ยนรหัสจับคู่: เครื่องที่จับคู่ไว้ยังใช้ได้ · ใส่รหัสผิด 5 ครั้ง → ล็อก
   const bad = await (await device()).newPage();
   await bad.goto(links.monitor); await bad.waitForSelector('.rmt-pair:not([hidden])'); await bad.screenshot({ path: S + '/remote-pair.png' }); await bad.fill('.rmt-pair [name=name]', 'x');

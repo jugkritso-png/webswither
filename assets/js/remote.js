@@ -11,6 +11,7 @@
     sound: { label: 'ควบคุมเสียง', desc: 'เฟดเดอร์ · ปิดเสียง · เสียงเอฟเฟกต์ · เพลง' },
     cg: { label: 'กราฟิก CG', desc: 'Title · ตัววิ่ง · สกอร์ · Overlay' },
     insert: { label: 'อินเสิร์ต', desc: 'คลิปวิดีโอ · Playlist · สไลด์ · รีเพลย์' },
+    camera: { label: 'ตากล้อง (Tally)', desc: 'ไฟ Tally เต็มจอ · ภาพกล้องตัวเอง' },
     monitor: { label: 'มอนิเตอร์', desc: 'ดูภาพ/เสียงอย่างเดียว' },
     director: { label: 'ผู้กำกับ', desc: 'ควบคุมได้ทุกอย่าง' }
   };
@@ -20,6 +21,7 @@
     sound: ['mons', 'audio', 'fx'],
     cg: ['mons', 'ovl', 'gfx'],
     insert: ['mons', 'ins', 'mv'],
+    camera: ['tally'],
     monitor: ['mons', 'mv', 'audio']
   };
   const GFX = ['title', 'ticker', 'score', 'timer', 'chat', 'captions', 'visualizer'];
@@ -58,6 +60,16 @@
         <div class="rmt-quick">${['พร้อม', 'รอสักครู่', 'ตัดได้', 'มีปัญหา'].map(t => `<button data-r="quick" data-v="${t}">${t}</button>`).join('')}</div>
       </aside>
       <div class="rmt-body">
+        <section data-sec="tally" class="rmt-tally">
+          <label class="rmt-tally-pick"><span>กล้องของฉัน</span><select class="select"></select></label>
+          <div class="rmt-tally-box">
+            <b class="rmt-tally-state">STANDBY</b>
+            <span class="rmt-tally-name"></span>
+            <img class="rmt-tally-img" alt="">
+            <small class="rmt-tally-pgm"></small>
+          </div>
+          <button class="rmt-btn small rmt-tally-fs" data-r="fs">เต็มจอ</button>
+        </section>
         <section data-sec="mons" class="rmt-mons">
           <figure class="rmt-mon pvw"><img alt=""><figcaption>PREVIEW <span class="rmt-pvw-name"></span></figcaption></figure>
           <figure class="rmt-mon pgm"><img alt=""><figcaption>PROGRAM <span class="rmt-pgm-name"></span> <em class="rmt-oa mono"></em> <em class="rmt-rem mono"></em></figcaption></figure>
@@ -218,7 +230,11 @@
         if (m.pgm) $('.rmt-mon.pgm img', root).src = m.pgm;
         if (m.pvw) $('.rmt-mon.pvw img', root).src = m.pvw;
       }
-      if (m.type === 'r-mv' && m.mv) for (const [id, src] of Object.entries(m.mv)) { const img = $(`.rmt-in[data-v="${CSS.escape(id)}"] img`, root); if (img) img.src = src; }
+      if (m.type === 'r-mv' && m.mv) {
+        for (const [id, src] of Object.entries(m.mv)) { const img = $(`.rmt-in[data-v="${CSS.escape(id)}"] img`, root); if (img) img.src = src; }
+        const ti = $('.rmt-tally-img', root);
+        if (role === 'camera' && m.mv[mem.cam]) ti.src = m.mv[mem.cam];
+      }
     }
     const fmt = ms => { const s = Math.floor(ms / 1000); return [Math.floor(s / 3600), Math.floor(s / 60) % 60, s % 60].map(n => String(n).padStart(2, '0')).join(':'); };
     function toast(text) {
@@ -262,6 +278,7 @@
       part('ovl', st.ovl, () => {
         $('.rmt-ovl', root).innerHTML = st.ovl.map((c, i) => `<button class="rmt-ov ${c.on ? 'is-on' : ''} ${c.name ? '' : 'empty'}" data-r="ovl" data-v="${i}"><b>${i + 1}</b><span>${esc(c.name || 'ว่าง')}</span></button>`).join('');
       });
+      if (role === 'camera') renderTally(); else delete root.dataset.tally;
       renderGfx();
       renderIns();
       part('audio', [role, st.audio.map(a => [a.key, a.name, a.muted])], () => {
@@ -297,6 +314,27 @@
       });
     }
     // กราฟิก: แต่ละชิ้นมีปุ่มขึ้นจอ + ช่องแก้ข้อความ (Title / ตัววิ่ง) / ปุ่มสกอร์ / นาฬิกา
+    // Tally: แดง = ออกอากาศ (Program / Overlay / ในซีน) · เขียว = Preview · เทา = พัก
+    function renderTally() {
+      const sel = $('.rmt-tally-pick select', root);
+      part('tallylist', st.inputs.map(i => [i.id, i.n, i.name]), () => {
+        sel.innerHTML = '<option value="">— เลือกกล้อง —</option>' + st.inputs.map(i => `<option value="${esc(i.id)}">${i.n}. ${esc(i.name)}</option>`).join('');
+      });
+      if (!mem.cam || !st.inputs.some(i => i.id === mem.cam)) {
+        const guess = st.inputs.find(i => ['camera', 'wireless', 'srt', 'guest'].includes(i.t));
+        if (!mem.cam && guess) { mem.cam = guess.id; store.set(memKey, { ...mem, role }); }
+      }
+      sel.value = mem.cam || '';
+      const me = st.inputs.find(i => i.id === mem.cam);
+      const t = !me ? '' : me.air ? 'pgm' : me.id === st.pvw ? 'pvw' : '';
+      if (t === 'pgm' && root.dataset.tally !== 'pgm' && navigator.vibrate) navigator.vibrate([200, 80, 200]);
+      root.dataset.tally = t;
+      $('.rmt-tally-state', root).textContent = !me ? 'เลือกกล้องด้านบน' : t === 'pgm' ? 'ON AIR' : t === 'pvw' ? 'PREVIEW' : 'STANDBY';
+      $('.rmt-tally-name', root).textContent = me ? `${me.n}. ${me.name}` : '';
+      $('.rmt-tally-img', root).dataset.v = mem.cam || '';
+      const pg = st.inputs.find(i => i.id === st.pgm);
+      $('.rmt-tally-pgm', root).textContent = pg ? `Program: ${pg.name}` : '';
+    }
     function renderGfx() {
       const box = $('.rmt-gfx', root);
       const list = st.inputs.filter(i => GFX.includes(i.t));
@@ -357,6 +395,7 @@
       }
       if (r === 'send') { const el = $('.rmt-send input', root); sendMsg(el.value); el.value = ''; return; }
       if (r === 'quick') { sendMsg(v); return; }
+      if (r === 'fs') { const d = document.documentElement; (document.fullscreenElement ? document.exitFullscreen() : d.requestFullscreen?.())?.catch?.(() => {}); return; }
       if (readOnly()) return;
       if (r === 'in') {
         if (role === 'insert' || b.classList.contains('rmt-ix-pvw')) cmd('pvw', { id: v });
@@ -381,6 +420,12 @@
       else if (r === 'ovl' || r === 'macro' || r === 'mute' || r === 'trans') cmd(r, { v });
       else cmd(r);
       if (navigator.vibrate) navigator.vibrate(15);
+    });
+    root.addEventListener('change', e => {
+      if (!e.target.closest('.rmt-tally-pick')) return;
+      mem.cam = e.target.value; store.set(memKey, { ...mem, role });
+      $('.rmt-tally-img', root).removeAttribute('src');
+      if (st) renderTally();
     });
     root.addEventListener('keydown', e => {
       if (e.key === 'Enter' && e.target.closest('.rmt-send')) { e.preventDefault(); $('[data-r=send]', root).click(); }

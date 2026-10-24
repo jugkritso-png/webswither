@@ -5367,6 +5367,7 @@
     sound: ['vol', 'mute', 'sfx', 'music'],
     cg: ['ovl', 'gfx', 'title', 'ticker', 'cap', 'chathide', 'timer', 'score'],
     insert: ['media', 'pvw'],
+    camera: [],
     monitor: []
   };
   const randCode = (n, abc) => Array.from(crypto.getRandomValues(new Uint8Array(n)), b => abc[b % abc.length]).join('');
@@ -5456,7 +5457,7 @@
     state() {
       const chans = [audio.masterStrip, ...audio.channels];
       const inp = i => {
-        const o = { id: i.id, n: inputs.indexOf(i) + 1, name: i.name, t: i.type, live: i.status === 'live' };
+        const o = { id: i.id, n: inputs.indexOf(i) + 1, name: i.name, t: i.type, live: i.status === 'live', air: isOnAir(i.id) };
         if (i.type === 'title') Object.assign(o, { hl: i.title.headline, sub: i.title.subtitle });
         else if (i.type === 'ticker') o.items = i.ticker.items.join('\n');
         else if (i.type === 'score') Object.assign(o, { ta: i.score.teamA, tb: i.score.teamB, sa: +i.score.scoreA || 0, sb: +i.score.scoreB || 0 });
@@ -5492,7 +5493,7 @@
         this.thumbAt = performance.now();
         const snap = (src, w, h, q) => { const c = document.createElement('canvas'); c.width = w; c.height = h; c.getContext('2d').drawImage(src, 0, 0, w, h); return c.toDataURL('image/jpeg', q); };
         try { this.send({ type: 'r-thumbs', pgm: snap(pgmCanvas, 384, 216, 0.6), pvw: snap(pvwCanvas, 384, 216, 0.6) }); } catch (e) {}
-        const wantMv = m => ['director', 'switcher', 'insert', 'monitor'].includes(m.role);
+        const wantMv = m => ['director', 'switcher', 'insert', 'monitor', 'camera'].includes(m.role);
         if ([...this.conns.values()].some(wantMv)) {
           const mv = {};
           for (const i of inputs) {

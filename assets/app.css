@@ -1853,3 +1853,19 @@ html.remote-mode body > *:not(#remote):not(svg):not(.toasts):not(.modal-backdrop
 .menu .menu-note { padding: 6px 12px 8px; font-size: 11px; color: var(--dim); max-width: 300px; white-space: normal; }
 @media (max-width: 360px) { .lufs .lu-tg { display: none; } }
 .lufs .lu-tg { margin-left: auto; }
+
+/* รีโมตตำแหน่งตากล้อง: ไฟ Tally เต็มจอ */
+.rmt-tally { display: flex; flex-direction: column; gap: 10px; min-height: calc(100vh - 80px); }
+.rmt-tally-pick { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+.rmt-tally-pick .select { flex: 1; }
+.rmt-tally-box { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; border-radius: 14px; background: #1b1d22; border: 4px solid #2a2d33; padding: 16px; text-align: center; transition: background .15s, border-color .15s; }
+.rmt-tally-state { font-size: clamp(42px, 14vw, 120px); font-weight: 900; letter-spacing: .06em; color: #9aa0a8; line-height: 1; }
+.rmt-tally-name { font-size: clamp(18px, 5vw, 34px); font-weight: 700; color: #e6e8eb; }
+.rmt-tally-img { width: min(100%, 480px); aspect-ratio: 16 / 9; object-fit: cover; border-radius: 8px; background: #000; }
+.rmt-tally-img:not([src]) { visibility: hidden; }
+.rmt-tally-pgm { color: rgba(255, 255, 255, .7); font-size: 14px; }
+#remote[data-tally=pgm] .rmt-tally-box { background: #c01414; border-color: #ff4d4d; }
+#remote[data-tally=pgm] .rmt-tally-state, #remote[data-tally=pgm] .rmt-tally-name { color: #fff; }
+#remote[data-tally=pvw] .rmt-tally-box { background: #0f7a32; border-color: #3ddc75; }
+#remote[data-tally=pvw] .rmt-tally-state, #remote[data-tally=pvw] .rmt-tally-name { color: #fff; }
+html.remote-mode:has(#remote[data-tally=pgm]) body { background: #4a0606; }
