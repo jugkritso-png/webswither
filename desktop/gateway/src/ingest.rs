@@ -1,6 +1,7 @@
-//! รับสัญญาณภาพเข้ามาเป็น Input ของ WebMix: SRT (รอรับ / ดึง), กล้อง IP (RTSP) และ RTMP (OBS / มือถือ / โดรน ส่งเข้ามา)
+//! รับสัญญาณภาพเข้ามาเป็น Input ของ WebMix: SRT (รอรับ / ดึง), กล้อง IP (RTSP), RTMP (OBS / มือถือ / โดรน ส่งเข้ามา) และ NDI / OMT ในวง LAN
 //! เบราว์เซอร์เล่นสัญญาณเหล่านี้เองไม่ได้ จึงแปลงเป็น MPEG-TS ส่งผ่าน WebSocket ให้ mpegts.js เล่น
-//!   ws /srt-in        ช่องควบคุม: client → { type: "open", mode: listener|caller|rtsp|rtmp, port, url, streamid, passphrase, latency, key }
+//!   ws /srt-in        ช่องควบคุม: client → { type: "open", mode: listener|caller|rtsp|rtmp|ndi|omt, port, url, streamid, passphrase, latency, key, source }
+//!                     client → { type: "sources", proto: ndi|omt } → server { type: "sources", proto, list, error } (ก่อน open — ใช้ค้นหาแหล่งในวง LAN)
 //!                     server → { type: "opened", id, port } แล้ว { type: "status", state: waiting|connecting|live|error, message, info, transcode }
 //!   ws /srt-in/data?id=…  ข้อมูลภาพ MPEG-TS (binary)
 //! วิดีโอ H.264 ส่งต่อโดยไม่เข้ารหัสใหม่ — codec อื่น (เช่น HEVC จากกล้อง IP) แปลงเป็น H.264 ให้อัตโนมัติ
@@ -23,7 +24,7 @@ use tokio_tungstenite::tungstenite::protocol::CloseFrame;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::WebSocketStream;
 
-use crate::{is_srt, quiet, Config};
+use crate::{is_srt, netvideo, quiet, Config};
 
 type Sink = SplitSink<WebSocketStream<TcpStream>, Message>;
 type Source = SplitStream<WebSocketStream<TcpStream>>;
@@ -102,7 +103,7 @@ impl Spec {
     pub fn parse(v: &Value, srt_supported: bool) -> Result<Spec, String> {
         let s = |k: &str| v.get(k).and_then(Value::as_str).unwrap_or("").trim().to_string();
         let mode = match v.get("mode").and_then(Value::as_str) {
-            Some(m @ ("caller" | "rtsp" | "rtmp")) => m.to_string(),
+            Some(m @ ("caller" | "rtsp" | "rtmp" | "ndi" | "omt")) => m.to_string(),
             _ => "listener".to_string(),
         };
         if (mode == "listener" || mode == "caller") && !srt_supported {
@@ -130,6 +131,12 @@ impl Spec {
                 spec.key = s("key");
                 if !valid_key(&spec.key) {
                     return Err("Stream key ต้องเป็นตัวอักษรอังกฤษ/ตัวเลข 4–64 ตัว".into());
+                }
+            }
+            "ndi" | "omt" => {
+                spec.target = s("source").chars().filter(|c| !c.is_control()).take(200).collect();
+                if spec.target.is_empty() {
+                    return Err("ยังไม่ได้เลือกแหล่งสัญญาณ".into());
                 }
             }
             "caller" => {
@@ -261,6 +268,20 @@ pub async fn control(mut sink: Sink, mut source: Source, cfg: std::sync::Arc<Con
         match source.next().await {
             Some(Ok(Message::Text(t))) => {
                 let Ok(v) = serde_json::from_str::<Value>(&t) else { continue };
+                if v.get("type").and_then(Value::as_str) == Some("sources") {
+                    let name = v.get("proto").and_then(Value::as_str).unwrap_or("").to_string();
+                    let Some(proto) = netvideo::Proto::parse(&name) else { continue };
+                    // ค้นหาใช้เวลาได้ถึง ~1.5 วินาที — ทำในเธรดแยก
+                    let r = tokio::task::spawn_blocking(move || netvideo::sources(proto)).await.unwrap_or_else(|e| Err(e.to_string()));
+                    let msg = match r {
+                        Ok(list) => json!({ "type": "sources", "proto": name, "list": list }),
+                        Err(e) => json!({ "type": "sources", "proto": name, "list": [], "error": e }),
+                    };
+                    if sink.send(send_json(msg)).await.is_err() {
+                        return;
+                    }
+                    continue;
+                }
                 if v.get("type").and_then(Value::as_str) != Some("open") {
                     continue;
                 }
@@ -290,6 +311,7 @@ pub async fn control(mut sink: Sink, mut source: Source, cfg: std::sync::Arc<Con
     let label = match spec.mode.as_str() {
         "listener" => format!("UDP {}", spec.port),
         "rtmp" => format!("RTMP {}", spec.port),
+        "ndi" | "omt" => spec.target.clone(),
         _ => mask_creds(&spec.target).split('?').next().unwrap_or("").to_string(),
     };
     eprintln!("{tag} input open {} {label}", spec.mode);
@@ -358,6 +380,9 @@ pub async fn control(mut sink: Sink, mut source: Source, cfg: std::sync::Arc<Con
 
 /// เปิด ffmpeg รับสัญญาณหนึ่งรอบ จนกว่าจะหลุด/ถูกปิด — คืนข้อความผิดพลาด (ถ้ามี)
 async fn run_once(spec: &Spec, ing: &Arc<Ingest>, shared: &Arc<Shared>, cfg: &Config, stop: &Notify, tag: &str) -> Option<String> {
+    if let Some(proto) = netvideo::Proto::parse(&spec.mode) {
+        return run_netvideo(proto, spec, ing, shared, cfg, stop, tag).await;
+    }
     let mut args: Vec<String> = ["-hide_banner", "-loglevel", "info", "-nostats", "-progress", "pipe:2"].map(String::from).to_vec();
     args.extend(spec.input_args());
     args.extend(
@@ -503,6 +528,239 @@ async fn run_once(spec: &Spec, ing: &Arc<Ingest>, shared: &Arc<Shared>, cfg: &Co
         let _ = t.kill().await;
     }
     last_err
+}
+
+/* ---- NDI / OMT: เฟรมดิบจากไลบรารี → ffmpeg (H.264 ultrafast + AAC) → MPEG-TS → ตัวเล่นในหน้า WebMix
+   ภาพเข้าทาง stdin · เสียงเข้าทาง TCP ภายในเครื่อง (ffmpeg รับได้ stdin เดียว) · ประทับเวลาตามนาฬิกาจริงทั้งคู่ เสียงจึงตรงกับภาพ */
+
+async fn run_netvideo(proto: netvideo::Proto, spec: &Spec, ing: &Arc<Ingest>, shared: &Arc<Shared>, cfg: &Config, stop: &Notify, tag: &str) -> Option<String> {
+    shared.status("connecting", &format!("กำลังเชื่อมต่อ {} “{}”…", proto.label(), spec.target));
+    let quit = Arc::new(AtomicBool::new(false));
+    let (done_tx, done_rx) = tokio::sync::oneshot::channel::<Option<String>>();
+    let th = {
+        let (source, ing, shared, ffmpeg, quit, tag) = (spec.target.clone(), ing.clone(), shared.clone(), cfg.ffmpeg.clone(), quit.clone(), tag.to_string());
+        std::thread::spawn(move || {
+            let r = netvideo_loop(proto, &source, &ing, &shared, &ffmpeg, &quit, &tag);
+            let _ = done_tx.send(r);
+        })
+    };
+    let r = tokio::select! {
+        r = done_rx => r.ok().flatten(),
+        _ = stop.notified() => None,
+    };
+    quit.store(true, Ordering::Relaxed);
+    let _ = tokio::task::spawn_blocking(move || th.join()).await;
+    r
+}
+
+fn netvideo_loop(proto: netvideo::Proto, source: &str, ing: &Arc<Ingest>, shared: &Arc<Shared>, ffmpeg: &str, quit: &AtomicBool, tag: &str) -> Option<String> {
+    let mut rx = match netvideo::Receiver::new(proto, source) {
+        Ok(r) => r,
+        Err(e) => return Some(e),
+    };
+    let mut enc: Option<RawEncoder> = None;
+    let mut last = std::time::Instant::now();
+    let mut waiting = false;
+    while !quit.load(Ordering::Relaxed) {
+        match rx.capture(200) {
+            netvideo::Frame::Video(v) => {
+                last = std::time::Instant::now();
+                let key = (v.pix, v.width, v.height);
+                if enc.as_ref().map(|e| e.key != key || !e.alive()).unwrap_or(true) {
+                    if let Some(e) = enc.take() {
+                        if !e.alive() {
+                            let err = e.error();
+                            e.stop();
+                            return Some(if err.is_empty() { "ตัวแปลงสัญญาณหยุดทำงาน".into() } else { err });
+                        }
+                        e.stop();
+                    }
+                    let fps = if v.fps.0 > 0 { format!("{}/{}", v.fps.0, v.fps.1.max(1)) } else { "30".into() };
+                    eprintln!("{tag} {} {source}: {}x{} {:?} @ {fps}", proto.label(), v.width, v.height, v.pix);
+                    shared.state.lock().unwrap().1 = Some(json!({ "codec": proto.label().to_ascii_lowercase(), "width": v.width, "height": v.height, "fps": v.fps.0 as f64 / v.fps.1.max(1) as f64 }));
+                    match RawEncoder::start(ffmpeg, key, &fps, ing.clone(), shared.clone()) {
+                        Ok(e) => enc = Some(e),
+                        Err(e) => return Some(e),
+                    }
+                    waiting = false;
+                }
+                if let Some(e) = &enc {
+                    e.video(v.data);
+                }
+            }
+            netvideo::Frame::Audio(a) => {
+                if let Some(e) = &enc {
+                    e.audio(if a.rate == 48000 { a.stereo } else { netvideo::resample_stereo(&a.stereo, a.rate, 48000) });
+                }
+            }
+            netvideo::Frame::None => {
+                // แหล่งหายไป (ปิดโปรแกรม/สายหลุด) — ปิดตัวแปลง รอแหล่งกลับมาในตัวรับเดิม (NDI/OMT ต่อใหม่เอง)
+                if last.elapsed() > Duration::from_secs(3) && !waiting {
+                    waiting = true;
+                    if let Some(e) = enc.take() {
+                        e.stop();
+                    }
+                    ing.viewers.lock().unwrap().clear();
+                    shared.status("waiting", &format!("ไม่มีสัญญาณจาก “{source}” — รอแหล่งกลับมา"));
+                }
+            }
+        }
+    }
+    if let Some(e) = enc.take() {
+        e.stop();
+    }
+    None
+}
+
+fn quiet_std(cmd: &mut std::process::Command) -> &mut std::process::Command {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    cmd
+}
+
+/// ffmpeg หนึ่งตัวต่อรูปแบบภาพหนึ่งแบบ (เปลี่ยนขนาด/รูปแบบ = เปิดตัวใหม่)
+struct RawEncoder {
+    key: (netvideo::Pix, u32, u32),
+    child: std::process::Child,
+    vtx: Option<std::sync::mpsc::SyncSender<Vec<u8>>>,
+    atx: Option<std::sync::mpsc::SyncSender<Vec<f32>>>,
+    alive: Arc<AtomicBool>,
+    err: Arc<Mutex<String>>,
+}
+
+impl RawEncoder {
+    fn start(ffmpeg: &str, key: (netvideo::Pix, u32, u32), fps: &str, ing: Arc<Ingest>, shared: Arc<Shared>) -> Result<RawEncoder, String> {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").map_err(|e| e.to_string())?;
+        let port = listener.local_addr().map_err(|e| e.to_string())?.port();
+        let (pix, w, h) = key;
+        let gop = fps.split('/').next().and_then(|n| n.parse::<u32>().ok()).map(|n| if fps.contains('/') { n / fps.split('/').nth(1).and_then(|d| d.parse::<u32>().ok()).unwrap_or(1).max(1) } else { n }).unwrap_or(30).clamp(10, 120);
+        let args: Vec<String> = vec![
+            "-hide_banner", "-loglevel", "error",
+            "-f", "rawvideo", "-pix_fmt", pix.ffmpeg(), "-video_size", &format!("{w}x{h}"), "-framerate", fps, "-use_wallclock_as_timestamps", "1", "-thread_queue_size", "64", "-i", "pipe:0",
+            "-f", "f32le", "-ar", "48000", "-ac", "2", "-use_wallclock_as_timestamps", "1", "-thread_queue_size", "1024", "-i", &format!("tcp://127.0.0.1:{port}"),
+            "-map", "0:v", "-map", "1:a", "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency", "-pix_fmt", "yuv420p", "-g", &gop.to_string(), "-bf", "0",
+            "-crf", "20", "-maxrate", "20M", "-bufsize", "10M", "-af", "aresample=async=1000", "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
+            "-f", "mpegts", "-mpegts_flags", "+resend_headers", "pipe:1",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect();
+        let mut child = quiet_std(std::process::Command::new(ffmpeg).args(&args))
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("เปิด ffmpeg ไม่ได้: {e}"))?;
+        let alive = Arc::new(AtomicBool::new(true));
+        let err = Arc::new(Mutex::new(String::new()));
+        // ภาพ → stdin (คิวสั้น: ช้าแล้วข้ามเฟรม ไม่หน่วงสะสม)
+        let (vtx, vrx) = std::sync::mpsc::sync_channel::<Vec<u8>>(3);
+        let mut stdin = child.stdin.take().unwrap();
+        {
+            let alive = alive.clone();
+            std::thread::spawn(move || {
+                while let Ok(f) = vrx.recv() {
+                    if stdin.write_all(&f).is_err() {
+                        alive.store(false, Ordering::Relaxed);
+                        break;
+                    }
+                }
+            });
+        }
+        // เสียง → TCP · ไม่มีเสียงจากแหล่ง = ส่งความเงียบแทน เพื่อให้ภาพเดินต่อได้
+        let (atx, arx) = std::sync::mpsc::sync_channel::<Vec<f32>>(256);
+        {
+            let alive = alive.clone();
+            std::thread::spawn(move || {
+                let _ = listener.set_nonblocking(true);
+                let started = std::time::Instant::now();
+                let mut sock = loop {
+                    match listener.accept() {
+                        Ok((s, _)) => break s,
+                        Err(_) if started.elapsed() < Duration::from_secs(15) && alive.load(Ordering::Relaxed) => std::thread::sleep(Duration::from_millis(20)),
+                        Err(_) => return,
+                    }
+                };
+                let _ = sock.set_nonblocking(false);
+                let _ = sock.set_nodelay(true);
+                let silence = vec![0u8; 960 * 2 * 4];
+                let mut last_real = std::time::Instant::now() - Duration::from_secs(1);
+                loop {
+                    let r = match arx.recv_timeout(Duration::from_millis(20)) {
+                        Ok(a) => {
+                            last_real = std::time::Instant::now();
+                            let bytes: Vec<u8> = a.iter().flat_map(|v| v.to_le_bytes()).collect();
+                            sock.write_all(&bytes)
+                        }
+                        Err(std::sync::mpsc::RecvTimeoutError::Timeout) if last_real.elapsed() > Duration::from_millis(100) => sock.write_all(&silence),
+                        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Ok(()),
+                        Err(_) => break,
+                    };
+                    if r.is_err() {
+                        break;
+                    }
+                }
+            });
+        }
+        // MPEG-TS → ตัวเล่น
+        let mut stdout = child.stdout.take().unwrap();
+        std::thread::spawn(move || {
+            let mut buf = vec![0u8; 188 * 700];
+            let mut first = true;
+            while let Ok(n) = stdout.read(&mut buf) {
+                if n == 0 {
+                    break;
+                }
+                if first {
+                    first = false;
+                    shared.status("live", "");
+                }
+                to_viewers(&ing, &Arc::new(buf[..n].to_vec()));
+            }
+        });
+        {
+            let (mut stderr, err, alive) = (child.stderr.take().unwrap(), err.clone(), alive.clone());
+            std::thread::spawn(move || {
+                let mut s = String::new();
+                let _ = stderr.read_to_string(&mut s);
+                let last = s.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("").chars().take(200).collect::<String>();
+                *err.lock().unwrap() = last;
+                alive.store(false, Ordering::Relaxed);
+            });
+        }
+        Ok(RawEncoder { key, child, vtx: Some(vtx), atx: Some(atx), alive, err })
+    }
+
+    fn alive(&self) -> bool {
+        self.alive.load(Ordering::Relaxed)
+    }
+
+    fn error(&self) -> String {
+        self.err.lock().unwrap().clone()
+    }
+
+    fn video(&self, data: Vec<u8>) {
+        if let Some(tx) = &self.vtx {
+            let _ = tx.try_send(data);
+        }
+    }
+
+    fn audio(&self, stereo: Vec<f32>) {
+        if let Some(tx) = &self.atx {
+            let _ = tx.try_send(stereo);
+        }
+    }
+
+    fn stop(mut self) {
+        self.vtx = None;
+        self.atx = None;
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
 }
 
 pub async fn data(mut sink: Sink, mut source: Source, id: &str) {

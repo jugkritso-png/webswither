@@ -33,7 +33,10 @@
     tiktok: { label: 'TikTok Live', server: '', vertical: true },
     instagram: { label: 'Instagram Live', server: '', vertical: true },
     srt: { label: 'SRT (vMix / OBS / SRT Server)', server: '' },
-    custom: { label: 'RTMP อื่น ๆ (กำหนดเอง)', server: '' }
+    custom: { label: 'RTMP อื่น ๆ (กำหนดเอง)', server: '' },
+    // ส่ง Program ออกในวง LAN ให้ vMix / OBS / เครื่องอื่นรับ (แอปเดสก์ท็อป) — ช่อง server = ชื่อแหล่ง
+    ndi: { label: 'NDI® (ส่งออกในวง LAN)', server: '', net: true },
+    omt: { label: 'OMT (ส่งออกในวง LAN)', server: '', net: true }
   };
   const RESOLUTIONS = { '720p': [1280, 720], '1080p': [1920, 1080], '1440p': [2560, 1440], '2160p': [3840, 2160] };
   const RES_LABEL = { '720p': '1280 × 720 (HD 720p)', '1080p': '1920 × 1080 (Full HD 1080p)', '1440p': '2560 × 1440 (QHD 1440p)', '2160p': '3840 × 2160 (4K UHD)' };
@@ -134,8 +137,11 @@
   const RTMP_RE = /^rtmps?:\/\/\S+$/i;
   const SRT_RE = /^srt:\/\/[^\s/?#]+:\d+(\?\S*)?$/i;
   const isSrt = d => d.platform === 'srt';
+  const isNet = d => !!PLATFORMS[d.platform]?.net;
+  const netName = d => d.server.trim().replace(/[\x00-\x1f]/g, '').slice(0, 60) || 'WebMix Program';
   // SRT: ส่ง MPEG-TS แบบ caller ไปที่ srt://host:port พร้อม Stream ID, รหัสเข้ารหัส (AES) และค่า latency
   function destUrl(d) {
+    if (isNet(d)) return `${d.platform}://${netName(d)}`;
     const server = d.server.trim().replace(/\/+$/, '');
     if (isSrt(d)) {
       if (!SRT_RE.test(server)) return server;
@@ -148,13 +154,14 @@
     return d.key.trim() ? `${server}/${d.key.trim()}` : server;
   }
   function destMasked(d) {
+    if (isNet(d)) return `${d.platform.toUpperCase()} “${netName(d)}” ในวง LAN`;
     const server = d.server.trim().replace(/\/+$/, '');
     if (isSrt(d)) return `${server.replace(/\?.*$/, '')} · ${d.latency} ms${d.key.trim() ? ' · ID ••••' + d.key.trim().slice(-4) : ''}${d.passphrase ? ' · 🔒' : ''}`;
     return server + (d.key.trim() ? '/••••' + d.key.trim().slice(-4) : '');
   }
   const hostOf = d => (/^(?:rtmps?|srt):\/\/([^/:?]+)/i.exec(d.server) || [])[1];
   const baseLabel = d => d.platform === 'custom' ? (hostOf(d) || 'RTMP')
-    : isSrt(d) ? `SRT ${hostOf(d) || ''}`.trim() : PLATFORMS[d.platform].label;
+    : isSrt(d) ? `SRT ${hostOf(d) || ''}`.trim() : isNet(d) ? `${d.platform.toUpperCase()} ${netName(d)}` : PLATFORMS[d.platform].label;
   function destLabel(d) {
     if (!d) return '';
     const base = baseLabel(d);
@@ -163,6 +170,7 @@
     return (same.length > 1 ? `${base} #${(i < 0 ? same.length : i) + 1}` : base) + (d.orient && d.orient !== 'h' ? ' (9:16)' : '');
   }
   function destProblem(d) {
+    if (isNet(d)) return '';
     if (isSrt(d)) {
       if (!SRT_RE.test(d.server.trim())) return 'SRT ต้องอยู่ในรูปแบบ srt://host:port';
       if (d.passphrase && (d.passphrase.length < 10 || d.passphrase.length > 64)) return 'รหัสผ่าน SRT ต้องยาว 10–64 ตัวอักษร';
@@ -1513,6 +1521,7 @@
     if (inp.type === 'chat') return openChatInputDialog(inp);
     if (inp.type === 'srt' && inp.srt.mode === 'rtsp') return openRtspDialog(inp);
     if (inp.type === 'srt' && inp.srt.mode === 'rtmp') return showRtmpSenderInfo(inp);
+    if (inp.type === 'srt' && (inp.srt.mode === 'ndi' || inp.srt.mode === 'omt')) return openNetVideoDialog(inp.srt.mode, inp);
     if (inp.type === 'title') return openTitleDialog(inp);
     if (inp.type === 'timer') return openTimerDialog(inp);
     if (inp.type === 'score') return openScoreDialog(inp);
@@ -5011,7 +5020,7 @@
     inp.srtState = 'connecting';
     ws.onopen = () => {
       const c = inp.srt;
-      ws.send(JSON.stringify({ type: 'open', mode: c.mode, port: c.port, url: c.mode === 'rtsp' ? rtspUrl(c) : c.url, streamid: c.streamid, passphrase: c.passphrase, latency: c.latency, key: c.key }));
+      ws.send(JSON.stringify({ type: 'open', mode: c.mode, port: c.port, url: c.mode === 'rtsp' ? rtspUrl(c) : c.url, streamid: c.streamid, passphrase: c.passphrase, latency: c.latency, key: c.key, source: c.source }));
     };
     ws.onmessage = ev => {
       let msg;
@@ -5104,8 +5113,97 @@
     if (inp.srtCtl) { const ws = inp.srtCtl; inp.srtCtl = null; ws.close(1000, 'removed'); }
   }
 
+  /* ---- NDI / OMT: Gateway ในแอปเดสก์ท็อปค้นหาแหล่งในวง LAN แล้วรับเข้ามาเป็นแหล่งภาพ (ทางเดียวกับ SRT) ---- */
+  const NET_PROTOS = { ndi: 'NDI®', omt: 'OMT' };
+  // ถาม Gateway ว่ามีแหล่งอะไรบ้าง (ใช้ช่องควบคุมเดียวกับ SRT แค่ไม่ส่ง open)
+  function listNetSources(proto) {
+    return new Promise(resolve => {
+      let ws;
+      try { ws = new WebSocket(gatewayEndpoint('/srt-in')); } catch (e) { resolve({ list: [], error: e.message }); return; }
+      const done = r => { clearTimeout(t); try { ws.close(); } catch (e) {} resolve(r); };
+      const t = setTimeout(() => done({ list: [], error: 'Gateway ไม่ตอบ (Gateway บนเซิร์ฟเวอร์ไม่รองรับ NDI / OMT — ใช้แอปเดสก์ท็อป)' }), 8000);
+      ws.onopen = () => ws.send(JSON.stringify({ type: 'sources', proto }));
+      ws.onmessage = ev => {
+        let m; try { m = JSON.parse(ev.data); } catch (e) { return; }
+        if (m.type === 'sources') done({ list: Array.isArray(m.list) ? m.list.map(String) : [], error: m.error || '' });
+        else if (m.type === 'error') done({ list: [], error: m.message || 'Gateway ปฏิเสธ' });
+      };
+      ws.onerror = () => done({ list: [], error: 'เชื่อมต่อ Gateway ไม่ได้' });
+    });
+  }
+  async function openNetVideoDialog(proto = store.get('net-proto', 'ndi'), inp = null) {
+    const gwErr = gatewayProblem();
+    if (gwErr) { toast(`${gwErr} — NDI / OMT ต้องใช้ Stream Gateway ในแอปเดสก์ท็อป`, 'warn'); openSettings('stream'); return; }
+    if (!NET_PROTOS[proto]) proto = 'ndi';
+    const cur = inp ? inp.srt.source : '';
+    const r = await dialog({
+      title: inp ? `แหล่งสัญญาณ — ${inp.name}` : 'รับภาพ NDI® / OMT',
+      body: `
+        <div class="seg net-proto">${Object.entries(NET_PROTOS).map(([k, l]) => `<button type="button" data-value="${k}" class="${k === proto ? 'is-active' : ''}">${l}</button>`).join('')}</div>
+        <div class="field"><span>แหล่งในวง LAN <button type="button" class="btn btn-sm net-refresh">ค้นหาใหม่</button></span>
+          <div class="net-list" role="listbox"><p class="note">กำลังค้นหา…</p></div></div>
+        <label class="field"><span>หรือพิมพ์ชื่อแหล่งเอง (เช่น PC-VMIX (vMix - Output 1))</span><input name="source" class="input mono" value="${esc(cur)}" maxlength="200"></label>
+        <label class="field"><span>ชื่อแหล่งภาพ</span><input name="name" class="input" maxlength="32" value="${esc(inp ? inp.name : '')}" placeholder="ตั้งจากชื่อแหล่งให้อัตโนมัติ"></label>
+        <p class="note net-help"></p>`,
+      actions: [{ label: 'ยกเลิก' }, { label: inp ? 'บันทึก' : 'เพิ่มแหล่งภาพ', primary: true, value: 'ok' }],
+      onOpen(modal) {
+        const f = $('form', modal), box = $('.net-list', modal), help = $('.net-help', modal);
+        modal.dataset.proto = proto;
+        const HELP = {
+          ndi: 'ต้องติดตั้ง NDI Tools (ฟรี) จาก ndi.video/tools ในเครื่องนี้ก่อน · เครื่องส่ง (vMix, OBS + DistroAV, กล้อง PTZ NDI) ต้องอยู่ในวง LAN เดียวกัน · ภาพจะช้ากว่าต้นทางราว 0.2–0.5 วินาที',
+          omt: 'Open Media Transport ของ vMix (ฟรี โอเพนซอร์ส) — vMix 29 ขึ้นไปส่ง OMT ได้ · เครื่องส่งต้องอยู่ในวง LAN เดียวกัน · ภาพจะช้ากว่าต้นทางราว 0.2–0.5 วินาที'
+        };
+        let seq = 0;
+        const scan = async () => {
+          const my = ++seq;
+          help.textContent = HELP[modal.dataset.proto];
+          box.innerHTML = '<p class="note">กำลังค้นหา…</p>';
+          const { list, error } = await listNetSources(modal.dataset.proto);
+          if (my !== seq || !box.isConnected) return;
+          if (error) { box.innerHTML = `<p class="note net-err">${esc(error)}</p>`; return; }
+          box.innerHTML = list.length ? list.map(n => `<button type="button" class="net-src ${n === f.source.value ? 'is-active' : ''}" data-src="${esc(n)}">${icon('monitor')}<span>${esc(n)}</span></button>`).join('')
+            : '<p class="note">ยังไม่พบแหล่งในวง LAN — ตรวจว่าเครื่องส่งเปิดอยู่และอยู่วงเดียวกัน แล้วกด “ค้นหาใหม่”</p>';
+        };
+        $('.net-proto', modal).addEventListener('click', e => {
+          const b = e.target.closest('button');
+          if (!b) return;
+          modal.dataset.proto = b.dataset.value;
+          $$('.net-proto button', modal).forEach(x => x.classList.toggle('is-active', x === b));
+          scan();
+        });
+        $('.net-refresh', modal).addEventListener('click', scan);
+        box.addEventListener('click', e => {
+          const b = e.target.closest('.net-src');
+          if (!b) return;
+          f.source.value = b.dataset.src;
+          $$('.net-src', box).forEach(x => x.classList.toggle('is-active', x === b));
+        });
+        scan();
+      }
+    });
+    if (r?.value !== 'ok') return;
+    const source = r.form.source.value.trim();
+    const chosen = r.form.source.closest('.modal')?.dataset.proto || proto;
+    if (!source) { toast('ยังไม่ได้เลือกแหล่งสัญญาณ', 'warn'); return; }
+    store.set('net-proto', chosen);
+    // "เครื่อง (ชื่อ)" → ใช้ชื่อในวงเล็บเป็นชื่อการ์ด
+    const auto = (/\(([^)]+)\)\s*$/.exec(source) || [, source])[1].slice(0, 32);
+    const name = r.form.name.value.trim() || auto;
+    if (inp) {
+      inp.srt = { ...inp.srt, mode: chosen, source };
+      inp.name = name;
+      if (inp.srtCtl) { const ws = inp.srtCtl; inp.srtCtl = null; ws.close(1000, 'changed'); }
+      stopSrtPlayer(inp);
+      connectSrtInput(inp);
+      renderInputs(); refreshSourceSelects();
+    } else {
+      createSrtInput({ mode: chosen, source, port: 0, latency: 500 }, name);
+    }
+    saveSrtInputs();
+  }
+
   /* ---- กล้อง IP (RTSP) และรับ RTMP — ใช้ทางเดียวกับ SRT: Gateway รับสัญญาณแล้วส่งต่อเป็น MPEG-TS ให้หน้านี้เล่น ---- */
-  const netLabel = inp => ({ rtsp: 'IP CAM', rtmp: 'RTMP' })[inp.srt?.mode] || 'SRT';
+  const netLabel = inp => ({ rtsp: 'IP CAM', rtmp: 'RTMP', ndi: 'NDI', omt: 'OMT' })[inp.srt?.mode] || 'SRT';
   const rtmpKey = () => Array.from(crypto.getRandomValues(new Uint8Array(6)), b => 'abcdefghjkmnpqrstuvwxyz23456789'[b % 31]).join('');
   // ยี่ห้อกล้องที่พบบ่อย: path ของภาพหลัก (main stream) — {ch} = ช่องกล้อง (เครื่องบันทึก NVR)
   const RTSP_BRANDS = {
@@ -6219,8 +6317,8 @@ onmessage = async e => {
       return `
         <div class="dest-live-row is-${state}">
           <span class="dest-dot"></span>
-          <div class="dest-info"><b>${esc(destLabel(d))}</b><small>${esc(state === 'error' && st.message ? st.message : destMasked(d))}</small></div>
-          <span class="dest-state">${text[state]}${state === 'live' && st.kbps ? ` · ${st.kbps} kbps` : ''}</span>
+          <div class="dest-info"><b>${esc(destLabel(d))}</b><small>${esc((state === 'error' || (isNet(d) && state === 'live')) && st.message ? st.message : destMasked(d))}</small></div>
+          <span class="dest-state">${text[state]}${state === 'live' && st.kbps && !isNet(d) ? ` · ${st.kbps} kbps` : ''}</span>
           <button type="button" class="btn btn-sm ${running ? 'btn-danger' : 'btn-green'}" data-dest-toggle="${esc(d.id)}" data-on="${running ? 0 : 1}">${running ? 'หยุด' : 'เริ่ม'}</button>
         </div>`;
     }).join('') || '<p class="note">ยังไม่มีปลายทาง — กด “แก้ไขปลายทาง” เพื่อเพิ่ม</p>';
@@ -6820,12 +6918,12 @@ onmessage = async e => {
         const addBtn = $('.dest-add', modal);
         const showKeys = $('.dest-showkeys', modal);
         const rowHtml = d => `
-          <div class="dest-row ${d.enabled ? '' : 'is-disabled'}" data-id="${esc(d.id)}">
+          <div class="dest-row ${d.enabled ? '' : 'is-disabled'} ${isNet(d) ? 'is-net' : ''} ${d.platform === 'ndi' ? 'is-ndi' : ''}" data-id="${esc(d.id)}">
             <label class="dest-enable" title="สตรีมไปปลายทางนี้"><input type="checkbox" data-f="enabled" ${d.enabled ? 'checked' : ''}></label>
             <select class="select" data-f="platform" aria-label="แพลตฟอร์ม">
               ${Object.entries(PLATFORMS).map(([k, p]) => `<option value="${k}" ${d.platform === k ? 'selected' : ''}>${p.label}</option>`).join('')}
             </select>
-            <input class="input mono" data-f="server" value="${esc(d.server)}" placeholder="${isSrt(d) ? 'srt://host:9000' : 'rtmp://...'}" aria-label="Server URL">
+            <input class="input mono" data-f="server" value="${esc(d.server)}" placeholder="${isNet(d) ? 'ชื่อแหล่ง เช่น WebMix Program' : isSrt(d) ? 'srt://host:9000' : 'rtmp://...'}" aria-label="Server URL">
             <input class="input mono" data-f="key" type="${showKeys.checked ? 'text' : 'password'}" autocomplete="off" value="${esc(d.key)}" placeholder="${isSrt(d) ? 'Stream ID (ถ้ามี)' : 'Stream Key'}" aria-label="Stream Key / Stream ID">
             <button type="button" class="btn btn-ghost btn-icon dest-remove" title="ลบปลายทาง">${icon('x')}</button>
             <button type="button" class="btn dest-paste">${icon('copy')}วางคีย์จากคลิปบอร์ด</button>
@@ -6837,6 +6935,7 @@ onmessage = async e => {
                 ${SRT_LATENCIES.map(ms => `<option value="${ms}" ${d.latency === ms ? 'selected' : ''}>Latency ${ms} ms</option>`).join('')}
               </select>
             </div>
+            <p class="dest-net-note">เครื่องอื่นในวง LAN (vMix, OBS + DistroAV, NDI Studio Monitor) จะเห็น Program ในชื่อนี้ · ใช้ได้ในแอปเดสก์ท็อป${'' /* NDI ต้องติดตั้ง NDI Tools */}<span class="dest-ndi-only"> · ต้องติดตั้ง NDI Tools (ฟรี) จาก ndi.video ก่อน</span></p>
           </div>`;
         const syncAdd = () => { addBtn.disabled = $$('.dest-row', list).length >= MAX_DESTINATIONS; };
         list.innerHTML = settings.destinations.map(rowHtml).join('');
@@ -6886,9 +6985,11 @@ onmessage = async e => {
             const p = PLATFORMS[e.target.value];
             const srt = e.target.value === 'srt';
             const server = row.querySelector('[data-f=server]');
-            if (p.server) server.value = p.server; else { server.value = ''; server.focus(); }
+            if (p.server) server.value = p.server; else if (p.net) server.value = 'WebMix Program'; else { server.value = ''; server.focus(); }
             row.querySelector('[data-f=orient]').value = p.vertical ? 'vcrop' : 'h';
-            server.placeholder = srt ? 'srt://host:9000' : 'rtmp://...';
+            row.classList.toggle('is-net', !!p.net);
+            row.classList.toggle('is-ndi', e.target.value === 'ndi');
+            server.placeholder = p.net ? 'ชื่อแหล่ง เช่น WebMix Program' : srt ? 'srt://host:9000' : 'rtmp://...';
             row.querySelector('[data-f=key]').placeholder = srt ? 'Stream ID (ถ้ามี)' : 'Stream Key';
             row.querySelector('.dest-srt').hidden = !srt;
           }
@@ -7193,7 +7294,8 @@ onmessage = async e => {
       ['headphones', 'แขกรับเชิญทางไกล', 'ส่งลิงก์ให้แขก คุยกันได้ทั้งภาพและเสียง', addGuest],
       ['video', 'กล้อง IP (RTSP)', 'กล้องวงจรปิด / PTZ เช่น Hikvision Dahua Tapo Reolink', () => openRtspDialog()],
       ['broadcast', 'รับ RTMP', 'OBS / vMix / แอปมือถือ / โดรน ส่งภาพเข้ามา', openRtmpInputDialog],
-      ['broadcast', 'สัญญาณ SRT', 'รับภาพจาก OBS / vMix / encoder', openSrtInputDialog]]],
+      ['broadcast', 'สัญญาณ SRT', 'รับภาพจาก OBS / vMix / encoder', openSrtInputDialog],
+      ['monitor', 'NDI® / OMT', 'รับภาพจาก vMix / OBS / กล้อง PTZ ในวง LAN (แอปเดสก์ท็อป)', () => openNetVideoDialog()]]],
     ['กราฟิกและข้อความ', [
       ['type', 'Title กราฟิกข้อความ', 'ป้ายชื่อ/ข้อความบนพื้นโปร่งใส', addTitleInput],
       ['clock', 'นาฬิกานับถอยหลัง / จับเวลา', 'นับถอยหลังก่อนเริ่ม หรือจับเวลาการแข่ง', addTimerInput],
@@ -7713,6 +7815,10 @@ onmessage = async e => {
         }
         case 'srt': {
           const c = raw.srt || {};
+          if (c.mode === 'ndi' || c.mode === 'omt') {
+            createSrtInput({ mode: c.mode, source: String(c.source || '').slice(0, 200), port: 0, latency: 500 }, base.name, { id: base.id });
+            break;
+          }
           if (!['listener', 'caller', 'rtsp', 'rtmp'].includes(c.mode)) return;
           createSrtInput({ mode: c.mode, port: +c.port || (c.mode === 'rtmp' ? 1935 : 9000), url: String(c.url || ''), streamid: String(c.streamid || ''),
             passphrase: String(c.passphrase || ''), latency: SRT_LATENCIES.includes(+c.latency) ? +c.latency : 500,

@@ -199,6 +199,8 @@ const usedPorts = new Set();
 
 const MAX_SRT_INPUTS = Number(process.env.MAX_SRT_INPUTS) || 0;
 
+const NET_ONLY_DESKTOP = 'NDI / OMT ใช้ได้กับ Gateway ในแอปเดสก์ท็อป WebMix Pro (ต้องอยู่ในวง LAN เดียวกับแหล่งสัญญาณ) — Gateway บนเซิร์ฟเวอร์ใช้ไม่ได้';
+
 function ingestControl(ws, req, auth) {
   const tag = `[${auth.ip} ${auth.user.name} srt-in]`;
   let s = null;
@@ -209,7 +211,10 @@ function ingestControl(ws, req, auth) {
     if (isBinary || s) return;
     let msg;
     try { msg = JSON.parse(String(data)); } catch (e) { return; }
+    // NDI / OMT ต้องใช้ไลบรารีบนเครื่องที่อยู่ในวง LAN เดียวกับแหล่งสัญญาณ — มีเฉพาะ Gateway ในแอปเดสก์ท็อป
+    if (msg.type === 'sources') return send({ type: 'sources', proto: String(msg.proto || ''), list: [], error: NET_ONLY_DESKTOP });
     if (msg.type !== 'open') return;
+    if (msg.mode === 'ndi' || msg.mode === 'omt') return fail(NET_ONLY_DESKTOP);
     const kind = ['caller', 'rtsp', 'rtmp'].includes(msg.mode) ? msg.mode : 'listener';
     if ((kind === 'listener' || kind === 'caller') && !SRT_SUPPORTED) return fail('ffmpeg ในเซิร์ฟเวอร์นี้ไม่รองรับ SRT');
     const lim = auth.user.limits;
@@ -696,7 +701,7 @@ wss.on('connection', (ws, req) => {
     const url = String(raw.url || '');
     if (!id) return;
     if (!OUTPUT_RE(url)) {
-      send({ type: 'status', destinations: [{ id, name: String(raw.name || ''), state: 'error', message: 'URL ต้องเป็น rtmp://, rtmps:// หรือ srt://host:port', kbps: 0 }] });
+      send({ type: 'status', destinations: [{ id, name: String(raw.name || ''), state: 'error', message: /^(ndi|omt):\/\//i.test(String(raw.url || '')) ? NET_ONLY_DESKTOP : 'URL ต้องเป็น rtmp://, rtmps:// หรือ srt://host:port', kbps: 0 }] });
       return;
     }
     if (SRT_RE.test(url) && !SRT_SUPPORTED) {

@@ -3,6 +3,8 @@
 //!   webmix-gateway [--port 8080] [--bind 0.0.0.0] [--token รหัส] [--ffmpeg /path/ffmpeg]
 //!                  [--encoder auto|libx264|h264_nvenc|h264_qsv|h264_videotoolbox|h264_amf|h264_mediacodec] [--max-destinations 6]
 //!
+//!   webmix-gateway --netvideo-selftest ndi|omt   ทดสอบ NDI / OMT ในเครื่อง (ส่งแล้วรับกลับเอง) แล้วจบ
+//!
 //! ค่าเหมือนตัวแปรแวดล้อมของเวอร์ชัน Node: PORT, STREAM_TOKEN, FFMPEG_PATH, VIDEO_ENCODER, X264_PRESET, MAX_DESTINATIONS
 
 use std::env;
@@ -28,6 +30,19 @@ async fn main() {
             "--token" => cfg.token = val,
             "--ffmpeg" => cfg.ffmpeg = val,
             "--encoder" => cfg.video_encoder = val,
+            "--netvideo-selftest" => {
+                let proto = webmix_gateway::netvideo::Proto::parse(&val).expect("--netvideo-selftest ndi|omt");
+                match tokio::task::spawn_blocking(move || webmix_gateway::netvideo::selftest(proto)).await.unwrap() {
+                    Ok(msg) => {
+                        println!("OK {msg}");
+                        return;
+                    }
+                    Err(e) => {
+                        eprintln!("FAIL {e}");
+                        std::process::exit(1);
+                    }
+                }
+            }
             "--max-destinations" => cfg.max_destinations = val.parse().expect("--max-destinations ต้องเป็นตัวเลข"),
             "-h" | "--help" => {
                 println!("webmix-gateway [--port 8080] [--bind 0.0.0.0] [--token รหัส] [--ffmpeg path] [--encoder libx264] [--max-destinations 6]");

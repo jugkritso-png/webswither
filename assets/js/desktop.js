@@ -86,6 +86,21 @@
         } catch (e) { clearTimeout(t); done(false); }
       });
       add('gateway-connect', ok, ok ? 'เชื่อม WebSocket ได้' : 'เชื่อม WebSocket ไม่ได้');
+      // NDI / OMT: โหลดไลบรารีได้ไหม (OMT มากับแอปบน Windows / macOS · NDI ต้องติดตั้ง NDI Tools เอง)
+      for (const proto of ['omt', 'ndi']) {
+        const r = await new Promise(resolve => {
+          let ws;
+          const t = setTimeout(() => { try { ws.close(); } catch (e) {} resolve({ error: 'Gateway ไม่ตอบ' }); }, 8000);
+          try {
+            const u = new URL(info.gateway.url); u.pathname = '/srt-in';
+            ws = new WebSocket(u.toString());
+            ws.onopen = () => ws.send(JSON.stringify({ type: 'sources', proto }));
+            ws.onmessage = e => { clearTimeout(t); try { ws.close(); } catch (x) {} try { resolve(JSON.parse(e.data)); } catch (x) { resolve({ error: 'ตอบกลับไม่ถูกต้อง' }); } };
+            ws.onerror = () => { clearTimeout(t); resolve({ error: 'เชื่อม Gateway ไม่ได้' }); };
+          } catch (e) { clearTimeout(t); resolve({ error: e.message }); }
+        });
+        add(proto, !r.error, r.error || `โหลดไลบรารีได้ · พบ ${(r.list || []).length} แหล่งในวง LAN`, false);
+      }
     }
 
     try {

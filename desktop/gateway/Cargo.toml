@@ -13,6 +13,7 @@ name = "webmix-gateway"
 path = "src/main.rs"
 
 [dependencies]
+libloading = "0.8"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "process", "io-util", "sync", "time", "signal"] }
 tokio-tungstenite = "0.27"
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }

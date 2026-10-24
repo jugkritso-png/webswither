@@ -11,7 +11,7 @@ const { spawn, spawnSync } = require('child_process');
 const { ROOT, WORK } = require('./lib');
 
 const ALL = ['switcher', 'multistream', 'mobile', 'srt-output', 'srt-input', 'uhd-4k', 'reconnect', 'record-disk', 'audio-fx', 'show', 'gateway-admin', 'overlay', 'gpu', 'guest', 'multiview', 'graphics', 'playlist', 'desktop', 'wcrec', 'onboarding', 'easy-ui', 'scenes', 'rec-backup', 'vertical', 'color',
-  'transitions', 'replay', 'gate', 'midi', 'abr', 'slides', 'viz', 'update', 'recovery', 'macro', 'procam', 'layoutdrag', 'audiosrc', 'duck', 'chat'];
+  'transitions', 'replay', 'gate', 'midi', 'abr', 'slides', 'viz', 'update', 'recovery', 'macro', 'procam', 'layoutdrag', 'audiosrc', 'duck', 'chat', 'netvideo'];
 const selected = process.argv.slice(2).length ? process.argv.slice(2) : ALL;
 const SUITE_TIMEOUT = 6 * 60 * 1000;
 
@@ -48,6 +48,9 @@ function makeFixtures() {
   for (const [name, hz, sec] of [['song1', 440, 3], ['song2', 660, 3], ['clap', 880, 0.6]]) {
     if (!fs.existsSync(f(name + '.wav'))) ffmpeg(['-f', 'lavfi', '-i', `sine=frequency=${hz}:duration=${sec}:sample_rate=48000,volume=0.5`, '-ac', '2', f(name + '.wav')]);
   }
+  // ไลบรารี NDI / OMT จำลอง (ส่ง-รับในโปรเซสเดียว) ให้ Gateway Rust ใช้แทนของจริง
+  const mockSrc = path.join(__dirname, 'fixtures', 'netvideo-mock.c');
+  if (!fs.existsSync(f('libnetvideo-mock.so')) || fs.statSync(f('libnetvideo-mock.so')).mtimeMs < fs.statSync(mockSrc).mtimeMs) spawnSync('cc', ['-shared', '-fPIC', '-O2', '-o', f('libnetvideo-mock.so'), mockSrc, '-lpthread'], { stdio: 'inherit' });
   if (!fs.existsSync(f('loud.webm'))) ffmpeg(['-f', 'lavfi', '-i', 'testsrc2=size=640x360:rate=30', '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000,volume=7', '-t', '20', '-c:v', 'libvpx', '-b:v', '500k', '-c:a', 'libopus', '-b:a', '128k', '-shortest', f('loud.webm')]);
 }
 
@@ -100,6 +103,8 @@ function runSuite(name) {
   const peer = PeerServer({ port: 9900, host: '127.0.0.1', path: '/' });
   // GATEWAY_BIN=desktop/target/release/webmix-gateway → ทดสอบ Gateway เวอร์ชัน Rust (ของแอปเดสก์ท็อป) แทนเวอร์ชัน Node
   const gwEnv = { ...process.env, PORT: '8089', STREAM_TOKEN: 'abc' };
+  const mock = path.join(WORK, 'libnetvideo-mock.so');
+  if (fs.existsSync(mock)) Object.assign(gwEnv, { WEBMIX_NDI_LIB: mock, WEBMIX_OMT_LIB: mock });
   const gateway = process.env.GATEWAY_BIN
     ? spawn(path.resolve(ROOT, process.env.GATEWAY_BIN), [], { env: gwEnv, stdio: process.env.VERBOSE ? 'inherit' : 'ignore' })
     : spawn(process.execPath, ['stream-gateway.js'], { cwd: path.join(ROOT, 'server'), env: gwEnv, stdio: 'ignore' });

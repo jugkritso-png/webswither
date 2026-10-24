@@ -53,7 +53,11 @@ jobs:
         working-directory: tests
         env:
           GATEWAY_BIN: desktop/target/release/webmix-gateway
-        run: npm test -- multistream srt-output reconnect desktop vertical abr srt-input netinputs recovery
+        run: npm test -- multistream srt-output reconnect desktop vertical abr srt-input netinputs recovery netvideo
+      - name: NDI / OMT self-test (mock library)
+        working-directory: tests
+        run: |
+          for p in ndi omt; do WEBMIX_NDI_LIB=$PWD/.work/libnetvideo-mock.so WEBMIX_OMT_LIB=$PWD/.work/libnetvideo-mock.so ../desktop/target/release/webmix-gateway --netvideo-selftest $p; done
 
   app:
     name: App · ${{ matrix.name }}
@@ -92,6 +96,29 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf \
             xvfb ffmpeg gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-libav
+      # OMT (Open Media Transport, MIT): ใช้ไลบรารีจาก release ทางการของ openmediatransport/libomtnet แนบไปกับแอป
+      # ไม่พบ/ดาวน์โหลดไม่ได้ → สร้างแอปต่อได้ (OMT ใช้ไม่ได้ในรอบนั้น)
+      - name: OMT libraries (libomt + libvmx)
+        if: runner.os != 'Linux'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          D="$RUNNER_TEMP/omt"; mkdir -p "$D" desktop/src-tauri/omt
+          gh release download --repo openmediatransport/libomtnet --dir "$D" --pattern '*' || { echo "::warning::ดาวน์โหลด OMT ไม่ได้ — แอปรอบนี้จะไม่มี OMT"; exit 0; }
+          (cd "$D" && for z in *.zip; do [ -f "$z" ] && unzip -o -q "$z" -d "x_${z%.zip}"; done; for t in *.tar.gz *.tgz; do [ -f "$t" ] && mkdir -p "x_$t" && tar xzf "$t" -C "x_$t"; done)
+          if [ "$RUNNER_OS" = Windows ]; then EXT=dll; PREF='x64|amd64|win-x64'; else EXT=dylib; PREF='universal|osx|mac'; fi
+          pick() { find "$D" -type f -iname "$1.$EXT" | awk -v p="$PREF" '{ l = tolower($0); s = (l ~ p) ? 0 : 1; if (l ~ /arm64/ && p !~ /universal/) s = 2; print s "\t" $0 }' | sort | head -1 | cut -f2; }
+          OMT=$(pick libomt); VMX=$(pick libvmx)
+          echo "libomt: $OMT"; echo "libvmx: $VMX"
+          if [ -n "$OMT" ] && [ -n "$VMX" ]; then
+            cp "$OMT" "$VMX" desktop/src-tauri/omt/ && cp desktop/omt-LICENSE.txt desktop/src-tauri/omt/LICENSE-OMT.txt
+            [ "$RUNNER_OS" = macOS ] && for f in desktop/src-tauri/omt/*.dylib; do lipo -info "$f"; codesign --force -s - "$f"; done
+            echo "OMT_BUNDLED=1" >> "$GITHUB_ENV"
+          else
+            echo "::warning::ไม่พบ libomt/libvmx ใน release — แอปรอบนี้จะไม่มี OMT"; find "$D" -type f | head -40
+          fi
       - name: Build installers
         working-directory: desktop
         shell: bash
@@ -102,6 +129,8 @@ jobs:
         run: |
           EXTRA=()
           if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then EXTRA=(--config '{"bundle":{"createUpdaterArtifacts":true}}'); else echo "::notice::ไม่มี TAURI_SIGNING_PRIVATE_KEY — ข้ามไฟล์อัปเดตอัตโนมัติ"; fi
+          # ไลบรารี OMT ไปอยู่ในโฟลเดอร์ omt/ ข้างโปรแกรม (Windows) หรือใน Contents/Resources/omt (macOS)
+          if [ "$OMT_BUNDLED" = 1 ]; then EXTRA+=(--config '{"bundle":{"resources":{"omt/":"omt/"}}}'); fi
           npx --yes @tauri-apps/cli@2 build ${{ matrix.target && format('--target {0}', matrix.target) || '' }} "${EXTRA[@]}"
       - name: Self-test (open the real app)
         shell: bash
@@ -122,6 +151,9 @@ jobs:
             console.log(r.ua || "");
             for (const c of r.checks || []) console.log(`${c.ok ? "✓" : c.required ? "✗" : "·"} ${c.name.padEnd(16)} ${c.detail}`);
             if (r.error) console.log("error:", r.error);
+            // แนบ OMT มาแล้ว → แอปที่สร้างเสร็จต้องโหลดได้จริง
+            const omt = (r.checks || []).find(c => c.name === "omt");
+            if (process.env.OMT_BUNDLED === "1" && !(omt && omt.ok)) { console.log("OMT ที่แนบมากับแอปโหลดไม่ได้"); process.exit(1); }
             process.exit(r.ok ? 0 : 1);
           ' "$WEBMIX_SELFTEST_OUT"
           if [ -n "${{ matrix.stream }}" ]; then

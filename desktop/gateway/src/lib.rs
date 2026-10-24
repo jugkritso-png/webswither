@@ -11,11 +11,13 @@
 //! พารามิเตอร์ของ URL: fps, vb (kbps), res (ความสูง) · vcopy=1 = วิดีโอที่ส่งมาเป็น H.264 อยู่แล้ว (เช่นจาก WebCodecs
 //! ด้วยชิปของมือถือ) → ใช้ต่อได้เลยไม่เข้ารหัสซ้ำ เข้ารหัสเฉพาะเสียงเป็น AAC
 //!
-//! รับสัญญาณเข้ามาเป็น Input (SRT / กล้อง IP RTSP / RTMP) ที่ /srt-in — ดู `ingest.rs`
+//! รับสัญญาณเข้ามาเป็น Input (SRT / กล้อง IP RTSP / RTMP / NDI / OMT) ที่ /srt-in — ดู `ingest.rs`
+//! ปลายทาง ndi://ชื่อ หรือ omt://ชื่อ = ส่ง Program ออกเป็นแหล่ง NDI / OMT ในวง LAN — ดู `netvideo.rs`
 //!
 //! ใช้ในแอปเดสก์ท็อป (ทำงานในเครื่องเดียวกับหน้า WebMix — ไม่ต้องมีเซิร์ฟเวอร์) และรันแยกเป็นโปรแกรม `webmix-gateway` ได้
 
 mod ingest;
+pub mod netvideo;
 
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -803,8 +805,14 @@ impl Session {
         if id.is_empty() {
             return;
         }
-        if !is_rtmp(&url) && !is_srt(&url) {
-            return self.dest_error(&id, &name, "URL ต้องเป็น rtmp://, rtmps:// หรือ srt://host:port");
+        let net = netvideo::parse_url(&url);
+        if !is_rtmp(&url) && !is_srt(&url) && net.is_none() {
+            return self.dest_error(&id, &name, "URL ต้องเป็น rtmp://, rtmps://, srt://host:port, ndi://ชื่อ หรือ omt://ชื่อ");
+        }
+        if let Some((proto, _)) = net {
+            if let Err(e) = netvideo::available(proto) {
+                return self.dest_error(&id, &name, &e);
+            }
         }
         if is_srt(&url) && !self.srt_supported {
             return self.dest_error(&id, &name, "ffmpeg ในเครื่องนี้ไม่รองรับ SRT (ต้องเป็น ffmpeg ที่คอมไพล์พร้อม libsrt)");
@@ -820,14 +828,14 @@ impl Session {
             }
             let d = st.dests.iter_mut().find(|d| d.id == id).unwrap();
             d.url = url;
-            d.vertical = vertical.clone();
+            d.vertical = if net.is_some() { String::new() } else { vertical.clone() };
             d.wanted = true;
             if d.tx.is_some() {
                 drop(st);
                 return self.report();
             }
         }
-        if !vertical.is_empty() {
+        if !vertical.is_empty() && net.is_none() {
             self.start_vertical(&vertical);
         }
         self.spawn_dest(&id);
@@ -860,16 +868,35 @@ impl Session {
             d.generation += 1;
             (d.url.clone(), d.name.clone(), d.generation)
         };
-        let mut args: Vec<String> = [
-            "-hide_banner", "-loglevel", "error", "-nostats", "-progress", "pipe:1",
-            // ต้องอ่านนานกว่า 1 ช่วงคีย์เฟรม ปลายทางที่เริ่มกลางไลฟ์จึงเจอ SPS/PPS เสมอ
-            "-probesize", "5000000", "-analyzeduration", "3000000",
-            "-f", "mpegts", "-i", "pipe:0", "-c", "copy",
-        ]
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
-        args.extend(output_args(&url));
+        let net = netvideo::parse_url(&url);
+        // NDI / OMT: ถอดรหัส Program เป็นเฟรมดิบ — ภาพ UYVY ทาง stdout · เสียงทาง TCP ภายในเครื่อง
+        let net_audio = match net {
+            Some(_) => match std::net::TcpListener::bind("127.0.0.1:0").and_then(|l| l.set_nonblocking(true).map(|_| l)).and_then(TcpListener::from_std) {
+                Ok(l) => Some(l),
+                Err(e) => return self.dest_failed(id, &format!("เปิดช่องเสียงภายในไม่ได้: {e}")),
+            },
+            None => None,
+        };
+        let (nw, nh) = (((self.height * 16 / 9) + 1) & !1, self.height & !1);
+        let mut args: Vec<String> = if net.is_some() { vec!["-hide_banner", "-loglevel", "error", "-nostats"] } else { vec!["-hide_banner", "-loglevel", "error", "-nostats", "-progress", "pipe:1"] }
+            .into_iter()
+            .map(String::from)
+            .collect();
+        // ต้องอ่านนานกว่า 1 ช่วงคีย์เฟรม ปลายทางที่เริ่มกลางไลฟ์จึงเจอ SPS/PPS เสมอ
+        args.extend(["-probesize", "5000000", "-analyzeduration", "3000000", "-f", "mpegts", "-i", "pipe:0"].map(String::from));
+        if let (Some(_), Some(l)) = (&net, &net_audio) {
+            let port = l.local_addr().map(|a| a.port()).unwrap_or(0);
+            args.extend(
+                [
+                    "-map".into(), "0:v:0".into(), "-vf".into(), format!("scale={nw}:{nh}:flags=bicubic,fps={}", self.fps), "-pix_fmt".into(), "uyvy422".into(), "-f".into(), "rawvideo".into(), "pipe:1".into(),
+                    "-map".into(), "0:a:0".into(), "-ac".into(), "2".into(), "-ar".into(), "48000".into(), "-f".into(), "f32le".into(), format!("tcp://127.0.0.1:{port}"),
+                ],
+            );
+        } else {
+            args.push("-c".into());
+            args.push("copy".into());
+            args.extend(output_args(&url));
+        }
         eprintln!("{} → {} {}", self.tag, name, mask_url(&url));
         let child = quiet(Command::new(&self.cfg.ffmpeg).args(&args)).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn();
         let mut child: Child = match child {
@@ -901,8 +928,11 @@ impl Session {
                 queued.fetch_sub((chunk.len() as u64).min(queued.load(Ordering::Relaxed)), Ordering::Relaxed);
             }
         });
-        // live = ffmpeg เขียนข้อมูลออกไปยังปลายทางได้จริงแล้ว (out_time เริ่มเดิน)
         let stdout = child.stdout.take().unwrap();
+        if let (Some((proto, src_name)), Some(listener)) = (net, net_audio) {
+            self.run_net_sender(id, generation, proto, src_name, stdout, listener, (nw, nh));
+        } else {
+        // live = ffmpeg เขียนข้อมูลออกไปยังปลายทางได้จริงแล้ว (out_time เริ่มเดิน)
         {
             let s = self.clone();
             let id = id.to_string();
@@ -924,6 +954,7 @@ impl Session {
                     }
                 }
             });
+        }
         }
         let recent_err = Arc::new(Mutex::new(Vec::<String>::new()));
         {
@@ -989,6 +1020,117 @@ impl Session {
                 if again {
                     s.spawn_dest(&id);
                     s.report();
+                }
+            }
+        });
+    }
+
+    fn dest_failed(&self, id: &str, message: &str) {
+        let mut st = self.st.lock().unwrap();
+        if let Some(d) = st.dests.iter_mut().find(|d| d.id == id) {
+            d.state = "error";
+            d.message = message.to_string();
+        }
+    }
+
+    /// เฟรม UYVY จาก ffmpeg + เสียงจาก TCP → แหล่ง NDI / OMT · แสดงจำนวนเครื่องที่รับอยู่ในสถานะปลายทาง
+    #[allow(clippy::too_many_arguments)]
+    fn run_net_sender(&self, id: &str, generation: u64, proto: netvideo::Proto, src_name: String, mut stdout: tokio::process::ChildStdout, listener: TcpListener, size: (u32, u32)) {
+        enum Msg {
+            Video(Vec<u8>),
+            Audio(Vec<f32>),
+        }
+        let (tx, rx) = std::sync::mpsc::channel::<Msg>();
+        let pending = Arc::new(AtomicU64::new(0));
+        let (w, h) = size;
+        let fps = (self.fps as i32, 1);
+        // ภาพ: อ่านทีละเฟรมเต็ม ส่งให้เธรดของไลบรารี (คิวเกิน 2 เฟรม = ข้าม ไม่หน่วงสะสม)
+        {
+            let (tx, pending) = (tx.clone(), pending.clone());
+            tokio::spawn(async move {
+                let mut frame = vec![0u8; (w * h * 2) as usize];
+                while stdout.read_exact(&mut frame).await.is_ok() {
+                    if pending.load(Ordering::Relaxed) < 2 {
+                        pending.fetch_add(1, Ordering::Relaxed);
+                        if tx.send(Msg::Video(frame.clone())).is_err() {
+                            break;
+                        }
+                    }
+                }
+            });
+        }
+        // เสียง: ffmpeg ต่อเข้ามาที่พอร์ตภายใน แล้วส่ง f32 สเตอริโอมาเรื่อย ๆ
+        {
+            let tx = tx.clone();
+            tokio::spawn(async move {
+                let Ok(Ok((mut sock, _))) = tokio::time::timeout(Duration::from_secs(20), listener.accept()).await else { return };
+                let mut buf = vec![0u8; 960 * 2 * 4];
+                loop {
+                    match sock.read(&mut buf).await {
+                        Ok(0) | Err(_) => break,
+                        Ok(mut n) => {
+                            // ให้ได้ครบทีละตัวอย่าง (4 ไบต์ × 2 ช่อง)
+                            while n % 8 != 0 {
+                                match sock.read(&mut buf[n..n + 1]).await {
+                                    Ok(1) => n += 1,
+                                    _ => return,
+                                }
+                            }
+                            let samples: Vec<f32> = buf[..n].chunks_exact(4).map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect();
+                            if tx.send(Msg::Audio(samples)).is_err() {
+                                break;
+                            }
+                        }
+                    }
+                }
+            });
+        }
+        drop(tx);
+        let s = self.clone();
+        let id = id.to_string();
+        std::thread::spawn(move || {
+            let sender = match netvideo::Sender::new(proto, &src_name) {
+                Ok(x) => x,
+                Err(e) => {
+                    s.dest_failed(&id, &e);
+                    s.stop_dest(&id);
+                    return;
+                }
+            };
+            eprintln!("{} {} source \"{src_name}\" {w}x{h}@{}", s.tag, proto.label(), fps.0);
+            let mut live = false;
+            let mut seen = -1;
+            let mut checked = Instant::now();
+            while let Ok(m) = rx.recv() {
+                match m {
+                    Msg::Video(f) => {
+                        pending.fetch_sub(1, Ordering::Relaxed);
+                        sender.video(&f, w, h, fps);
+                        let mut st = s.st.lock().unwrap();
+                        let Some(d) = st.dests.iter_mut().find(|d| d.id == id && d.generation == generation) else { break };
+                        if !live {
+                            live = true;
+                            d.state = "live";
+                            drop(st);
+                            eprintln!("{} ✓ {} live", s.tag, src_name);
+                            s.report();
+                        }
+                    }
+                    Msg::Audio(a) => sender.audio(&a, 48000),
+                }
+                if checked.elapsed() > Duration::from_secs(1) {
+                    checked = Instant::now();
+                    let n = sender.connections();
+                    if n != seen {
+                        seen = n;
+                        let msg = if n > 0 { format!("{} “{src_name}” · ผู้รับ {n} เครื่อง", proto.label()) } else { format!("{} “{src_name}” · ยังไม่มีเครื่องรับ", proto.label()) };
+                        let mut st = s.st.lock().unwrap();
+                        if let Some(d) = st.dests.iter_mut().find(|d| d.id == id && d.generation == generation) {
+                            d.message = msg;
+                        }
+                        drop(st);
+                        s.report();
+                    }
                 }
             }
         });
