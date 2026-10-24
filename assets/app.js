@@ -256,10 +256,11 @@
     replay: { icon: 'restart', label: 'REPLAY' },
     slides: { icon: 'image', label: 'SLIDES' },
     visualizer: { icon: 'sliders', label: 'VISUALIZER' },
-    chat: { icon: 'type', label: 'COMMENTS' }
+    chat: { icon: 'type', label: 'COMMENTS' },
+    captions: { icon: 'type', label: 'CAPTIONS' }
   };
   // กราฟิกที่วาดบนพื้นโปร่งใส (ซ้อนเป็น Overlay ได้ทันที)
-  const GRAPHIC_TYPES = ['title', 'timer', 'score', 'ticker', 'visualizer', 'chat'];
+  const GRAPHIC_TYPES = ['title', 'timer', 'score', 'ticker', 'visualizer', 'chat', 'captions'];
   const clockOf = inp => inp.type === 'timer' ? inp.timer : inp.type === 'score' && inp.score.clock && inp.score.clock.mode !== 'none' ? inp.score.clock : null;
   const scoreClockText = inp => { const c = clockOf(inp); return inp.type === 'score' && c ? timerText(c).text : ''; };
   // วาดกราฟิกลงพื้นที่ w×h (ไม่มีพื้นหลัง)
@@ -270,6 +271,7 @@
     else if (inp.type === 'ticker') drawTicker(ctx, w, h, inp);
     else if (inp.type === 'visualizer') drawViz(ctx, inp, w, h);
     else if (inp.type === 'chat') chatLib.drawChat(ctx, w, h, chatFeed.shown, inp.chat.style, chatAnim());
+    else if (inp.type === 'captions') drawCaptions(ctx, w, h, inp);
   }
 
   /* ---- Audio Visualizer: กราฟิกที่ขยับตามเสียง (แท่งความถี่ / คลื่นเสียง / วงกลมรอบรูป / แท่งสะท้อนกลางจอ) ----
@@ -393,7 +395,7 @@
       case 'black': fillBlack(ctx, w, h); break;
       case 'slate': drawSlate(ctx, w, h, inp); break;
       case 'clock': drawClock(ctx, w, h, inp); break;
-      case 'title': case 'timer': case 'score': case 'ticker': case 'visualizer': case 'chat': fillBlack(ctx, w, h); drawGraphic(ctx, inp, w, h); break;
+      case 'title': case 'timer': case 'score': case 'ticker': case 'visualizer': case 'chat': case 'captions': fillBlack(ctx, w, h); drawGraphic(ctx, inp, w, h); break;
       case 'scene': drawScene(ctx, inp, w, h); break;
       case 'slides': {
         const c = slideCanvas(inp);
@@ -609,7 +611,7 @@
   // วาดแหล่งภาพแบบพื้นหลังโปร่งใส (รูป PNG, วิดีโอที่มี alpha, Title) — ไม่มีสัญญาณก็ไม่วาดอะไรทับ Program
   function drawSourceT(ctx, inp, w, h) {
     switch (inp.type) {
-      case 'title': case 'timer': case 'score': case 'ticker': case 'visualizer': case 'chat': drawGraphic(ctx, inp, w, h); return;
+      case 'title': case 'timer': case 'score': case 'ticker': case 'visualizer': case 'chat': case 'captions': drawGraphic(ctx, inp, w, h); return;
       case 'image': if (inp.status === 'live') drawFitColored(ctx, inp, inp.el, inp.el.naturalWidth, inp.el.naturalHeight, w, h); return;
       case 'bars': case 'black': case 'slate': case 'clock': case 'scene': drawSource(ctx, inp, w, h); return;
       case 'playlist':
@@ -778,6 +780,8 @@
         return { e: genTexture('g:' + inp.id, `${scoreClockText(inp)}|${JSON.stringify(inp.score)}`, W, H, (c, w, h) => drawScore(c, w, h, inp, scoreClockText(inp))), full: true, under: transparent ? null : [0, 0, 0, 1] };
       case 'visualizer':
         return { e: genTexture('g:' + inp.id, frameNo, GW, GH, (c, w, h) => drawViz(c, inp, w, h)), full: true, under: transparent ? null : [0, 0, 0, 1] };
+      case 'captions':
+        return { e: genTexture('g:' + inp.id, `${captionText(inp)}|${JSON.stringify(inp.cap)}`, W, H, (c, w, h) => drawGraphic(c, inp, w, h)), full: true, under: transparent ? null : [0, 0, 0, 1] };
       case 'chat': {
         const a = chatAnim();
         return { e: genTexture('g:' + inp.id, `${chatFeed.shown?.id}|${a.toFixed(3)}|${inp.chat.style}`, W, H, (c, w, h) => drawGraphic(c, inp, w, h)), full: true, under: transparent ? null : [0, 0, 0, 1] };
@@ -1333,6 +1337,7 @@
               <button class="mini txt" data-card="rspd" title="ความเร็วเล่นซ้ำ">${speedLabel(inp.replay.speed)}</button>` : ''}
             ${canRelink ? `<button class="mini warn" data-card="relink" title="เชื่อมต่อแหล่งภาพนี้ใหม่">${icon('link')}</button>` : ''}
             ${inp.type === 'wireless' && inp.cam && inp.status === 'live' ? `<button class="mini ${inp.cam.rec ? 'is-rec' : ''}" data-card="camctl" title="ควบคุมกล้องมือถือ (แสง / สี / โฟกัส / ซูม / บันทึกในเครื่อง)">${icon('sliders')}</button>` : ''}
+            ${inp.type === 'captions' ? `<button class="mini ${inp.capRun?.on ? 'is-on' : ''}" data-card="cap" title="เริ่ม / หยุดฟังเสียงพูด">${icon(inp.capRun?.on ? 'pause' : 'play')}</button>` : ''}
             ${inp.type === 'guest' ? `<button class="mini ${inp.status === 'live' ? '' : 'warn'}" data-card="invite" title="ลิงก์เชิญแขก">${icon('link')}</button>` : ''}
             ${inp.type === 'score' ? `
               <button class="mini txt" data-card="sa+" title="${esc(inp.score.teamA)} +1">A+</button><button class="mini txt" data-card="sa-" title="${esc(inp.score.teamA)} −1">A−</button>
@@ -1383,6 +1388,7 @@
       else if (act === 'restart') { inp.el.currentTime = 0; inp.el.play().catch(() => {}); }
       else if (act === 'loop') { inp.el.loop = !inp.el.loop; actionBtn.classList.toggle('is-on', inp.el.loop); }
       else if (act === 'rcap') replayCapture(inp);
+      else if (act === 'cap') { inp.capRun?.on ? captionStop(inp) : captionStart(inp); renderInputs(); }
       else if (act === 'slprev' || act === 'slnext') slideGo(inp, inp.slides.page + (act === 'slnext' ? 1 : -1));
       else if (act === 'rspd') { const i = REPLAY_SPEEDS.indexOf(inp.replay.speed); inp.replay.speed = REPLAY_SPEEDS[(i + 1) % REPLAY_SPEEDS.length]; inp.el.playbackRate = inp.replay.speed; actionBtn.textContent = speedLabel(inp.replay.speed); }
       return;
@@ -1467,6 +1473,7 @@
   // ปล่อยทรัพยากรของ Input (กล้อง, ไฟล์, การเชื่อมต่อ) แล้วนำออกจากรายการ
   function disposeInput(inp, forget) {
     inp.stream && inp.stream.getTracks().forEach(t => t.stop());
+    if (inp.type === 'captions') captionStop(inp);
     if (inp.el && inp.el.tagName === 'VIDEO') {
       inp.el.pause();
       inp.el.srcObject = null;
@@ -1519,6 +1526,7 @@
     if (inp.type === 'slides') return openSlidesDialog(inp);
     if (inp.type === 'visualizer') return openVizDialog(inp);
     if (inp.type === 'chat') return openChatInputDialog(inp);
+    if (inp.type === 'captions') return openCaptionsDialog(inp);
     if (inp.type === 'srt' && inp.srt.mode === 'rtsp') return openRtspDialog(inp);
     if (inp.type === 'srt' && inp.srt.mode === 'rtmp') return showRtmpSenderInfo(inp);
     if (inp.type === 'srt' && (inp.srt.mode === 'ndi' || inp.srt.mode === 'omt')) return openNetVideoDialog(inp.srt.mode, inp);
@@ -1844,6 +1852,163 @@
     } catch (e) {
       toast('เปิดไมค์ไม่สำเร็จ: ' + e.message, 'error');
     }
+  }
+
+  /* ------------------------------------------------------ live captions */
+  // คำบรรยายสด: ระบบรู้จำเสียงของเบราว์เซอร์ (Web Speech API — Chrome / Edge / Safari ส่งเสียงไปประมวลผลบนเซิร์ฟเวอร์ของผู้ผลิตเบราว์เซอร์)
+  // ฟังจากไมค์หลักของเครื่อง หรือช่องเสียงในมิกเซอร์ (เบราว์เซอร์รุ่นใหม่รับ MediaStreamTrack ได้ — รุ่นเก่าใช้ไมค์หลักแทน)
+  const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const CAP_LANGS = { 'th-TH': 'ไทย', 'en-US': 'English (US)', 'en-GB': 'English (UK)', 'zh-CN': '中文', 'ja-JP': '日本語', 'ko-KR': '한국어', 'lo-LA': 'ລາວ', 'my-MM': 'မြန်မာ', 'vi-VN': 'Tiếng Việt' };
+  const CAP_SIZES = { s: ['เล็ก', 28], m: ['กลาง', 36], l: ['ใหญ่', 46] };
+  const CAP_POS = { bottom: 'ล่างจอ', top: 'บนจอ' };
+  function sanitizeCap(c) {
+    c = c || {};
+    return { lang: CAP_LANGS[c.lang] ? c.lang : 'th-TH', source: typeof c.source === 'string' && c.source ? c.source.slice(0, 80) : 'mic', size: CAP_SIZES[c.size] ? c.size : 'm',
+      pos: CAP_POS[c.pos] ? c.pos : 'bottom', lines: clamp(+c.lines || 2, 1, 3), clearSec: clamp(+c.clearSec || 5, 2, 30) };
+  }
+  function addCaptionsInput() {
+    const n = inputs.filter(i => i.type === 'captions').length + 1;
+    const inp = addInput({ type: 'captions', name: n > 1 ? `CAPTIONS ${n}` : 'CAPTIONS', cap: sanitizeCap({}) });
+    openCaptionsDialog(inp, true);
+    return inp;
+  }
+  // เสียงจากมิกเซอร์ → MediaStreamTrack ให้ตัวรู้จำเสียง (Master = เสียงรวมที่ออกอากาศ)
+  function captionTrack(inp) {
+    const src = inp.cap.source;
+    if (src === 'mic' || !audio.ensure()) return null;
+    const r = inp.capRun;
+    if (!r.dest) r.dest = audio.ctx.createMediaStreamDestination();
+    const node = src === 'master' ? audio.post : chanByKey(src)?.afvGain;
+    if (!node) return null;
+    try { node.connect(r.dest); } catch (e) { return null; }
+    r.tapped = node;
+    return r.dest.stream.getAudioTracks()[0] || null;
+  }
+  function captionStart(inp) {
+    if (!SpeechRec) {
+      toast('เบราว์เซอร์/แอปนี้ไม่มีระบบแปลงเสียงเป็นข้อความ — ใช้หน้าเว็บ WebMix ใน Chrome, Edge หรือ Safari', 'error', 8000);
+      return;
+    }
+    const r = inp.capRun || (inp.capRun = { lines: [], interim: '', lastAt: 0, log: [] });
+    if (r.on) return;
+    r.on = true; r.error = ''; r.fails = 0;
+    const go = () => {
+      if (!r.on || inp.removed) return;
+      const rec = new SpeechRec();
+      rec.lang = inp.cap.lang; rec.continuous = true; rec.interimResults = true; rec.maxAlternatives = 1;
+      rec.onresult = e => {
+        let interim = '';
+        for (let i = e.resultIndex; i < e.results.length; i++) {
+          const t = String(e.results[i][0].transcript || '').trim();
+          if (!t) continue;
+          if (e.results[i].isFinal) { r.lines.push(t); r.log.push({ text: t, at: Date.now() }); if (r.lines.length > 20) r.lines.shift(); }
+          else interim += (interim ? ' ' : '') + t;
+        }
+        r.interim = interim;
+        r.lastAt = performance.now();
+        r.fails = 0;
+      };
+      rec.onerror = e => {
+        const fatal = { 'not-allowed': 'ไม่ได้รับอนุญาตให้ใช้ไมค์', 'service-not-allowed': 'เบราว์เซอร์/แอปนี้ไม่อนุญาตบริการแปลงเสียง — ใช้หน้าเว็บใน Chrome / Edge', 'language-not-supported': 'ไม่รองรับภาษานี้', 'audio-capture': 'เปิดไมค์ไม่ได้' }[e.error];
+        if (fatal) { r.on = false; r.error = fatal; toast(`คำบรรยายสด: ${fatal}`, 'error', 7000); renderInputs(); }
+        else if (e.error === 'network') r.error = 'ต่อบริการแปลงเสียงไม่ได้ (ต้องต่ออินเทอร์เน็ต) — กำลังลองใหม่';
+      };
+      // Chrome หยุดฟังเองเมื่อเงียบนาน/ครบเวลา — เริ่มใหม่ทันทีระหว่างที่ยังเปิดอยู่ (ล้มติดกันหลายครั้ง = รอนานขึ้น)
+      rec.onend = () => { if (r.rec === rec && r.on) setTimeout(go, Math.min(5000, 250 * 2 ** (r.fails++))); };
+      r.rec = rec;
+      const track = captionTrack(inp);
+      try { track ? rec.start(track) : rec.start(); }
+      catch (err) { try { rec.start(); } catch (err2) { r.on = false; r.error = err2.message; toast(`คำบรรยายสด: ${err2.message}`, 'error'); } }
+    };
+    go();
+  }
+  function captionStop(inp) {
+    const r = inp.capRun;
+    if (!r) return;
+    r.on = false;
+    try { r.rec?.stop(); } catch (e) {}
+    try { r.tapped?.disconnect(r.dest); } catch (e) {}
+    r.tapped = null;
+    r.interim = '';
+  }
+  // ข้อความที่ขึ้นจอ: ประโยคล่าสุด + ส่วนที่กำลังพูด — เงียบเกินเวลาที่ตั้งแล้วหายไป
+  function captionText(inp) {
+    const r = inp.capRun;
+    if (!r || (!r.lines.length && !r.interim)) return '';
+    if (performance.now() - r.lastAt > inp.cap.clearSec * 1000) return '';
+    return [...r.lines.slice(-3), r.interim].filter(Boolean).join(' ');
+  }
+  function drawCaptions(ctx, w, h, inp) {
+    const text = captionText(inp);
+    if (!text) return;
+    const c = inp.cap, s = h / 720, size = CAP_SIZES[c.size][1] * s, lineH = size * 1.32;
+    ctx.save();
+    ctx.font = `600 ${size}px ${FONT}`;
+    const maxW = w * 0.84;
+    // ตัดบรรทัดทั้งหมด แล้วแสดงเฉพาะบรรทัดท้าย ๆ (ข้อความใหม่อยู่ล่างสุด)
+    const all = chatLib.wrapLines(ctx, text, maxW - 40 * s, 50);
+    const lines = all.slice(-c.lines);
+    const boxW = Math.min(maxW, Math.max(...lines.map(l => ctx.measureText(l).width)) + 40 * s), boxH = lines.length * lineH + 20 * s;
+    const x = (w - boxW) / 2, y = c.pos === 'top' ? h * 0.06 : h * 0.93 - boxH;
+    ctx.fillStyle = 'rgba(0,0,0,.78)';
+    ctx.beginPath();
+    if (ctx.roundRect) ctx.roundRect(x, y, boxW, boxH, 8 * s); else ctx.rect(x, y, boxW, boxH);
+    ctx.fill();
+    ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    lines.forEach((l, i) => ctx.fillText(l, w / 2, y + 10 * s + lineH * (i + 0.5)));
+    ctx.restore();
+  }
+  // ไฟล์คำบรรยาย .srt (เวลาเทียบกับประโยคแรก) สำหรับใส่ในคลิปที่บันทึกไว้
+  function captionSrt(log) {
+    if (!log.length) return '';
+    const t0 = log[0].at - 2500;
+    const ts = ms => { ms = Math.max(0, ms); const hh = Math.floor(ms / 3600000), mm = Math.floor(ms / 60000) % 60, ss = Math.floor(ms / 1000) % 60; return `${pad2(hh)}:${pad2(mm)}:${pad2(ss)},${String(ms % 1000).padStart(3, '0')}`; };
+    return log.map((e, i) => {
+      const start = (i ? log[i - 1].at : t0 + 500) - t0, end = Math.min(e.at - t0 + 2000, log[i + 1] ? log[i + 1].at - t0 : Infinity);
+      return `${i + 1}\n${ts(start)} --> ${ts(Math.max(end, start + 800))}\n${e.text}\n`;
+    }).join('\n');
+  }
+  async function openCaptionsDialog(inp, fresh) {
+    const before = { ...inp.cap }, c = inp.cap;
+    const chans = audioChanOptions();
+    const log = inp.capRun?.log || [];
+    const r = await dialog({
+      title: 'คำบรรยายสด (Live Captions)',
+      body: `
+        ${SpeechRec ? '' : '<p class="note warn">เบราว์เซอร์/แอปนี้ไม่มีระบบแปลงเสียงเป็นข้อความ — เปิดหน้าเว็บ WebMix ใน Chrome, Edge หรือ Safari</p>'}
+        <label class="field"><span>ชื่อแหล่งภาพ</span><input name="name" class="input" maxlength="40" value="${esc(inp.name)}"></label>
+        <div class="field-row">
+          <label class="field"><span>ภาษาที่พูด</span><select name="lang" class="select">${Object.entries(CAP_LANGS).map(([k, l]) => `<option value="${k}" ${k === c.lang ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+          <label class="field"><span>ฟังเสียงจาก</span><select name="source" class="select">
+            <option value="mic">ไมค์หลักของเครื่อง</option><option value="master" ${c.source === 'master' ? 'selected' : ''}>Master (เสียงรวมที่ออกอากาศ)</option>
+            ${chans.map(([k, n]) => `<option value="${esc(k)}" ${k === c.source ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select></label>
+        </div>
+        <div class="field-row">
+          <label class="field"><span>ขนาดตัวอักษร</span><select name="size" class="select">${Object.entries(CAP_SIZES).map(([k, [l]]) => `<option value="${k}" ${k === c.size ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+          <label class="field"><span>ตำแหน่ง</span><select name="pos" class="select">${Object.entries(CAP_POS).map(([k, l]) => `<option value="${k}" ${k === c.pos ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+          <label class="field"><span>จำนวนบรรทัด</span><select name="lines" class="select">${[1, 2, 3].map(n => `<option value="${n}" ${n === c.lines ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
+          <label class="field"><span>หายไปเมื่อเงียบ</span><select name="clearSec" class="select">${[3, 5, 8, 15].map(n => `<option value="${n}" ${n === c.clearSec ? 'selected' : ''}>${n} วินาที</option>`).join('')}</select></label>
+        </div>
+        <p class="note">กด ▶ บนการ์ดเพื่อเริ่มฟัง · ใช้เต็มจอ หรือกด 1–8 ใต้การ์ดเพื่อซ้อนบน Program (พื้นโปร่งใส) · เสียงถูกส่งไปแปลงที่บริการของเบราว์เซอร์ (ต้องต่ออินเทอร์เน็ต) ·
+          ช่องเสียงในมิกเซอร์ใช้ได้กับ Chrome / Edge รุ่นใหม่ — รุ่นเก่าฟังจากไมค์หลักแทน · ความแม่นยำขึ้นกับไมค์และเสียงรบกวน ไม่ควรใช้แทนล่ามในงานทางการ</p>
+        ${log.length ? `<p class="note">บันทึกข้อความไว้ ${log.length} ประโยค — <button type="button" class="btn btn-sm cap-srt">ดาวน์โหลด .srt</button> <button type="button" class="btn btn-sm cap-txt">ดาวน์โหลด .txt</button> <button type="button" class="btn btn-sm cap-clear">ล้าง</button></p>` : ''}`,
+      actions: [{ label: 'ยกเลิก' }, { label: fresh ? 'บันทึกแล้วเริ่มฟัง' : 'บันทึก', primary: true, value: 'save' }],
+      onOpen(modal) {
+        const stamp = () => new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
+        $('.cap-srt', modal)?.addEventListener('click', () => downloadBlob(new Blob([captionSrt(log)], { type: 'text/plain' }), `webmix-captions-${stamp()}.srt`));
+        $('.cap-txt', modal)?.addEventListener('click', () => downloadBlob(new Blob([log.map(e => `[${new Date(e.at).toLocaleTimeString('th-TH')}] ${e.text}`).join('\n')], { type: 'text/plain' }), `webmix-captions-${stamp()}.txt`));
+        $('.cap-clear', modal)?.addEventListener('click', e => { log.length = 0; e.target.closest('p').remove(); });
+      }
+    });
+    if (r?.value !== 'save') { inp.cap = before; return; }
+    const f = r.form;
+    inp.name = String(f.name.value || '').trim().slice(0, 40) || inp.name;
+    inp.cap = sanitizeCap({ lang: f.lang.value, source: f.source.value, size: f.size.value, pos: f.pos.value, lines: f.lines.value, clearSec: f.clearSec.value });
+    // ภาษา/ช่องเสียงเปลี่ยน → เริ่มฟังใหม่ด้วยค่าใหม่
+    const restart = inp.capRun?.on && (before.lang !== inp.cap.lang || before.source !== inp.cap.source);
+    if (restart) captionStop(inp);
+    if (fresh || restart) captionStart(inp);
+    renderInputs(); refreshSourceSelects();
   }
 
   /* ------------------------------------------------------ viewer comments */
@@ -3351,6 +3516,7 @@
       ['rec', 'เริ่ม / หยุดบันทึก', toggleRecord],
       ...nums.map(n => [`sfx${n}`, `เสียงเอฟเฟกต์ ${n}`, () => { const ch = padChannel(); if (ch) padFire(ch, n - 1); }]),
       ['chathide', 'ซ่อนคอมเมนต์บนจอ', () => chatHide()],
+      ['captions', 'คำบรรยายสด: เริ่ม / หยุด', () => { const l = inputs.filter(i => i.type === 'captions'); const on = l.some(i => i.capRun?.on); l.forEach(i => on ? captionStop(i) : captionStart(i)); renderInputs(); }],
       ['music', 'เครื่องเล่นเพลง: เล่น / หยุด', () => audio.channels.find(c => c.kind === 'player')?.src.toggle()],
       ['musicnext', 'เครื่องเล่นเพลง: เพลงถัดไป', () => audio.channels.find(c => c.kind === 'player')?.src.next()],
       ...nums.map(n => [`pvw${n}`, `Preview ${n}`, () => pick(n, false)]),
@@ -3755,7 +3921,7 @@
     play: ['เล่นวิดีโอ / Playlist จากต้น', 'media'], recStart: ['เริ่มบันทึก', ''], recStop: ['หยุดบันทึก', ''],
     liveStart: ['เริ่มไลฟ์ (ปลายทางที่เปิดใช้)', ''], liveStop: ['หยุดไลฟ์ทั้งหมด', ''], replay: ['Instant Replay', ''],
     slideNext: ['สไลด์ถัดไป', ''], slidePrev: ['สไลด์ก่อนหน้า', ''],
-    chatHide: ['ซ่อนคอมเมนต์บนจอ', ''], sfx: ['เล่นเสียงเอฟเฟกต์', 'pad'], musicPlay: ['เครื่องเล่นเพลง: เล่น', 'player'], musicStop: ['เครื่องเล่นเพลง: หยุด', 'player'], musicNext: ['เครื่องเล่นเพลง: เพลงถัดไป', 'player'],
+    chatHide: ['ซ่อนคอมเมนต์บนจอ', ''], capOn: ['คำบรรยายสด: เริ่มฟัง', ''], capOff: ['คำบรรยายสด: หยุด', ''], sfx: ['เล่นเสียงเอฟเฟกต์', 'pad'], musicPlay: ['เครื่องเล่นเพลง: เล่น', 'player'], musicStop: ['เครื่องเล่นเพลง: หยุด', 'player'], musicNext: ['เครื่องเล่นเพลง: เพลงถัดไป', 'player'],
     wait: ['รอ (วินาที)', 'secs']
   };
   const MACRO_KEYS = ['', 'F1', 'F2', 'F3', 'F4', 'F6', 'F7', 'F8', 'F9', 'F10', 'F12'];
@@ -3813,6 +3979,7 @@
       case 'slideNext': slideStep(1); break;
       case 'slidePrev': slideStep(-1); break;
       case 'chatHide': chatHide(); break;
+      case 'capOn': case 'capOff': inputs.filter(i => i.type === 'captions').forEach(i => st.a === 'capOn' ? captionStart(i) : captionStop(i)); renderInputs(); break;
       case 'sfx': { const ch = padChannel(); if (ch && !ch.playingPad(+v)) padFire(ch, +v); break; }
       case 'musicPlay': case 'musicStop': case 'musicNext': {
         const ch = chanByKey(v);
@@ -7302,7 +7469,8 @@ onmessage = async e => {
       ['grid', 'ป้ายคะแนน', 'คะแนนสองทีม พร้อมเวลาแข่ง', addScoreInput],
       ['type', 'ตัววิ่งข่าว', 'ข้อความวิ่งด้านล่างจอ', addTickerInput],
       ['sliders', 'Audio Visualizer', 'กราฟิกขยับตามเสียง สำหรับพอดแคสต์ / เพลง / แขกที่ไม่เปิดกล้อง', addVizInput],
-      ['type', 'คอมเมนต์ผู้ชม', 'ดึงแชต YouTube / Twitch แล้วเลือกขึ้นจอ', () => addChatInput()]]],
+      ['type', 'คอมเมนต์ผู้ชม', 'ดึงแชต YouTube / Twitch แล้วเลือกขึ้นจอ', () => addChatInput()],
+      ['mic', 'คำบรรยายสด (Captions)', 'แปลงเสียงพูดเป็นตัวหนังสือบนจอแบบเรียลไทม์ ภาษาไทย / อังกฤษ', addCaptionsInput]]],
     ['เสียง (ไม่มีภาพ)', [
       ['music', 'แหล่งเสียง', 'ไมค์ เครื่องเล่นเพลง เสียงเอฟเฟกต์ เสียงจากคอม วิทยุออนไลน์', () => setTimeout(() => openAudioAddMenu($('[data-action=add-audio]')))]]],
     ['ภาพพื้นฐาน', [
@@ -7398,6 +7566,7 @@ onmessage = async e => {
       return ['MOBILE', st.height ? `${resTag(st.width, st.height)} ${st.fps}` : '', c.battery ? `🔋${Math.round(c.battery.level * 100)}%` : '', c.rec ? '● REC' : '', c.stats && c.stats.limit && c.stats.limit !== 'none' ? '⚠ เน็ต' : ''].filter(Boolean).join(' · ');
     }
     if (inp.type === 'visualizer') return `VISUALIZER · ${VIZ_STYLES[inp.viz.style]} · ${vizSourceName(inp.viz)}`;
+    if (inp.type === 'captions') return `CAPTIONS · ${inp.capRun?.error ? inp.capRun.error : inp.capRun?.on ? 'กำลังฟัง' : 'หยุดอยู่ — กด ▶'}`;
     if (inp.type === 'chat') return `COMMENTS · ${chatFeed.shown && !chatFeed.hideAt ? 'กำลังแสดง' : 'รอเลือกคอมเมนต์'}`;
     if (inp.type === 'slides') return inp.slides.count ? `SLIDES · หน้า ${inp.slides.page}/${inp.slides.count}` : 'SLIDES';
     if (inp.type === 'playlist') return inp.list.items.length ? `${inp.list.index + 1}/${inp.list.items.length}` : 'ว่าง';
@@ -7596,7 +7765,7 @@ onmessage = async e => {
      - ไฟล์วิดีโอ/รูปเก็บสำเนาไว้ในพื้นที่ของเบราว์เซอร์ (OPFS) จึงไม่ต้องเลือกไฟล์ใหม่
      - บันทึกเป็นไฟล์ .webmix.json เพื่อย้ายเครื่องหรือเก็บหลายรายการ (ไฟล์สื่อไม่ได้รวมอยู่ในไฟล์ ต้องเลือกใหม่บนเครื่องอื่น) */
 
-  const SHOW_TYPES = ['bars', 'black', 'slate', 'clock', 'image', 'media', 'camera', 'screen', 'wireless', 'srt', 'title', 'guest', 'timer', 'score', 'ticker', 'playlist', 'scene', 'replay', 'slides', 'visualizer', 'chat'];
+  const SHOW_TYPES = ['bars', 'black', 'slate', 'clock', 'image', 'media', 'camera', 'screen', 'wireless', 'srt', 'title', 'guest', 'timer', 'score', 'ticker', 'playlist', 'scene', 'replay', 'slides', 'visualizer', 'chat', 'captions'];
   const show = {
     ready: false, last: '', savedAt: 0,
     get name() { return store.get('showName', '') || 'โชว์ใหม่'; },
@@ -7630,6 +7799,7 @@ onmessage = async e => {
           if (i.type === 'replay') o.replay = { ...i.replay };
           if (i.type === 'visualizer') o.viz = { ...i.viz };
           if (i.type === 'chat') o.chat = { ...i.chat };
+          if (i.type === 'captions') o.cap = { ...i.cap };
           if (i.type === 'slides') o.slides = { page: i.slides.page, file: i.fileName || '' };
           if (i.layout) o.layout = JSON.parse(JSON.stringify(i.layout));
           if (i.color) o.color = { ...i.color };
@@ -7734,6 +7904,9 @@ onmessage = async e => {
           break;
         case 'replay':
           createReplayInput({ ...base, replay: raw.replay });
+          break;
+        case 'captions':
+          addInput({ type: 'captions', ...base, cap: sanitizeCap(raw.cap) });
           break;
         case 'chat':
           addInput({ type: 'chat', ...base, chat: { style: chatLib.CHAT_STYLES[raw.chat?.style] ? raw.chat.style : 'lower' } });
