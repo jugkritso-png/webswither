@@ -1025,6 +1025,7 @@
     if (now - lastThumbs > 100) {
       lastThumbs = now;
       transport.update();
+      lufs.render();
       for (const inp of inputs) {
         const ctx = thumbs.get(inp.id);
         if (ctx) drawSource(ctx, inp, ctx.canvas.width, ctx.canvas.height);
@@ -4611,6 +4612,90 @@
   const FX_DEFAULT = { delayMs: 0, low: 0, mid: 0, high: 0, comp: false, threshold: -18, ratio: 4, gate: false, gateDb: -50, duck: false, duckDb: -15, duckThr: -40, duckBy: 'voice' };
   // ช่องที่นับว่าเป็น "เสียงพูด" สำหรับ Ducking: ไมค์ แขกรับเชิญ และกล้องมือถือไร้สาย
   const isVoiceChannel = c => c.kind === 'mic' || (!!c.inputId && ['guest', 'wireless'].includes(byId(c.inputId)?.type));
+  /* ------------------------------------------------------ loudness (LUFS) */
+  // EBU R128 / ITU-R BS.1770: M = 400 ms · S = 3 วิ · I = ตั้งแต่เริ่มวัด (gate −70 LUFS และ −10 LU)
+  // วัดหลังลิมิตเตอร์ = เสียงที่ออกสตรีมและบันทึกจริง · เริ่มวัด I ใหม่เมื่อเริ่มไลฟ์
+  const LUFS_TARGETS = { '-14': 'YouTube / Facebook / Spotify', '-16': 'Apple Podcasts / Music', '-23': 'ทีวี EBU R128', '-24': 'ทีวี ATSC A/85' };
+  const lufs = {
+    node: null, blocks: [], gated: [], m: -Infinity, s: -Infinity, i: -Infinity, n: 0,
+    target: LUFS_TARGETS[store.get('lufsTarget', '-14')] ? +store.get('lufsTarget', '-14') : -14,
+    lk: ms => ms > 0 ? -0.691 + 10 * Math.log10(ms) : -Infinity,
+    async start() {
+      if (this.node || !audio.ctx || !audio.ctx.audioWorklet || typeof AudioWorkletNode === 'undefined') return;
+      this.node = 'loading';
+      try {
+        await audio.ctx.audioWorklet.addModule('assets/js/lufs-worklet.js');
+        const n = new AudioWorkletNode(audio.ctx, 'webmix-lufs', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1], channelCount: 2, channelCountMode: 'explicit', channelInterpretation: 'speakers' });
+        // ต่อลงปลายทางผ่าน gain 0 ให้เบราว์เซอร์ประมวลผลตลอด (ไม่มีเสียงออก)
+        const sink = audio.ctx.createGain();
+        sink.gain.value = 0;
+        audio.post.connect(n); n.connect(sink); sink.connect(audio.ctx.destination);
+        n.port.onmessage = e => this.feed(e.data);
+        this.node = n;
+      } catch (e) { this.node = null; console.warn('lufs worklet', e); }
+    },
+    feed(ms) {
+      const b = this.blocks;
+      b.push(ms);
+      if (b.length > 30) b.shift();
+      const mean = k => { const a = b.slice(-k); let t = 0; for (const x of a) t += x; return t / a.length; };
+      this.m = b.length >= 4 ? this.lk(mean(4)) : -Infinity;
+      this.s = b.length >= 4 ? this.lk(mean(Math.min(30, b.length))) : -Infinity;
+      // บล็อก 400 ms ทุก 100 ms (ซ้อน 75%) ที่ดังกว่า −70 LUFS เก็บไว้คิด Integrated
+      if (b.length >= 4 && this.m > -70) this.gated.push(mean(4));
+      if (++this.n % 10 === 0) this.integrate();
+    },
+    integrate() {
+      const g = this.gated;
+      if (!g.length) { this.i = -Infinity; return; }
+      let t = 0;
+      for (const x of g) t += x;
+      const rel = this.lk(t / g.length) - 10;
+      let u = 0, c = 0;
+      for (const x of g) if (this.lk(x) > rel) { u += x; c++; }
+      this.i = c ? this.lk(u / c) : -Infinity;
+    },
+    reset() { this.gated = []; this.i = -Infinity; this.render(); },
+    level(v) {
+      if (!isFinite(v) || v < -60) return 'off';
+      const d = v - this.target;
+      return d > 2 ? 'hot' : d > 1 ? 'warn' : d >= -2 ? 'ok' : 'low';
+    },
+    fmt: v => isFinite(v) && v > -60 ? v.toFixed(1) : '--.-',
+    render() {
+      const el = $('#lufs');
+      if (!el) return;
+      $('.lu-m', el).textContent = this.fmt(this.m);
+      $('.lu-s', el).textContent = this.fmt(this.s);
+      $('.lu-i', el).textContent = this.fmt(this.i);
+      $('.lu-t', el).textContent = this.target;
+      el.dataset.level = this.level(this.s);
+      $('.lu-i', el).dataset.level = this.level(this.i);
+    },
+    openMenu(anchor) {
+      closeMenu();
+      const menu = document.createElement('div');
+      menu.className = 'menu';
+      menu.innerHTML = '<div class="menu-label">เป้าหมายความดัง (LUFS)</div>'
+        + Object.entries(LUFS_TARGETS).map(([k, v]) => `<button data-t="${k}" class="${+k === this.target ? 'is-active' : ''}">${k} LUFS — ${esc(v)}</button>`).join('')
+        + '<div class="menu-label">Integrated (I)</div><button data-reset="1">เริ่มวัดใหม่</button>'
+        + '<div class="menu-note">M = 0.4 วิ · S = 3 วิ · I = ตั้งแต่เริ่มวัด (เริ่มใหม่เองเมื่อเริ่มไลฟ์) · สีเขียว = ใกล้เป้า · เหลือง/แดง = ดังเกิน · ฟ้า = เบาเกิน</div>';
+      document.body.appendChild(menu);
+      const r = anchor.getBoundingClientRect();
+      menu.style.left = `${clamp(r.left, 8, innerWidth - menu.offsetWidth - 8)}px`;
+      menu.style.top = `${r.bottom + 6 + menu.offsetHeight > innerHeight ? Math.max(8, r.top - menu.offsetHeight - 6) : r.bottom + 6}px`;
+      menu.addEventListener('click', e => {
+        const b = e.target.closest('button');
+        if (!b) return;
+        if (b.dataset.t) { this.target = +b.dataset.t; store.set('lufsTarget', b.dataset.t); }
+        if (b.dataset.reset) this.reset();
+        closeMenu();
+        this.render();
+      });
+      setTimeout(() => document.addEventListener('pointerdown', outsideMenu, true));
+    }
+  };
+
   const audio = {
     ctx: null, master: null, monitor: null, dest: null, analyser: null, buf: null,
     channels: [],
@@ -4649,6 +4734,7 @@
         ctx.onstatechange = updateStatus;
         // Noise Gate ทำงานใน AudioWorklet (ต้องเป็น https/localhost) — ไม่มีก็ใช้ส่วนอื่นได้ตามปกติ
         this.gateReady = ctx.audioWorklet ? ctx.audioWorklet.addModule('assets/js/gate-worklet.js').then(() => true, e => { console.warn('gate worklet', e); return false; }) : Promise.resolve(false);
+        lufs.start();
       }
       if (this.ctx.state === 'suspended') this.ctx.resume().catch(() => {});
       return this.ctx;
@@ -5400,7 +5486,7 @@
     push(force) {
       const st = JSON.stringify(this.state());
       if (force || st !== this.last) { this.last = st; this.send(JSON.parse(st)); }
-      this.send({ type: 'r-lv', v: [audio.masterStrip, ...audio.channels].map(c => Math.round(c.level || -90)), oa: onAirSince ? Date.now() - onAirSince : 0, rem: clipRemaining(byId(state.programId)) });
+      this.send({ type: 'r-lv', v: [audio.masterStrip, ...audio.channels].map(c => Math.round(c.level || -90)), oa: onAirSince ? Date.now() - onAirSince : 0, rem: clipRemaining(byId(state.programId)), lu: [lufs.m, lufs.s, lufs.i].map(v => isFinite(v) && v > -60 ? Math.round(v * 10) / 10 : null), lt: lufs.target });
       // ภาพย่อ Preview / Program และ Multiview (ทุกแหล่งภาพ) วินาทีละครั้ง
       if (performance.now() - this.thumbAt > 1000) {
         this.thumbAt = performance.now();
@@ -6995,7 +7081,7 @@ onmessage = async e => {
   let onAirSince = null;
   function updateOnAir() {
     const live = rec.active || streamer.active || !!streamer.reconnecting;
-    if (live && !onAirSince) onAirSince = Date.now();
+    if (live && !onAirSince) { onAirSince = Date.now(); lufs.reset(); }
     if (!live) onAirSince = null;
     const lamp = $('#tally-lamp');
     lamp.classList.toggle('is-live', live);
@@ -8170,6 +8256,7 @@ onmessage = async e => {
     // มือถือ: แท็บล่าง และปุ่ม "หยุดไลฟ์…" บนแจ้งเตือนของ Android (MainActivity เรียก WebMix.nativeAction)
     setMobileView(['switch', 'audio', 'graphics'].includes(store.get('mview', 'switch')) ? store.get('mview', 'switch') : 'switch');
     transport.init();
+    $('#lufs').addEventListener('click', e => { audio.ensure(); lufs.openMenu(e.currentTarget); });
     $('#m-tabs').addEventListener('click', e => {
       const v = e.target.closest('button[data-mview]');
       if (v) { setMobileView(v.dataset.mview); return; }
@@ -8689,7 +8776,7 @@ onmessage = async e => {
     $$('#seg-cardsize button').forEach(b => { b.classList.toggle('is-active', b.dataset.size === cardSize()); b.addEventListener('click', () => setCardSize(b.dataset.size)); });
 
     // สำหรับดีบัก/ทดสอบอัตโนมัติ
-    window.webmix = { chatFeed, chatAdd, chatShow, chatHide, playlist, dataSources, timerControl, multiview, renderer, gpu, setRenderer: v => { settings.renderer = v; renderer.resolve(); updateStatus(); }, show, ovl, setChannel, toggleInputOverlay, useRecFolder: dir => { recFolder = dir; }, inputs, state, settings, overlays, audio, rec, iso, stinger, replayCapture, slideGo, midi, checkAppUpdate, macros, runMacro, openCamControl, abr: { state: abr, decide: abrDecide, apply: abrApply, tick: abrTick }, streamer, wireless, cut, autoTransition, setPreview, tr, ftb, padFire, chanKey, remote: remoteCtl };
+    window.webmix = { chatFeed, chatAdd, chatShow, chatHide, playlist, dataSources, timerControl, multiview, renderer, gpu, setRenderer: v => { settings.renderer = v; renderer.resolve(); updateStatus(); }, show, ovl, setChannel, toggleInputOverlay, useRecFolder: dir => { recFolder = dir; }, inputs, state, settings, overlays, audio, rec, iso, stinger, replayCapture, slideGo, midi, checkAppUpdate, macros, runMacro, openCamControl, abr: { state: abr, decide: abrDecide, apply: abrApply, tick: abrTick }, streamer, wireless, cut, autoTransition, setPreview, tr, ftb, padFire, chanKey, remote: remoteCtl, lufs };
   }
 
   boot();

@@ -1837,3 +1837,19 @@ html.remote-mode body > *:not(#remote):not(svg):not(.toasts):not(.modal-backdrop
 .rmt-rem { font-style: normal; padding: 0 5px; border-radius: 4px; color: var(--text); }
 .rmt-rem[data-level=warn] { background: #a16207; color: #fff; }
 .rmt-rem[data-level=crit] { background: #dc2626; color: #fff; animation: tp-blink .5s steps(2) infinite; }
+
+/* มิเตอร์ความดัง LUFS (EBU R128) */
+.lufs { display: flex; align-items: center; gap: 4px; height: 26px; padding: 0 8px; margin: 8px 10px 0; border-radius: 4px; border: 1px solid #000; background: #0b0c0e; color: #c9cdd4; font-size: 11px; cursor: pointer; white-space: nowrap; min-width: 0; overflow: hidden; }
+.lufs .lu-k { font-weight: 800; letter-spacing: .08em; color: #8a8f99; margin-right: 2px; }
+.lufs .lu-x { color: #6b7078; font-weight: 700; margin-left: 4px; }
+.lufs b { min-width: 34px; text-align: right; font-weight: 700; color: #e6e8eb; }
+.lufs .lu-s { font-size: 13px; }
+.lufs .lu-tg { margin-left: 6px; color: #6b7078; }
+.lufs[data-level=ok] .lu-s { color: #4ade80; }
+.lufs[data-level=warn] .lu-s { color: #facc15; }
+.lufs[data-level=hot] { border-color: #dc2626; } .lufs[data-level=hot] .lu-s { color: #f87171; }
+.lufs[data-level=low] .lu-s { color: #60a5fa; }
+.lufs .lu-i[data-level=ok] { color: #4ade80; } .lufs .lu-i[data-level=warn] { color: #facc15; } .lufs .lu-i[data-level=hot] { color: #f87171; } .lufs .lu-i[data-level=low] { color: #60a5fa; }
+.menu .menu-note { padding: 6px 12px 8px; font-size: 11px; color: var(--dim); max-width: 300px; white-space: normal; }
+@media (max-width: 360px) { .lufs .lu-tg { display: none; } }
+.lufs .lu-tg { margin-left: auto; }
