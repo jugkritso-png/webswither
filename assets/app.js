@@ -5072,32 +5072,94 @@
 
   /* ------------------------------------------------------ remote control */
   // แท็บเล็ต/มือถือสั่งงานสตูดิโอผ่าน PeerJS data channel — ต้องมีรหัสในลิงก์ (สร้างใหม่ได้ = ตัดรีโมตเดิมทั้งหมด)
+  // ทีมงานหลายตำแหน่ง: แต่ละเครื่องเลือกตำแหน่งจากลิงก์/QR แล้วจับคู่ด้วยรหัส 6 หลักที่แสดงบนเครื่องหลัก
+  // จับคู่แล้วได้ token เก็บในเครื่องนั้น (ต่อใหม่ไม่ต้องใส่รหัสอีก) · เครื่องหลักเปลี่ยนตำแหน่ง/ถอดเครื่องได้ · สิทธิ์ตรวจที่เครื่องหลัก
+  const REMOTE_ROLES = window.WebMix.REMOTE_ROLES;
+  const INSERT_TYPES = ['media', 'playlist', 'slides', 'replay'];
+  const REMOTE_ALLOW = {
+    director: '*',
+    switcher: ['pvw', 'take', 'cut', 'auto', 'ftb', 'trans'],
+    sound: ['vol', 'mute', 'sfx', 'music'],
+    cg: ['ovl', 'gfx', 'title', 'ticker', 'cap', 'chathide', 'timer', 'score'],
+    insert: ['media', 'pvw'],
+    monitor: []
+  };
+  const randCode = (n, abc) => Array.from(crypto.getRandomValues(new Uint8Array(n)), b => abc[b % abc.length]).join('');
   const remoteCtl = {
-    conns: new Set(), last: '', timer: 0, thumbAt: 0,
-    key() {
-      if (!/^[a-z0-9]{12}$/.test(settings.remoteKey || '')) { settings.remoteKey = Array.from(crypto.getRandomValues(new Uint8Array(12)), b => 'abcdefghjkmnpqrstuvwxyz23456789'[b % 31]).join(''); saveSettings(); }
-      return settings.remoteKey;
+    conns: new Map(), last: '', timer: 0, thumbAt: 0, fails: [], msgs: [],
+    pin() {
+      if (!/^\d{6}$/.test(settings.remotePin || '')) { settings.remotePin = randCode(6, '0123456789'); saveSettings(); }
+      return settings.remotePin;
     },
-    link() {
-      const q = new URLSearchParams({ remote: wireless.peerId, k: this.key() });
+    team() { if (!Array.isArray(settings.remoteTeam)) settings.remoteTeam = []; return settings.remoteTeam; },
+    link(role) {
+      const q = new URLSearchParams({ remote: wireless.peerId, role });
       if (wireless.sig) q.set('sig', b64url(JSON.stringify(wireless.sig)));
       return `${pageBase()}?${q}`;
     },
+    deny(conn, code, message) {
+      try { conn.send({ type: 'r-denied', code, message }); } catch (e) {}
+      setTimeout(() => { try { conn.close(); } catch (e) {} }, 500);
+    },
     accept(conn) {
       conn.on('open', () => {
-        if (!conn.metadata || conn.metadata.key !== this.key()) {
-          try { conn.send({ type: 'r-denied', message: 'รหัสรีโมตไม่ถูกต้องหรือถูกเปลี่ยนแล้ว — สแกน QR ใหม่จากสตูดิโอ (ปุ่มรีโมตด้านบน)' }); } catch (e) {}
-          setTimeout(() => conn.close(), 500);
-          return;
-        }
-        this.conns.add(conn);
+        const md = conn.metadata || {};
+        const dev = String(md.dev || '').slice(0, 40), name = String(md.name || '').trim().slice(0, 30);
+        if (!dev) { this.deny(conn, 'old', 'ลิงก์รีโมตเวอร์ชันเก่า — สแกน QR ใหม่จากปุ่ม “รีโมต” บนเครื่องหลัก'); return; }
+        let m = md.token && this.team().find(t => t.dev === dev && t.token === md.token);
+        if (!m) {
+          const now = Date.now();
+          this.fails = this.fails.filter(t => now - t < 60000);
+          if (!md.pin) { this.deny(conn, 'pair', ''); return; }
+          if (this.fails.length >= 5) { this.deny(conn, 'locked', 'ใส่รหัสผิดหลายครั้ง — รอ 1 นาทีแล้วลองใหม่'); return; }
+          if (String(md.pin) !== this.pin()) { this.fails.push(now); this.deny(conn, 'pin', 'รหัสจับคู่ไม่ถูกต้อง — ดูรหัส 6 หลักบนเครื่องหลัก (ปุ่ม “รีโมต”)'); return; }
+          m = { dev, token: randCode(24, 'abcdefghijkmnpqrstuvwxyz23456789'), name: name || 'ไม่ระบุชื่อ', role: REMOTE_ROLES[md.role] ? md.role : 'monitor' };
+          settings.remoteTeam = this.team().filter(t => t.dev !== dev).concat(m);
+          saveSettings();
+          conn.send({ type: 'r-paired', token: m.token });
+        } else if (name && name !== m.name) { m.name = name; saveSettings(); }
+        // เครื่องเดิมต่อซ้ำ → ปิดการเชื่อมต่อเก่า
+        for (const [c, x] of this.conns) if (x === m) { this.conns.delete(c); try { c.close(); } catch (e) {} }
+        this.conns.set(conn, m);
         this.last = '';
-        toast(`รีโมตเชื่อมต่อแล้ว (${this.conns.size} เครื่อง)`, 'success', 3000);
+        conn.send({ type: 'r-hello', role: m.role, name: m.name, msgs: this.msgs.slice(-20) });
+        toast(`${m.name} (${REMOTE_ROLES[m.role].label}) เข้าร่วมแล้ว`, 'success', 3000);
         this.start();
         this.push(true);
+        this.changed();
       });
-      conn.on('data', m => { if (this.conns.has(conn)) this.command(m); });
-      conn.on('close', () => { if (this.conns.delete(conn)) toast('รีโมตตัดการเชื่อมต่อ', 'info', 2500); });
+      conn.on('data', msg => { const m = this.conns.get(conn); if (m) this.command(msg, m, conn); });
+      conn.on('close', () => {
+        const m = this.conns.get(conn);
+        if (m && this.conns.delete(conn)) { toast(`${m.name} ออกจากทีม`, 'info', 2500); this.changed(); }
+      });
+    },
+    online(m) { return [...this.conns.values()].includes(m); },
+    // รายชื่อทีมส่งให้ทุกเครื่อง + รีเฟรชหน้าต่างทีมงานถ้าเปิดอยู่
+    changed() {
+      this.send({ type: 'r-team', members: this.team().map(m => ({ name: m.name, role: m.role, on: this.online(m) })) });
+      if (this.renderList) this.renderList();
+    },
+    setRole(m, role) {
+      if (!REMOTE_ROLES[role]) return;
+      m.role = role; saveSettings();
+      for (const [c, x] of this.conns) if (x === m) { try { c.send({ type: 'r-role', role }); } catch (e) {} }
+      this.last = '';
+      this.changed();
+    },
+    unpair(m) {
+      settings.remoteTeam = this.team().filter(t => t !== m); saveSettings();
+      for (const [c, x] of this.conns) if (x === m) { this.conns.delete(c); this.deny(c, 'revoked', 'เครื่องหลักยกเลิกการจับคู่เครื่องนี้แล้ว — ขอรหัสใหม่เพื่อเข้าร่วมอีกครั้ง'); }
+      this.changed();
+    },
+    message(text, from, role) {
+      text = String(text || '').trim().slice(0, 200);
+      if (!text) return;
+      const msg = { type: 'r-msg', from, role, text, at: Date.now() };
+      this.msgs = this.msgs.concat(msg).slice(-50);
+      this.send(msg);
+      if (role !== 'host') toast(`💬 ${from}: ${text}`, 'info', 6000);
+      if (this.renderList) this.renderList();
     },
     start() {
       if (this.timer) return;
@@ -5108,42 +5170,112 @@
     },
     state() {
       const chans = [audio.masterStrip, ...audio.channels];
+      const inp = i => {
+        const o = { id: i.id, n: inputs.indexOf(i) + 1, name: i.name, t: i.type, live: i.status === 'live' };
+        if (i.type === 'title') Object.assign(o, { hl: i.title.headline, sub: i.title.subtitle });
+        else if (i.type === 'ticker') o.items = i.ticker.items.join('\n');
+        else if (i.type === 'score') Object.assign(o, { ta: i.score.teamA, tb: i.score.teamB, sa: +i.score.scoreA || 0, sb: +i.score.scoreB || 0 });
+        else if (i.type === 'timer') o.run = !!i.timer.running;
+        else if (i.type === 'media' && i.el && i.el.tagName === 'VIDEO') Object.assign(o, { play: !i.el.paused, loop: !!i.el.loop });
+        else if (i.type === 'playlist') Object.assign(o, { play: !!i.list.playing, pos: i.list.items.length ? `${i.list.index + 1}/${i.list.items.length}` : '', item: i.list.items[i.list.index]?.name || '' });
+        else if (i.type === 'slides') o.pos = i.slides.count ? `${i.slides.page}/${i.slides.count}` : '';
+        else if (i.type === 'captions') o.on = !!i.capRun?.on;
+        return o;
+      };
       return {
         type: 'r-state', pgm: state.programId, pvw: state.previewId, ftb: !!ftb.target, live: !!(streamer.ws || streamer.reconnecting), rec: !!rec.active,
         trans: settings.transition, transList: TRANSITIONS.filter(t => t !== 'stinger' || stinger.ready),
-        inputs: inputs.map((i, n) => ({ id: i.id, n: n + 1, name: i.name, live: i.status === 'live' })),
-        ovl: ovl.map(c => ({ on: !!c.on, name: byId(c.inputId)?.name || '' })),
-        audio: chans.map(c => ({ key: c === audio.masterStrip ? 'master' : chanKey(c) || c.id, name: c.name, db: c.db === -Infinity ? null : +c.db.toFixed(1), muted: !!c.muted })),
+        inputs: inputs.map(inp),
+        ovl: ovl.map(c => ({ on: !!c.on, id: byId(c.inputId) ? c.inputId : '', name: byId(c.inputId)?.name || '' })),
+        audio: chans.map(c => {
+          const o = { key: c === audio.masterStrip ? 'master' : chanKey(c) || c.id, name: c.name, db: c.db === -Infinity ? null : +c.db.toFixed(1), muted: !!c.muted, kind: c.kind || '' };
+          if (c.kind === 'pad') o.pads = c.pads.map((p, i) => p ? { name: p.name, on: c.playingPad(i) } : null);
+          if (c.kind === 'player' && c.src) o.play = c.src.playing();
+          return o;
+        }),
         macros: macros.map(m => ({ id: m.id, name: m.name })), runMacro: macroRun.id,
-        caps: inputs.filter(i => i.type === 'captions').map(i => ({ id: i.id, name: i.name, on: !!i.capRun?.on }))
+        chat: !!(chatFeed.shown && !chatFeed.hideAt)
       };
     },
-    send(msg) { for (const c of this.conns) { if (c.open) { try { c.send(msg); } catch (e) {} } } },
+    send(msg, filter) { for (const [c, m] of this.conns) { if (c.open && (!filter || filter(m))) { try { c.send(msg); } catch (e) {} } } },
     push(force) {
       const st = JSON.stringify(this.state());
       if (force || st !== this.last) { this.last = st; this.send(JSON.parse(st)); }
-      this.send({ type: 'r-lv', v: [audio.masterStrip, ...audio.channels].map(c => Math.round(c.level || -90)) });
-      // ภาพย่อ Preview / Program วินาทีละครั้ง
+      this.send({ type: 'r-lv', v: [audio.masterStrip, ...audio.channels].map(c => Math.round(c.level || -90)), oa: onAirSince ? Date.now() - onAirSince : 0 });
+      // ภาพย่อ Preview / Program และ Multiview (ทุกแหล่งภาพ) วินาทีละครั้ง
       if (performance.now() - this.thumbAt > 1000) {
         this.thumbAt = performance.now();
-        const snap = src => { const c = this.snapCanvas || (this.snapCanvas = Object.assign(document.createElement('canvas'), { width: 384, height: 216 })); c.getContext('2d').drawImage(src, 0, 0, c.width, c.height); return c.toDataURL('image/jpeg', 0.6); };
-        try { this.send({ type: 'r-thumbs', pgm: snap(pgmCanvas), pvw: snap(pvwCanvas) }); } catch (e) {}
+        const snap = (src, w, h, q) => { const c = document.createElement('canvas'); c.width = w; c.height = h; c.getContext('2d').drawImage(src, 0, 0, w, h); return c.toDataURL('image/jpeg', q); };
+        try { this.send({ type: 'r-thumbs', pgm: snap(pgmCanvas, 384, 216, 0.6), pvw: snap(pvwCanvas, 384, 216, 0.6) }); } catch (e) {}
+        const wantMv = m => ['director', 'switcher', 'insert', 'monitor'].includes(m.role);
+        if ([...this.conns.values()].some(wantMv)) {
+          const mv = {};
+          for (const i of inputs) {
+            try {
+              const ctx = thumbs.get(i.id);
+              if (ctx) mv[i.id] = snap(ctx.canvas, 192, 108, 0.5);
+              else { const c = document.createElement('canvas'); c.width = 192; c.height = 108; drawSource(c.getContext('2d'), i, 192, 108); mv[i.id] = c.toDataURL('image/jpeg', 0.5); }
+            } catch (e) {}
+          }
+          this.send({ type: 'r-mv', mv }, wantMv);
+        }
       }
     },
-    command(m) {
-      if (!m || m.type !== 'r-cmd') return;
+    command(m, mem) {
+      if (!m || typeof m !== 'object') return;
+      if (m.type === 'r-msg') { this.message(m.text, mem.name, mem.role); return; }
+      if (m.type !== 'r-cmd') return;
+      const allow = REMOTE_ALLOW[mem.role];
+      if (allow !== '*' && !(allow || []).includes(m.cmd)) return;
       audio.ensure();
-      const v = m.v;
+      const v = m.v, inp = byId(m.id);
       switch (m.cmd) {
-        case 'pvw': if (byId(m.id) && m.id !== state.programId) setPreview(m.id); break;
-        case 'take': if (byId(m.id) && m.id !== state.programId) { state.previewId = m.id; cut(); } break;
+        case 'pvw':
+          if (mem.role === 'insert' && !(inp && INSERT_TYPES.includes(inp.type))) break;
+          if (inp && m.id !== state.programId) setPreview(m.id);
+          break;
+        case 'take': if (inp && m.id !== state.programId) { state.previewId = m.id; cut(); } break;
         case 'cut': cut(); break;
         case 'auto': autoTransition(); break;
         case 'ftb': toggleFtb(); break;
-        case 'ovl': { const i = +v; if (ovl[i] && (ovl[i].on || byId(ovl[i].inputId))) setChannel(i, !ovl[i].on); break; }
         case 'trans':
           if (TRANSITIONS.includes(v) && (v !== 'stinger' || stinger.ready)) { settings.transition = v; $$('#seg-transition button').forEach(b => b.classList.toggle('is-active', b.dataset.value === v)); saveSettings(); }
           break;
+        case 'ovl': { const i = +v; if (ovl[i] && (ovl[i].on || byId(ovl[i].inputId))) setChannel(i, !ovl[i].on); break; }
+        // ขึ้น/ลงกราฟิกหนึ่งชิ้น: ใช้ช่อง Overlay ที่ผูกไว้ ถ้ายังไม่มีใช้ช่องว่างช่องแรก
+        case 'gfx': {
+          if (!inp || !GRAPHIC_TYPES.includes(inp.type)) break;
+          const at = ovl.findIndex(c => c.inputId === m.id);
+          if (at >= 0) { setChannel(at, !ovl[at].on); break; }
+          const free = ovl.findIndex(c => !byId(c.inputId));
+          const idx = free >= 0 ? free : ovl.findIndex(c => !c.on);
+          if (idx >= 0) toggleInputOverlay(m.id, idx);
+          break;
+        }
+        case 'title':
+          if (inp && inp.type === 'title') { inp.title.headline = String(m.hl ?? '').slice(0, 80); inp.title.subtitle = String(m.sub ?? '').slice(0, 120); renderInputs(); }
+          break;
+        case 'ticker':
+          if (inp && inp.type === 'ticker') { inp.ticker.items = String(m.items || '').split('\n').map(s => s.trim()).filter(Boolean).slice(0, 100); renderInputs(); }
+          break;
+        case 'timer': if (inp && inp.type === 'timer' && (v === 'toggle' || v === 'reset')) timerControl(inp, v); break;
+        case 'score':
+          if (inp && inp.type === 'score' && (v === 'a' || v === 'b')) { const k = v === 'a' ? 'scoreA' : 'scoreB'; inp.score[k] = Math.max(0, (+inp.score[k] || 0) + (m.d > 0 ? 1 : -1)); }
+          break;
+        case 'chathide': chatHide(); break;
+        case 'media': {
+          if (!inp || !INSERT_TYPES.includes(inp.type)) break;
+          const vid = inp.el && inp.el.tagName === 'VIDEO' && inp.type === 'media';
+          if (v === 'play' && vid) { inp.el.paused ? inp.el.play().catch(() => {}) : inp.el.pause(); }
+          else if (v === 'restart' && vid) { inp.el.currentTime = 0; inp.el.play().catch(() => {}); }
+          else if (v === 'loop' && vid) inp.el.loop = !inp.el.loop;
+          else if ((v === 'prev' || v === 'next') && inp.type === 'playlist') playlist.go(inp, inp.list.index + (v === 'next' ? 1 : -1), true);
+          else if (v === 'play' && inp.type === 'playlist') playlist.setPlaying(inp, !inp.list.playing);
+          else if ((v === 'prev' || v === 'next') && inp.type === 'slides' && inp.slides.count) slideGo(inp, inp.slides.page + (v === 'next' ? 1 : -1));
+          else if (v === 'capture' && inp.type === 'replay') replayCapture(inp);
+          if (vid) updateMediaButtons(inp);
+          break;
+        }
         case 'mute': case 'vol': {
           const ch = chanByKey(v) || audio.channels.find(c => c.id === v);
           if (!ch) break;
@@ -5153,9 +5285,16 @@
           if (m.cmd === 'mute') renderMixer();
           break;
         }
+        case 'sfx': { const ch = chanByKey(v); if (ch && ch.kind === 'pad' && ch.pads[+m.i]) padFire(ch, +m.i); break; }
+        case 'music': {
+          const ch = chanByKey(v);
+          if (!ch || ch.kind !== 'player' || !ch.src) break;
+          if (m.a === 'next') ch.src.next(); else if (m.a === 'prev') ch.src.prev(); else ch.src.toggle();
+          break;
+        }
         case 'macro': { const mm = macros.find(x => x.id === v); if (mm) runMacro(mm); break; }
         case 'rec': toggleRecord(); break;
-        case 'cap': { const i = byId(v); if (i && i.type === 'captions') { i.capRun?.on ? captionStop(i) : captionStart(i); renderInputs(); } break; }
+        case 'cap': { if (inp && inp.type === 'captions') { inp.capRun?.on ? captionStop(inp) : captionStart(inp); renderInputs(); } break; }
       }
       this.push(false);
     },
@@ -5167,27 +5306,56 @@
         for (let t = 0; t < 40 && wireless.status !== 'ready'; t++) await new Promise(r => setTimeout(r, 250));
         if (wireless.status !== 'ready') { toast('เปิดระบบเชื่อมต่อไม่สำเร็จ — ตรวจอินเทอร์เน็ตของเครื่องนี้แล้วลองใหม่', 'error'); return; }
       }
+      let role = store.get('remoteRole', 'switcher');
+      if (!REMOTE_ROLES[role]) role = 'switcher';
       const r = await dialog({
-        title: 'รีโมตคอนโทรล (แท็บเล็ต / มือถือ)',
+        title: 'รีโมต / ทีมงาน',
         body: `
-          <p class="note">สแกน QR ด้วยแท็บเล็ตหรือมือถือ (หรือเปิดลิงก์) — จะได้แผงสั่งงาน: ดูภาพ Preview/Program · CUT / AUTO / FTB · เลือกแหล่งภาพ · Overlay · ปรับเสียง · Macro · บันทึก
-            <br>เครื่องนี้ยังเป็นตัวประมวลผลและสตรีม — เปิดหน้านี้ค้างไว้ · รีโมตเริ่ม/หยุดไลฟ์ไม่ได้ (กันกดพลาด)</p>
-          <div class="qr-box" id="remote-qr"></div>
-          <label class="field"><span>ลิงก์รีโมต (มีรหัสลับ — ส่งให้เฉพาะคนที่ควบคุมรายการ)</span><input id="remote-link" class="input mono" readonly value="${esc(this.link())}"></label>
-          <p class="note">เชื่อมต่ออยู่ ${this.conns.size} เครื่อง</p>`,
-        actions: [{ label: 'สร้างรหัสใหม่ (ตัดรีโมตเดิม)', value: 'rekey' }, { label: 'คัดลอกลิงก์', value: 'copy' }, { label: 'ปิด', primary: true }],
+          <p class="note">ทีมงานแต่ละตำแหน่งใช้แท็บเล็ต/มือถือ/คอมของตัวเอง: เลือกตำแหน่ง → สแกน QR → ใส่<b>รหัสจับคู่</b>ด้านล่าง · เครื่องนี้เป็นเครื่องหลัก (ประมวลผล + สตรีม) เปิดค้างไว้ · รีโมตเริ่ม/หยุดไลฟ์ไม่ได้</p>
+          <div class="rt-pin"><span>รหัสจับคู่</span><b class="mono" id="remote-pin">${this.pin().replace(/(\d{3})/, '$1 ')}</b></div>
+          <div class="rt-roles" role="tablist">${Object.entries(REMOTE_ROLES).map(([k, v]) => `<button type="button" data-role="${k}" class="${k === role ? 'is-on' : ''}"><b>${esc(v.label)}</b><small>${esc(v.desc)}</small></button>`).join('')}</div>
+          <div class="rt-qr-row"><div class="qr-box" id="remote-qr"></div>
+            <label class="field"><span>ลิงก์สำหรับตำแหน่ง <b id="remote-role-name"></b></span><input id="remote-link" class="input mono" readonly></label></div>
+          <h4 class="rt-h">ทีมงานที่จับคู่แล้ว</h4>
+          <div id="remote-team" class="rt-team"></div>
+          <div class="rt-msgs" id="remote-msgs"></div>
+          <div class="rt-send"><input id="remote-msg" class="input" maxlength="200" placeholder="ส่งข้อความถึงทุกตำแหน่ง เช่น “เตรียมตัด กล้อง 2”"><button type="button" class="btn" id="remote-msg-send">ส่ง</button></div>`,
+        actions: [{ label: 'เปลี่ยนรหัสจับคู่', value: 'repin' }, { label: 'คัดลอกลิงก์', value: 'copy' }, { label: 'ปิด', primary: true }],
         onOpen: modal => {
-          const t = $('#remote-qr', modal);
-          if (t && typeof QRCode !== 'undefined') new QRCode(t, { text: this.link(), width: 196, height: 196, correctLevel: QRCode.CorrectLevel.M });
+          const showRole = k => {
+            role = k; store.set('remoteRole', k);
+            $$('.rt-roles button', modal).forEach(b => b.classList.toggle('is-on', b.dataset.role === k));
+            $('#remote-role-name', modal).textContent = REMOTE_ROLES[k].label;
+            $('#remote-link', modal).value = this.link(k);
+            const t = $('#remote-qr', modal);
+            t.innerHTML = '';
+            if (typeof QRCode !== 'undefined') new QRCode(t, { text: this.link(k), width: 180, height: 180, correctLevel: QRCode.CorrectLevel.M });
+          };
+          $('.rt-roles', modal).addEventListener('click', e => { const b = e.target.closest('[data-role]'); if (b) showRole(b.dataset.role); });
+          showRole(role);
+          this.renderList = () => {
+            if (!modal.isConnected) { this.renderList = null; return; }
+            const team = this.team();
+            $('#remote-team', modal).innerHTML = team.length ? team.map((m, i) => `<div class="rt-mem ${this.online(m) ? 'on' : ''}" data-i="${i}">
+              <span class="rt-dot"></span><b>${esc(m.name)}</b>
+              <select class="select" data-f="role" aria-label="ตำแหน่ง">${Object.entries(REMOTE_ROLES).map(([k, v]) => `<option value="${k}" ${k === m.role ? 'selected' : ''}>${esc(v.label)}</option>`).join('')}</select>
+              <button type="button" class="btn btn-sm" data-f="unpair">ถอด</button></div>`).join('') : '<p class="note">ยังไม่มีเครื่องจับคู่</p>';
+            $('#remote-msgs', modal).innerHTML = this.msgs.slice(-6).map(x => `<div><b>${esc(x.from)}</b> ${esc(x.text)}</div>`).join('');
+          };
+          this.renderList();
+          $('#remote-team', modal).addEventListener('change', e => { const row = e.target.closest('[data-i]'); if (row && e.target.dataset.f === 'role') this.setRole(this.team()[+row.dataset.i], e.target.value); });
+          $('#remote-team', modal).addEventListener('click', e => { const row = e.target.closest('[data-i]'); if (row && e.target.dataset.f === 'unpair') this.unpair(this.team()[+row.dataset.i]); });
+          const sendMsg = () => { const el = $('#remote-msg', modal); this.message(el.value, 'เครื่องหลัก', 'host'); el.value = ''; };
+          $('#remote-msg-send', modal).addEventListener('click', sendMsg);
+          $('#remote-msg', modal).addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); sendMsg(); } });
         }
       });
-      if (r?.value === 'copy') copyText(this.link());
-      if (r?.value === 'rekey') {
-        settings.remoteKey = '';
-        this.key();
-        for (const c of this.conns) { try { c.send({ type: 'r-denied', message: 'สตูดิโอเปลี่ยนรหัสรีโมตแล้ว — สแกน QR ใหม่' }); } catch (e) {} setTimeout(() => c.close(), 300); }
-        this.conns.clear();
-        toast('สร้างรหัสใหม่แล้ว — รีโมตเดิมใช้ไม่ได้อีก', 'success');
+      this.renderList = null;
+      if (r?.value === 'copy') copyText(this.link(role));
+      if (r?.value === 'repin') {
+        settings.remotePin = '';
+        this.pin();
+        toast('เปลี่ยนรหัสจับคู่แล้ว — เครื่องที่จับคู่ไว้ยังใช้ได้ (ถอดออกได้ในรายชื่อทีม)', 'success');
         this.openDialog();
       }
     }
@@ -6969,7 +7137,7 @@ onmessage = async e => {
       ['folder', 'โชว์: บันทึก / เปิด / เริ่มใหม่', openShowDialog],
       ['phone', 'เชื่อมกล้องมือถือเครื่องอื่น (QR)', showWirelessDialog],
       ['grid', 'Multiview — ดูทุกภาพ แตะเพื่อสลับ', () => multiview.open()],
-      ['phone', 'รีโมตคอนโทรล — สั่งงานจากแท็บเล็ต/มือถืออีกเครื่อง', () => remoteCtl.openDialog()],
+      ['users', 'รีโมต / ทีมงาน — สวิตเชอร์ · เสียง · CG · อินเสิร์ต · มอนิเตอร์', () => remoteCtl.openDialog()],
       ...(desktop && desktop.mobile ? [] : [['external', 'หน้าต่าง Program Output', openOutputWindow]]),
       ['sliders', 'ตั้งค่า', () => openSettings()],
       ['sliders', 'ควบคุมด้วย MIDI / Stream Deck', () => openSettings('control')],
