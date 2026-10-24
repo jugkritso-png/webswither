@@ -1781,3 +1781,35 @@ html.remote-mode body > *:not(#remote):not(svg):not(.toasts):not(.modal-backdrop
 .rmt-player { flex-direction: row; flex-wrap: wrap; align-items: center; }
 .rmt-body { display: flex; flex-direction: column; gap: 10px; }
 .rmt-body[hidden], .rmt-pair[hidden], .rmt-team[hidden], #remote [data-sec][hidden] { display: none !important; }
+
+/* แถบ transport ใต้จอ Preview / Program (แบบสตูดิโอ) */
+.monitor-wrap { flex-direction: column; gap: 6px; }
+.transport { width: min(100%, calc(42vh * 16 / 9)); height: 30px; flex: none; display: flex; align-items: center; gap: 4px; padding: 0 4px; border-radius: 6px; background: #07090d; border: 1px solid var(--line); font-size: 11px; color: var(--muted); }
+.transport .tp-src { font-weight: 800; letter-spacing: .12em; color: var(--dim); padding: 0 6px; }
+.transport .tp-live { margin-left: auto; padding: 0 6px; font-weight: 800; letter-spacing: .1em; color: var(--dim); }
+.tp-btn { flex: none; width: 26px; height: 24px; display: inline-flex; align-items: center; justify-content: center; border-radius: 5px; border: 1px solid transparent; background: transparent; color: var(--text); cursor: pointer; font-size: 15px; font-weight: 800; line-height: 1; }
+.tp-btn:hover { background: var(--panel-2); border-color: var(--line-2); }
+.tp-btn .i { width: 14px; height: 14px; }
+.tp-btn.is-on { color: #4ade80; }
+.tp-track { position: relative; flex: 1; min-width: 40px; height: 22px; cursor: pointer; touch-action: none; }
+.tp-track::before { content: ""; position: absolute; left: 0; right: 0; top: 9px; height: 4px; border-radius: 2px; background: #1f2633; }
+.tp-fill { position: absolute; left: 0; top: 9px; height: 4px; border-radius: 2px; background: #e5e7eb; pointer-events: none; }
+.tp-fill::after { content: ""; position: absolute; right: -5px; top: -4px; width: 10px; height: 12px; border-radius: 3px; background: #fff; box-shadow: 0 0 0 1px rgba(0,0,0,.6); }
+.pvw .tp-fill { background: var(--pvw); } .pgm .tp-fill { background: var(--pgm); }
+.tp-track:focus-visible { outline: 2px solid #f5a524; outline-offset: 1px; border-radius: 4px; }
+.tp-cur, .tp-dur, .tp-pos { flex: none; font-size: 11px; color: var(--text); }
+.tp-dur { color: var(--muted); }
+.tp-rem { flex: none; min-width: 58px; text-align: right; font-size: 12px; font-weight: 700; color: var(--text); padding: 1px 5px; border-radius: 4px; }
+.tp-rem[data-level=warn] { background: #a16207; color: #fff; }
+.tp-rem[data-level=crit] { background: #dc2626; color: #fff; animation: tp-blink .5s steps(2) infinite; }
+.transport[data-level=crit] { border-color: #dc2626; }
+.tp-pos { padding: 0 6px; color: var(--muted); }
+@keyframes tp-blink { 50% { opacity: .35; } }
+@media (max-width: 1100px) { .transport { width: 100%; } .tp-dur { display: none; } }
+@media (max-width: 760px), (pointer: coarse) and (orientation: landscape) and (max-height: 500px) {
+  .transport:not(.has-clip) { display: none; }
+  .transport { height: 36px; } .tp-btn { width: 34px; height: 32px; }
+}
+.rmt-rem { font-style: normal; padding: 0 5px; border-radius: 4px; color: var(--text); }
+.rmt-rem[data-level=warn] { background: #a16207; color: #fff; }
+.rmt-rem[data-level=crit] { background: #dc2626; color: #fff; animation: tp-blink .5s steps(2) infinite; }

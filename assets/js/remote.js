@@ -60,7 +60,7 @@
       <div class="rmt-body">
         <section data-sec="mons" class="rmt-mons">
           <figure class="rmt-mon pvw"><img alt=""><figcaption>PREVIEW <span class="rmt-pvw-name"></span></figcaption></figure>
-          <figure class="rmt-mon pgm"><img alt=""><figcaption>PROGRAM <span class="rmt-pgm-name"></span> <em class="rmt-oa mono"></em></figcaption></figure>
+          <figure class="rmt-mon pgm"><img alt=""><figcaption>PROGRAM <span class="rmt-pgm-name"></span> <em class="rmt-oa mono"></em> <em class="rmt-rem mono"></em></figcaption></figure>
         </section>
         <section data-sec="take" class="rmt-take">
           <button class="rmt-btn cut" data-r="cut">CUT</button><button class="rmt-btn auto" data-r="auto">AUTO</button><button class="rmt-btn ftb" data-r="ftb">FTB</button>
@@ -206,7 +206,14 @@
         return;
       }
       if (m.type === 'r-state') { st = m; render(); }
-      if (m.type === 'r-lv' && st) { meters(m.v); $('.rmt-oa', root).textContent = m.oa ? fmt(m.oa) : ''; }
+      if (m.type === 'r-lv' && st) {
+        meters(m.v);
+        $('.rmt-oa', root).textContent = m.oa ? fmt(m.oa) : '';
+        // เวลาที่เหลือของคลิปบน Program — เหลือง ≤15 วิ · แดง ≤5 วิ
+        const rem = $('.rmt-rem', root);
+        rem.textContent = m.rem == null ? '' : `เหลือ -${fmt(m.rem * 1000 + 999)}`;
+        rem.dataset.level = m.rem == null ? '' : m.rem <= 5 ? 'crit' : m.rem <= 15 ? 'warn' : '';
+      }
       if (m.type === 'r-thumbs') {
         if (m.pgm) $('.rmt-mon.pgm img', root).src = m.pgm;
         if (m.pvw) $('.rmt-mon.pvw img', root).src = m.pvw;

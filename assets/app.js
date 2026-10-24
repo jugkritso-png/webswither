@@ -1023,6 +1023,7 @@
 
     if (now - lastThumbs > 100) {
       lastThumbs = now;
+      transport.update();
       for (const inp of inputs) {
         const ctx = thumbs.get(inp.id);
         if (ctx) drawSource(ctx, inp, ctx.canvas.width, ctx.canvas.height);
@@ -1414,6 +1415,132 @@
     const btn = $(`#inputs-grid .card[data-id="${inp.id}"] [data-card="play"]`);
     if (btn) btn.innerHTML = icon(inp.el.paused ? 'play' : 'pause');
   }
+
+  /* ------------------------------------------------------ transport (timeline ใต้จอ Preview / Program) */
+  // แบบสตูดิโอ: เล่น/หยุด · เริ่มใหม่ · วนซ้ำ · แถบเลื่อนตำแหน่ง · เวลาที่เล่นไป / ความยาว · เวลาที่เหลือ (เหลือง ≤15 วิ · แดงกะพริบ ≤5 วิ)
+  // ใช้กับคลิปวิดีโอ · Playlist · รีเพลย์ · สไลด์ (หน้า) — แหล่งอื่นแสดงชนิดแหล่งภาพ (LIVE) เฉย ๆ
+  const fmtTc = s => {
+    if (!isFinite(s) || s < 0) s = 0;
+    const t = Math.floor(s), fr = Math.floor((s - t) * 10);
+    return `${t >= 3600 ? Math.floor(t / 3600) + ':' : ''}${pad2(Math.floor(t / 60) % 60)}:${pad2(t % 60)}.${fr}`;
+  };
+  function clipOf(inp) {
+    if (!inp) return null;
+    const v = inp.el;
+    const isVid = v && v.tagName === 'VIDEO';
+    if (inp.type === 'media' && isVid && !inp.missing) return { el: v, loop: v.loop };
+    if (inp.type === 'playlist' && inp.list.items.length) return { el: inp.showImg ? null : v, loop: inp.list.loop, pl: true, pos: `${inp.list.index + 1}/${inp.list.items.length}`, playing: inp.list.playing };
+    if (inp.type === 'replay' && isVid && v.getAttribute('src')) return { el: v, replay: true };
+    if (inp.type === 'slides' && inp.slides.count) return { slides: true, pos: `${inp.slides.page}/${inp.slides.count}` };
+    return null;
+  }
+  // เวลาที่เหลือของคลิปบนจอ (วินาที) — null ถ้าไม่ใช่คลิป
+  function clipRemaining(inp) {
+    const c = clipOf(inp);
+    if (!c || !c.el || !isFinite(c.el.duration) || c.loop) return null;
+    return Math.max(0, (c.el.duration - c.el.currentTime) / (c.el.playbackRate || 1));
+  }
+  const transport = {
+    sig: { pvw: '', pgm: '' },
+    bar(bus) { return $(`#${bus}-transport`); },
+    update() {
+      for (const bus of ['pvw', 'pgm']) {
+        const box = this.bar(bus);
+        if (!box) continue;
+        const inp = byId(bus === 'pgm' ? state.programId : state.previewId);
+        const c = clipOf(inp);
+        const sig = `${inp?.id}|${c ? Object.keys(c).filter(k => c[k] === true).join() : '-'}`;
+        if (sig !== this.sig[bus]) { this.sig[bus] = sig; this.build(box, inp, c); }
+        box.classList.toggle('has-clip', !!c);
+        if (!c) continue;
+        if (c.slides || c.pl) $('.tp-pos', box).textContent = c.pos;
+        const btn = $('[data-tp=play]', box);
+        const el = c.el;
+        const playing = c.pl ? c.playing : el ? !el.paused : false;
+        if (btn) { btn.innerHTML = icon(playing ? 'pause' : 'play'); btn.classList.toggle('is-on', playing); }
+        $('[data-tp=loop]', box)?.classList.toggle('is-on', !!c.loop);
+        if (c.slides) continue;
+        const dur = el && isFinite(el.duration) ? el.duration : 0, t = el ? el.currentTime : 0;
+        if (!box.dataset.drag) $('.tp-fill', box).style.width = `${dur ? clamp(t / dur, 0, 1) * 100 : 0}%`;
+        $('.tp-cur', box).textContent = fmtTc(t);
+        $('.tp-dur', box).textContent = dur ? fmtTc(dur) : '--:--.-';
+        const rem = dur ? (dur - t) / (el.playbackRate || 1) : 0;
+        const remEl = $('.tp-rem', box);
+        remEl.textContent = dur ? `-${fmtTc(rem)}` : '';
+        const warn = dur && !c.loop && playing ? (rem <= 5 ? 'crit' : rem <= 15 ? 'warn' : '') : '';
+        remEl.dataset.level = warn;
+        box.dataset.level = bus === 'pgm' ? warn : '';
+      }
+    },
+    build(box, inp, c) {
+      const b = (k, ic, title) => `<button type="button" class="tp-btn" data-tp="${k}" title="${title}">${ic}</button>`;
+      if (!c) {
+        box.innerHTML = `<span class="tp-src">${inp ? esc((TYPE_META[inp.type]?.label || inp.type || '').toUpperCase()) : '—'}</span><span class="tp-live">${inp && inp.status === 'live' ? 'LIVE' : ''}</span>`;
+        return;
+      }
+      if (c.slides) {
+        box.innerHTML = b('prev', '‹', 'หน้าก่อนหน้า') + `<span class="tp-pos mono"></span>` + b('next', '›', 'หน้าถัดไป') + '<span class="tp-src">SLIDES</span>';
+        return;
+      }
+      box.innerHTML = (c.pl ? b('prev', icon('skip-back'), 'รายการก่อนหน้า') : '')
+        + b('restart', icon('restart'), 'เริ่มใหม่ตั้งแต่ต้น')
+        + b('play', icon('play'), 'เล่น / หยุดชั่วคราว')
+        + (c.pl ? b('next', icon('skip-fwd'), 'รายการถัดไป') : '')
+        + (c.replay ? '' : b('loop', icon('repeat'), 'เล่นวนซ้ำ'))
+        + `<span class="tp-cur mono">00:00.0</span>
+           <div class="tp-track" role="slider" aria-label="ตำแหน่งในคลิป" tabindex="0"><div class="tp-fill"></div></div>
+           <span class="tp-dur mono"></span><span class="tp-rem mono" title="เวลาที่เหลือ"></span>`
+        + (c.pl ? '<span class="tp-pos mono"></span>' : '');
+    },
+    act(bus, k) {
+      const inp = byId(bus === 'pgm' ? state.programId : state.previewId);
+      const c = clipOf(inp);
+      if (!c) return;
+      if (c.slides) { slideGo(inp, inp.slides.page + (k === 'next' ? 1 : -1)); return; }
+      if (c.pl) {
+        if (k === 'prev' || k === 'next') playlist.go(inp, inp.list.index + (k === 'next' ? 1 : -1), true);
+        else if (k === 'play') playlist.setPlaying(inp, !inp.list.playing);
+        else if (k === 'loop') { inp.list.loop = !inp.list.loop; renderInputs(); }
+        else if (k === 'restart' && c.el) { c.el.currentTime = 0; if (inp.list.playing) c.el.play().catch(() => {}); }
+      } else {
+        const el = c.el;
+        if (k === 'play') { el.paused ? el.play().catch(() => {}) : el.pause(); }
+        else if (k === 'restart') { el.currentTime = 0; el.play().catch(() => {}); }
+        else if (k === 'loop') el.loop = !el.loop;
+        if (inp.type === 'media') { updateMediaButtons(inp); if (k === 'loop') renderInputs(); }
+      }
+      this.update();
+    },
+    seek(bus, frac) {
+      const c = clipOf(byId(bus === 'pgm' ? state.programId : state.previewId));
+      if (c && c.el && isFinite(c.el.duration)) c.el.currentTime = clamp(frac, 0, 1) * c.el.duration;
+    },
+    init() {
+      for (const bus of ['pvw', 'pgm']) {
+        const box = this.bar(bus);
+        if (!box) continue;
+        box.addEventListener('click', e => { const t = e.target.closest('[data-tp]'); if (t) { t.blur(); this.act(bus, t.dataset.tp); } });
+        box.addEventListener('pointerdown', e => {
+          const tr = e.target.closest('.tp-track');
+          if (!tr) return;
+          e.preventDefault();
+          tr.setPointerCapture(e.pointerId);
+          const at = ev => { const r = tr.getBoundingClientRect(); const f = clamp((ev.clientX - r.left) / r.width, 0, 1); $('.tp-fill', tr).style.width = `${f * 100}%`; this.seek(bus, f); };
+          box.dataset.drag = '1';
+          at(e);
+          const move = ev => at(ev);
+          const up = () => { delete box.dataset.drag; tr.removeEventListener('pointermove', move); tr.removeEventListener('pointerup', up); tr.removeEventListener('pointercancel', up); };
+          tr.addEventListener('pointermove', move); tr.addEventListener('pointerup', up); tr.addEventListener('pointercancel', up);
+        });
+        box.addEventListener('keydown', e => {
+          if (!e.target.closest('.tp-track') || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight')) return;
+          e.preventDefault(); e.stopPropagation();
+          const c = clipOf(byId(bus === 'pgm' ? state.programId : state.previewId));
+          if (c && c.el) c.el.currentTime = clamp(c.el.currentTime + (e.key === 'ArrowRight' ? 5 : -5), 0, c.el.duration || 0);
+        });
+      }
+    }
+  };
 
   async function removeInput(id) {
     const inp = byId(id);
@@ -5201,7 +5328,7 @@
     push(force) {
       const st = JSON.stringify(this.state());
       if (force || st !== this.last) { this.last = st; this.send(JSON.parse(st)); }
-      this.send({ type: 'r-lv', v: [audio.masterStrip, ...audio.channels].map(c => Math.round(c.level || -90)), oa: onAirSince ? Date.now() - onAirSince : 0 });
+      this.send({ type: 'r-lv', v: [audio.masterStrip, ...audio.channels].map(c => Math.round(c.level || -90)), oa: onAirSince ? Date.now() - onAirSince : 0, rem: clipRemaining(byId(state.programId)) });
       // ภาพย่อ Preview / Program และ Multiview (ทุกแหล่งภาพ) วินาทีละครั้ง
       if (performance.now() - this.thumbAt > 1000) {
         this.thumbAt = performance.now();
@@ -7970,6 +8097,7 @@ onmessage = async e => {
 
     // มือถือ: แท็บล่าง และปุ่ม "หยุดไลฟ์…" บนแจ้งเตือนของ Android (MainActivity เรียก WebMix.nativeAction)
     setMobileView(['switch', 'audio', 'graphics'].includes(store.get('mview', 'switch')) ? store.get('mview', 'switch') : 'switch');
+    transport.init();
     $('#m-tabs').addEventListener('click', e => {
       const v = e.target.closest('button[data-mview]');
       if (v) { setMobileView(v.dataset.mview); return; }
