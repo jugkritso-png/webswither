@@ -1658,7 +1658,7 @@ html[data-cards=l] .card-num, html[data-cards=l] .card-tally { font-size: 14px; 
 
 /* ---------- รีโมตคอนโทรล (?remote=) ---------- */
 html.remote-mode body > *:not(#remote):not(svg):not(.toasts):not(.modal-backdrop) { display: none !important; }
-#remote { max-width: 1100px; margin: 0 auto; padding: max(10px, env(safe-area-inset-top)) 12px 40px; display: flex; flex-direction: column; gap: 10px; }
+#remote { touch-action: manipulation; max-width: 1100px; margin: 0 auto; padding: max(10px, env(safe-area-inset-top)) 12px 40px; display: flex; flex-direction: column; gap: 10px; }
 #remote h3 { margin: 6px 0 0; font-size: 13px; color: var(--muted); font-weight: 700; }
 #remote h3 small { font-weight: 400; color: var(--dim); margin-left: 6px; }
 .rmt-head { display: flex; align-items: center; gap: 10px; position: sticky; top: 0; z-index: 5; padding: 8px 0; background: var(--bg, #0b0d12); }

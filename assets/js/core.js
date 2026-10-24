@@ -101,6 +101,8 @@ window.WebMix = window.WebMix || {};
       if (sig.u) iceServers.push({ urls: [`turn:${sig.th}:${tp}?transport=udp`, `turn:${sig.th}:${tp}?transport=tcp`], username: sig.u, credential: sig.c });
     }
     iceServers.push({ urls: 'stun:stun.l.google.com:19302' });
+    // ไม่มี TURN ของ Gateway → ใช้ TURN สาธารณะของ PeerJS สำรอง (คนละเครือข่าย / Wi-Fi ที่กั้นเครื่องในวงเดียวกัน)
+    if (!sig || !sig.u) iceServers.push({ urls: ['turn:eu-0.turn.peerjs.com:3478', 'turn:us-0.turn.peerjs.com:3478'], username: 'peerjs', credential: 'peerjsp' });
     const config = { iceServers };
     // สำหรับทดสอบ: บังคับให้ส่งผ่าน TURN เท่านั้น (localStorage webmix:forceRelay = true)
     if (store.get('forceRelay', false)) config.iceTransportPolicy = 'relay';

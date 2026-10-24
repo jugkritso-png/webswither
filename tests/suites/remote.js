@@ -84,6 +84,15 @@ const until = async (fn, ms = 15000) => { const end = Date.now() + ms; while (Da
   const link2 = await host.inputValue('#remote-link');
   ok('new key issued', link2 !== link && /k=[a-z0-9]{12}/.test(link2));
   ok('old remote disconnected after re-key', await until(() => tab.evaluate(() => document.getElementById('remote').dataset.conn === 'bad'), 6000));
+  // สตูดิโอไม่ออนไลน์ → บอกสาเหตุ ไม่ค้าง "กำลังเชื่อมต่อ…"
+  const lost = await tctx.newPage();
+  await lost.goto(link.replace(/remote=[^&]+/, 'remote=webmix-nobody'));
+  ok('unknown studio explains what to check and keeps retrying', await until(() => lost.evaluate(() => document.getElementById('remote')?.dataset.conn === 'wait' && /ไม่พบสตูดิโอ/.test(document.querySelector('.rmt-status').textContent)), 15000));
+  // หน้าต่างรีโมตเปิดได้แม้ระบบเชื่อมต่อของสตูดิโอหลุดอยู่ — ต่อใหม่ให้เอง
+  await host.keyboard.press('Escape'); await host.waitForTimeout(300);
+  await host.evaluate(() => { const w = window.webmix.wireless; w.peer.destroy(); w.status = 'offline'; });
+  await host.click('[data-action=remote]');
+  ok('remote dialog reconnects the studio by itself', !!(await host.waitForSelector('#remote-link', { timeout: 15000 }).catch(() => null)));
   ok('no page errors', errs.length === 0, JSON.stringify(errs));
   console.log(results.join('\n')); await b.close();
 })().catch(e => { console.log(results.join('\n')); console.error('CRASH', e.message); process.exit(1); });

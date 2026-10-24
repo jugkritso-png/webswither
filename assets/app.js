@@ -5160,7 +5160,13 @@
       this.push(false);
     },
     async openDialog() {
-      if (wireless.status !== 'ready') { toast('ระบบเชื่อมต่อยังไม่พร้อม (ต้องต่ออินเทอร์เน็ต) — ลองอีกครั้งในไม่กี่วินาที', 'warn'); return; }
+      // ระบบเชื่อมต่อยังไม่พร้อม: ต่อใหม่ให้เองแล้วรอสักครู่ แทนที่จะให้ผู้ใช้กดซ้ำ
+      if (wireless.status !== 'ready') {
+        if (wireless.status !== 'connecting') wireless.restart();
+        toast('กำลังเปิดระบบเชื่อมต่อรีโมต…', 'info', 2500);
+        for (let t = 0; t < 40 && wireless.status !== 'ready'; t++) await new Promise(r => setTimeout(r, 250));
+        if (wireless.status !== 'ready') { toast('เปิดระบบเชื่อมต่อไม่สำเร็จ — ตรวจอินเทอร์เน็ตของเครื่องนี้แล้วลองใหม่', 'error'); return; }
+      }
       const r = await dialog({
         title: 'รีโมตคอนโทรล (แท็บเล็ต / มือถือ)',
         body: `

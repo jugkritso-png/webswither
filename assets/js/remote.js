@@ -44,31 +44,56 @@
     const send = msg => { if (conn && conn.open) { try { conn.send(msg); } catch (e) {} } };
     const cmd = (c, extra = {}) => send({ type: 'r-cmd', cmd: c, ...extra });
 
+    // ทุกขั้นมีเวลาจำกัด — ค้างที่ไหนก็บอกสาเหตุแล้วลองใหม่เอง (ไม่ค้าง "กำลังเชื่อมต่อ…" ตลอดไป)
+    let watchdog = 0;
+    const HINT = 'ตรวจว่าเปิด WebMix บนคอมค้างไว้ และทั้งสองเครื่องต่ออินเทอร์เน็ต';
     function connect() {
       if (stopped) return;
       if (typeof Peer === 'undefined') { setStatus('โหลดระบบเชื่อมต่อไม่สำเร็จ — ตรวจอินเทอร์เน็ตแล้วรีเฟรช', 'bad'); return; }
       if (!peer || peer.destroyed) {
+        setStatus('กำลังต่อเซิร์ฟเวอร์…', 'wait');
         peer = new Peer(peerOptionsFromSig(sig));
+        const me = peer;
+        clearTimeout(watchdog);
+        watchdog = setTimeout(() => { if (peer === me && !me.open) { setStatus('ต่อเซิร์ฟเวอร์เชื่อมต่อไม่ได้ — กำลังลองใหม่… (' + HINT + ')', 'wait'); renew(); } }, 15000);
         peer.on('open', openConn);
         peer.on('error', err => {
-          if (err.type === 'peer-unavailable') { setStatus('รอสตูดิโอออนไลน์…', 'wait'); later(); }
-          else setStatus('ผิดพลาด: ' + err.type, 'bad');
+          if (peer !== me || stopped) return;
+          if (err.type === 'peer-unavailable') { clearTimeout(watchdog); setStatus('ไม่พบสตูดิโอ — ' + HINT + ' (ถ้ารีเฟรชหน้าสตูดิโอ ให้สแกน QR ใหม่)', 'wait'); later(); }
+          else { setStatus('เชื่อมต่อขัดข้อง (' + err.type + ') — กำลังลองใหม่…', 'wait'); renew(); }
         });
-        peer.on('disconnected', () => { if (!peer.destroyed) peer.reconnect(); });
-      } else openConn();
+        peer.on('disconnected', () => { if (peer === me && !me.destroyed) setTimeout(() => { if (!me.destroyed && me.disconnected) me.reconnect(); }, 1000); });
+      } else if (peer.open) openConn();
+    }
+    // สร้างการเชื่อมต่อเซิร์ฟเวอร์ใหม่ทั้งหมด
+    function renew() {
+      clearTimeout(watchdog);
+      try { peer && peer.destroy(); } catch (e) {}
+      peer = null;
+      setTimeout(connect, Math.min(10000, 2000 * ++retry));
     }
     function later() { setTimeout(() => { if (!conn || !conn.open) openConn(); }, Math.min(10000, 2000 * ++retry)); }
     function openConn() {
-      if (stopped || !peer || peer.disconnected) return;
+      if (stopped || !peer || peer.disconnected || peer.destroyed) return;
+      setStatus('กำลังเชื่อมต่อสตูดิโอ…', 'wait');
+      if (conn && !conn.open) { try { conn.close(); } catch (e) {} }
       const c = peer.connect(target, { metadata: { remote: 1, key }, reliable: true });
       conn = c;
-      c.on('open', () => { retry = 0; setStatus('เชื่อมต่อแล้ว', 'ok'); });
+      clearTimeout(watchdog);
+      watchdog = setTimeout(() => {
+        if (conn !== c || c.open || stopped) return;
+        setStatus('เชื่อมต่อสตูดิโอไม่สำเร็จ — กำลังลองใหม่… (เครือข่ายอาจบล็อก ลองใช้ Wi-Fi เดียวกับคอม)', 'wait');
+        try { c.close(); } catch (e) {}
+        later();
+      }, 15000);
+      c.on('open', () => { clearTimeout(watchdog); retry = 0; setStatus('เชื่อมต่อแล้ว', 'ok'); });
       c.on('data', onMsg);
+      c.on('error', () => {});
       c.on('close', () => { if (conn !== c || stopped) return; setStatus('การเชื่อมต่อหลุด — กำลังต่อใหม่…', 'wait'); later(); });
     }
     function onMsg(m) {
       if (!m || typeof m !== 'object') return;
-      if (m.type === 'r-denied') { stopped = true; setStatus(m.message || 'รหัสรีโมตไม่ถูกต้อง — สแกน QR ใหม่จากสตูดิโอ', 'bad'); try { conn.close(); } catch (e) {} return; }
+      if (m.type === 'r-denied') { stopped = true; clearTimeout(watchdog); setStatus(m.message || 'รหัสรีโมตไม่ถูกต้อง — สแกน QR ใหม่จากสตูดิโอ', 'bad'); try { conn.close(); } catch (e) {} return; }
       if (m.type === 'r-state') { st = m; render(); }
       if (m.type === 'r-lv' && st) meters(m.v);
       if (m.type === 'r-thumbs') {
