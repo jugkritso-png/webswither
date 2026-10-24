@@ -13,6 +13,8 @@ const until = async (fn, ms = 8000) => { const end = Date.now() + ms; while (Dat
   await p.goto('http://localhost:8765/index.html'); await p.evaluate(() => localStorage.clear()); await p.reload(); await p.waitForTimeout(800);
 
   const pv = '#pvw-transport', pg = '#pgm-transport';
+  // แถบใต้จอทำให้พื้นที่แหล่งภาพเตี้ยลง — การ์ดต้องไม่ถูกบีบ (ปุ่ม Overlay 1–8 ครบ ที่ไม่พอให้เลื่อนดู)
+  ok('source cards are never squeezed: overlay buttons 1–8 fully inside every card', await p.evaluate(() => [...document.querySelectorAll('#inputs-grid .card')].every(c => { const o = c.querySelector('.card-ovl'); return !o || o.getBoundingClientRect().bottom <= c.getBoundingClientRect().bottom + 0.5; })));
   ok('both monitors have a transport bar; a live source shows its kind only', await p.isVisible(pv) && await p.isVisible(pg) && (await p.locator(`${pg} .tp-btn`).count()) === 0 && /\S/.test(await p.textContent(`${pg} .tp-src`)));
 
   const fc = p.waitForEvent('filechooser'); await p.click('[data-action=add-menu]'); await p.click('.menu button:has-text("ไฟล์วิดีโอ")'); await (await fc).setFiles(S + '/loud.webm');

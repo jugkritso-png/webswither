@@ -452,6 +452,8 @@ kbd {
 .inputs-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  /* แถวสูงเท่าเนื้อหาการ์ดเสมอ — ที่ไม่พอให้เลื่อนดู (การ์ดมี overflow:hidden จึงห้ามให้ grid บีบความสูง) */
+  grid-auto-rows: max-content;
   align-content: start;
   gap: 8px;
   padding: 10px;
