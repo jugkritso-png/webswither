@@ -21,7 +21,7 @@ const until = async (fn, ms = 8000) => { const end = Date.now() + ms; while (Dat
   const vid = () => p.evaluate(id => { const v = window.webmix.inputs.find(i => i.id === id).el; return { t: v.currentTime, d: v.duration, paused: v.paused, loop: v.loop }; }, id);
   await p.evaluate(id => window.webmix.setPreview(id), id);
   await until(async () => (await vid()).d > 0);
-  ok('clip in Preview: play, restart, loop, mark in/out, track and times', await until(async () => (await p.locator(`${pv} [data-tp]`).count()) === 6 && await p.isVisible(`${pv} .tp-track`) && /^00:20\.\d$/.test((await p.textContent(`${pv} .tp-dur`)).trim())), await p.textContent(pv));
+  ok('clip in Preview: play, restart, loop, mark in/out, track and times', await until(async () => (await p.locator(`${pv} [data-tp]`).count()) === 6 && await p.isVisible(`${pv} .tp-track`) && /^00:00:20:\d\d$/.test((await p.textContent(`${pv} .tp-dur`)).trim())), await p.textContent(pv));
 
   // ไฟล์วิดีโอวนซ้ำเป็นค่าเริ่มต้น — ปิดวนซ้ำด้วยปุ่มบนแถบ (เตือนเวลาที่เหลือใช้กับคลิปที่ไม่วน)
   ok('clip loops by default; the loop button shows it', (await vid()).loop && await p.locator(`${pv} [data-tp=loop].is-on`).count() === 1);
@@ -39,7 +39,7 @@ const until = async (fn, ms = 8000) => { const end = Date.now() + ms; while (Dat
   await p.mouse.move(box.x + box.width * 0.75, box.y + box.height / 2, { steps: 4 }); await p.mouse.up();
   let v = await vid();
   ok('dragging the track seeks the clip', Math.abs(v.t - 15) < 1.5, JSON.stringify(v));
-  ok('elapsed / remaining follow the position', await until(async () => /^00:1[456]\.\d$/.test((await p.textContent(`${pv} .tp-cur`)).trim()) && /^-00:0[3-6]\.\d$/.test((await p.textContent(`${pv} .tp-rem`)).trim())), `${await p.textContent(`${pv} .tp-cur`)} ${await p.textContent(`${pv} .tp-rem`)}`);
+  ok('elapsed / remaining follow the position', await until(async () => /^00:00:1[456]:\d\d$/.test((await p.textContent(`${pv} .tp-cur`)).trim()) && /^-00:00:0[3-6]:\d\d$/.test((await p.textContent(`${pv} .tp-rem`)).trim())), `${await p.textContent(`${pv} .tp-cur`)} ${await p.textContent(`${pv} .tp-rem`)}`);
   ok('under 5 s left the remaining time turns red', await until(() => p.evaluate(s => document.querySelector(s + ' .tp-rem').dataset.level === 'crit', pv), 4000));
 
   // เริ่มใหม่ / วนซ้ำ
@@ -59,13 +59,13 @@ const until = async (fn, ms = 8000) => { const end = Date.now() + ms; while (Dat
   let m = await mark();
   ok('I / O buttons set Mark In 5 s and Mark Out 9 s', m && Math.abs(m.in - 5) < 0.1 && Math.abs(m.out - 9) < 0.1, JSON.stringify(m));
   ok('track shows the In–Out range and markers; length shows the marked 4 s', await until(async () => await p.isVisible(`${pv} .tp-range`) && await p.isVisible(`${pv} .tp-in`) && await p.isVisible(`${pv} .tp-out`)
-    && /^00:04\.0$/.test((await p.textContent(`${pv} .tp-dur`)).trim()) && await p.locator(`${pv} [data-tp=in].is-on`).count() === 1), await p.textContent(`${pv} .tp-dur`));
+    && /^00:00:0[34]:\d\d$/.test((await p.textContent(`${pv} .tp-dur`)).trim()) && await p.locator(`${pv} [data-tp=in].is-on`).count() === 1), await p.textContent(`${pv} .tp-dur`));
   await p.screenshot({ path: S + '/transport-marks.png', clip: { x: 0, y: 380, width: 720, height: 120 } });
   // ไม่วนซ้ำ: เล่นจาก In แล้วหยุดที่ Out
   await p.click(`${pv} [data-tp=restart]`);
   ok('restart jumps to Mark In', await until(async () => { const x = await vid(); return x.t >= 4.9 && x.t < 6 && !x.paused; }, 3000), JSON.stringify(await vid()));
   ok('without loop the clip stops at Mark Out', await until(async () => { const x = await vid(); return x.paused && Math.abs(x.t - 9) < 0.15; }, 7000), JSON.stringify(await vid()));
-  ok('remaining counts to Mark Out', /^-00:00\.\d$/.test((await p.textContent(`${pv} .tp-rem`)).trim()));
+  ok('remaining counts to Mark Out', /^-00:00:00:\d\d$/.test((await p.textContent(`${pv} .tp-rem`)).trim()));
   await p.click(`${pv} [data-tp=play]`);
   ok('play at Mark Out starts again from Mark In', await until(async () => { const x = await vid(); return !x.paused && x.t >= 4.9 && x.t < 7; }, 3000));
   // วนซ้ำ: Out → กลับไป In
@@ -81,7 +81,7 @@ const until = async (fn, ms = 8000) => { const end = Date.now() + ms; while (Dat
   const saved = await p.evaluate(() => window.webmix.show.serialize().inputs.find(i => i.type === 'media').mark);
   ok('marks are saved with the show', saved && Math.abs(saved.in - 3) < 0.1 && Math.abs(saved.out - 9) < 0.1, JSON.stringify(saved));
   await p.click(`${pv} [data-tp=clear]`);
-  ok('✕ clears both marks; full length shown again', await until(async () => (await mark()) === null && /^00:20\.\d$/.test((await p.textContent(`${pv} .tp-dur`)).trim()) && !(await p.isVisible(`${pv} .tp-range`))));
+  ok('✕ clears both marks; full length shown again', await until(async () => (await mark()) === null && /^00:00:20:\d\d$/.test((await p.textContent(`${pv} .tp-dur`)).trim()) && !(await p.isVisible(`${pv} .tp-range`))));
   await p.evaluate(id => window.webmix.inputs.find(i => i.id === id).el.play(), id);
 
   // ตัดเข้า Program: แถบ Program เป็นคลิป เตือนเหลือง ≤15 วิ

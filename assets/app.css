@@ -1782,48 +1782,57 @@ html.remote-mode body > *:not(#remote):not(svg):not(.toasts):not(.modal-backdrop
 .rmt-body { display: flex; flex-direction: column; gap: 10px; }
 .rmt-body[hidden], .rmt-pair[hidden], .rmt-team[hidden], #remote [data-sec][hidden] { display: none !important; }
 
-/* แถบ transport ใต้จอ Preview / Program (แบบสตูดิโอ) */
+/* แถบ transport ใต้จอ Preview / Program — แบบ vMix: แถบเลื่อนเต็มความกว้าง + แถวปุ่มเทา + ไทม์โค้ด HH:MM:SS:FF */
 .monitor-wrap { flex-direction: column; gap: 6px; }
-.transport { width: min(100%, calc(42vh * 16 / 9)); height: 30px; flex: none; display: flex; align-items: center; gap: 4px; padding: 0 4px; border-radius: 6px; background: #07090d; border: 1px solid var(--line); font-size: 11px; color: var(--muted); }
-.transport .tp-src { font-weight: 800; letter-spacing: .12em; color: var(--dim); padding: 0 6px; }
-.transport .tp-live { margin-left: auto; padding: 0 6px; font-weight: 800; letter-spacing: .1em; color: var(--dim); }
-.tp-btn { flex: none; width: 26px; height: 24px; display: inline-flex; align-items: center; justify-content: center; border-radius: 5px; border: 1px solid transparent; background: transparent; color: var(--text); cursor: pointer; font-size: 15px; font-weight: 800; line-height: 1; }
-.tp-btn:hover { background: var(--panel-2); border-color: var(--line-2); }
-.tp-btn .i { width: 14px; height: 14px; }
-.tp-btn.is-on { color: #4ade80; }
-.tp-track { position: relative; flex: 1; min-width: 40px; height: 22px; cursor: pointer; touch-action: none; }
-.tp-track::before { content: ""; position: absolute; left: 0; right: 0; top: 9px; height: 4px; background: #1f2633; }
-.tp-fill { position: absolute; left: 0; top: 9px; height: 4px; z-index: 1; background: #e5e7eb; pointer-events: none; }
-.tp-fill { border-radius: 0; }
-/* playhead มาตรฐาน NLE: หัวเหลี่ยมด้านบน + เส้นตั้งตลอดความสูงแถบ */
+.transport { width: min(100%, calc(42vh * 16 / 9)); flex: none; display: flex; flex-direction: column; gap: 3px; padding: 3px 4px; border-radius: 2px; background: linear-gradient(#26282c, #1c1d20); border: 1px solid #0d0e10; box-shadow: inset 0 1px 0 rgba(255, 255, 255, .05); font-size: 11px; color: #b8bcc4; min-height: 51px; justify-content: flex-end; }
+.tp-ctl { display: flex; align-items: center; gap: 3px; height: 24px; min-width: 0; }
+.transport .tp-src { font-weight: 700; letter-spacing: .1em; color: #8a8f99; padding: 0 6px; }
+.transport .tp-live { margin-left: auto; padding: 0 6px; font-weight: 800; letter-spacing: .1em; color: #8a8f99; }
+.tp-sep { width: 1px; height: 16px; background: #0d0e10; box-shadow: 1px 0 0 rgba(255, 255, 255, .06); margin: 0 3px; flex: none; }
+.tp-btn { flex: none; min-width: 28px; height: 22px; padding: 0 5px; display: inline-flex; align-items: center; justify-content: center; border-radius: 2px; border: 1px solid #0f1012; background: linear-gradient(#4a4d53, #36383d); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .12); color: #e6e8eb; cursor: pointer; font: 700 10px/1 var(--mono, monospace); letter-spacing: .04em; }
+.tp-btn:hover { background: linear-gradient(#585c63, #404349); }
+.tp-btn:active { background: linear-gradient(#2c2e32, #3a3d42); box-shadow: inset 0 1px 2px rgba(0, 0, 0, .5); }
+.tp-btn .i { width: 13px; height: 13px; }
+.tp-btn.is-on { background: linear-gradient(#2f7d3c, #22602c); border-color: #0b2a10; color: #fff; }
+.tp-btn.tp-txt { min-width: 34px; }
+.tp-btn[data-tp=in].is-on, .tp-btn[data-tp=out].is-on { background: linear-gradient(#e0912a, #b8700f); border-color: #5a3605; color: #1a1305; }
+.tp-btn[hidden] { display: none; }
+/* แถบเลื่อน */
+.tp-seek { height: 16px; }
+.tp-track { position: relative; height: 16px; cursor: pointer; touch-action: none; }
+.tp-track::before { content: ""; position: absolute; left: 0; right: 0; top: 5px; height: 6px; background: #0b0c0e; border: 1px solid #000; box-shadow: 0 1px 0 rgba(255, 255, 255, .06); }
+.tp-fill { position: absolute; left: 0; top: 6px; height: 4px; z-index: 1; background: linear-gradient(#9aa0a8, #6b7078); pointer-events: none; }
+.pvw .tp-fill { background: linear-gradient(#4ade80, #16a34a); } .pgm .tp-fill { background: linear-gradient(#f87171, #b91c1c); }
+.tp-track:focus-visible { outline: 1px solid #f5a524; outline-offset: 1px; }
+/* playhead เหลี่ยม + เส้นตั้ง */
 .tp-head { position: absolute; top: 0; bottom: 0; width: 0; pointer-events: none; z-index: 3; }
-.tp-head::before { content: ""; position: absolute; left: -5px; top: 0; width: 10px; height: 8px; background: #fff; box-shadow: 0 0 0 1px rgba(0, 0, 0, .7); }
-.tp-head::after { content: ""; position: absolute; left: -1px; top: 6px; bottom: 0; width: 2px; background: #fff; box-shadow: 0 0 0 1px rgba(0, 0, 0, .5); }
+.tp-head::before { content: ""; position: absolute; left: -5px; top: 0; width: 10px; height: 7px; background: #f2f3f5; box-shadow: 0 0 0 1px rgba(0, 0, 0, .8); }
+.tp-head::after { content: ""; position: absolute; left: -1px; top: 6px; bottom: 0; width: 2px; background: #f2f3f5; box-shadow: 0 0 0 1px rgba(0, 0, 0, .6); }
 /* ช่วง In–Out + เครื่องหมาย [ ] */
-.tp-range { position: absolute; top: 7px; height: 8px; background: rgba(245, 165, 36, .28); border-top: 1px solid rgba(245, 165, 36, .8); border-bottom: 1px solid rgba(245, 165, 36, .8); pointer-events: none; z-index: 1; }
-.tp-mk { position: absolute; top: 3px; bottom: 3px; width: 6px; border: 2px solid #f5a524; pointer-events: none; z-index: 2; }
+.tp-range { position: absolute; top: 4px; height: 8px; background: rgba(245, 165, 36, .3); border-top: 1px solid #f5a524; border-bottom: 1px solid #f5a524; pointer-events: none; z-index: 1; }
+.tp-mk { position: absolute; top: 1px; bottom: 1px; width: 5px; border: 2px solid #f5a524; pointer-events: none; z-index: 2; }
 .tp-mk[hidden] { display: none; }
 .tp-in { border-right: none; }
 .tp-out { border-left: none; transform: translateX(-100%); }
-.tp-btn[data-tp=in], .tp-btn[data-tp=out] { font-family: var(--mono); font-size: 12px; color: var(--muted); border-color: var(--line-2); }
-.tp-btn[data-tp=in].is-on, .tp-btn[data-tp=out].is-on { color: #1a1305; background: #f5a524; border-color: #f5a524; }
-.tp-btn[data-tp=clear] { font-size: 11px; color: var(--muted); }
-.tp-btn[hidden] { display: none; }
+/* ไทม์โค้ด */
+.tp-time { margin-left: auto; display: inline-flex; gap: 4px; align-items: center; padding: 0 6px; height: 20px; background: #0b0c0e; border: 1px solid #000; color: #e6e8eb; font-size: 11px; white-space: nowrap; }
+.tp-time i { font-style: normal; color: #5d626b; }
+.tp-dur { color: #9aa0a8; }
 .tp-dur.marked { color: #f5a524; }
-.pvw .tp-fill { background: var(--pvw); } .pgm .tp-fill { background: var(--pgm); }
-.tp-track:focus-visible { outline: 2px solid #f5a524; outline-offset: 1px; border-radius: 4px; }
-.tp-cur, .tp-dur, .tp-pos { flex: none; font-size: 11px; color: var(--text); }
-.tp-dur { color: var(--muted); }
-.tp-rem { flex: none; min-width: 58px; text-align: right; font-size: 12px; font-weight: 700; color: var(--text); padding: 1px 5px; border-radius: 4px; }
+.tp-rem { flex: none; height: 20px; display: inline-flex; align-items: center; padding: 0 6px; background: #0b0c0e; border: 1px solid #000; font-size: 11px; font-weight: 700; color: #e6e8eb; white-space: nowrap; }
+.tp-rem:empty { display: none; }
 .tp-rem[data-level=warn] { background: #a16207; color: #fff; }
 .tp-rem[data-level=crit] { background: #dc2626; color: #fff; animation: tp-blink .5s steps(2) infinite; }
-.transport[data-level=crit] { border-color: #dc2626; }
-.tp-pos { padding: 0 6px; color: var(--muted); }
+.transport[data-level=crit] { border-color: #dc2626; box-shadow: 0 0 0 1px #dc2626; }
+.tp-pos { padding: 0 6px; color: #9aa0a8; font-size: 11px; }
+.tp-ctl > .tp-pos:last-child { margin-left: auto; }
 @keyframes tp-blink { 50% { opacity: .35; } }
-@media (max-width: 1100px) { .transport { width: 100%; } .tp-dur { display: none; } }
+@media (max-width: 1280px) { .tp-time i, .tp-dur { display: none; } }
+@media (max-width: 1100px) { .transport { width: 100%; } }
 @media (max-width: 760px), (pointer: coarse) and (orientation: landscape) and (max-height: 500px) {
   .transport:not(.has-clip) { display: none; }
-  .transport { height: 36px; } .tp-btn { width: 34px; height: 32px; }
+  .transport { min-height: 0; }
+  .tp-ctl { height: 34px; } .tp-btn { min-width: 36px; height: 32px; } .tp-seek, .tp-track { height: 22px; } .tp-track::before { top: 8px; } .tp-fill { top: 9px; } .tp-range { top: 7px; }
 }
 .rmt-rem { font-style: normal; padding: 0 5px; border-radius: 4px; color: var(--text); }
 .rmt-rem[data-level=warn] { background: #a16207; color: #fff; }

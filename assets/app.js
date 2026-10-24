@@ -1420,10 +1420,11 @@
   /* ------------------------------------------------------ transport (timeline ใต้จอ Preview / Program) */
   // แบบสตูดิโอ: เล่น/หยุด · เริ่มใหม่ · วนซ้ำ · แถบเลื่อนตำแหน่ง · เวลาที่เล่นไป / ความยาว · เวลาที่เหลือ (เหลือง ≤15 วิ · แดงกะพริบ ≤5 วิ)
   // ใช้กับคลิปวิดีโอ · Playlist · รีเพลย์ · สไลด์ (หน้า) — แหล่งอื่นแสดงชนิดแหล่งภาพ (LIVE) เฉย ๆ
+  // ไทม์โค้ด HH:MM:SS:FF ตามเฟรมเรตของรายการ (แบบ vMix)
   const fmtTc = s => {
     if (!isFinite(s) || s < 0) s = 0;
-    const t = Math.floor(s), fr = Math.floor((s - t) * 10);
-    return `${t >= 3600 ? Math.floor(t / 3600) + ':' : ''}${pad2(Math.floor(t / 60) % 60)}:${pad2(t % 60)}.${fr}`;
+    const fps = Math.round(+settings.fps || 30), t = Math.floor(s), fr = Math.min(fps - 1, Math.floor((s - t) * fps));
+    return `${pad2(Math.floor(t / 3600))}:${pad2(Math.floor(t / 60) % 60)}:${pad2(t % 60)}:${pad2(fr)}`;
   };
   function clipOf(inp) {
     if (!inp) return null;
@@ -1514,7 +1515,7 @@
         }
         $('.tp-cur', box).textContent = fmtTc(t);
         const durEl = $('.tp-dur', box);
-        durEl.textContent = dur ? fmtTc(z - a) : '--:--.-';
+        durEl.textContent = dur ? fmtTc(z - a) : '--:--:--:--';
         durEl.classList.toggle('marked', marked);
         durEl.title = marked ? `ช่วง In–Out (IN ${fmtTc(a)} · OUT ${fmtTc(z)})` : 'ความยาวคลิป';
         const rem = dur ? Math.max(0, z - t) / (el.playbackRate || 1) : 0;
@@ -1525,26 +1526,28 @@
         box.dataset.level = bus === 'pgm' ? warn : '';
       }
     },
+    // แบบ vMix: แถวบน = แถบเลื่อนเต็มความกว้าง · แถวล่าง = ปุ่มควบคุม | Mark In / Out | ไทม์โค้ด ตำแหน่ง / ความยาว | เวลาที่เหลือ
     build(box, inp, c) {
-      const b = (k, ic, title) => `<button type="button" class="tp-btn" data-tp="${k}" title="${title}">${ic}</button>`;
+      const b = (k, ic, title, cls = '') => `<button type="button" class="tp-btn ${cls}" data-tp="${k}" title="${title}">${ic}</button>`;
+      box.classList.toggle('tp-2row', !!c && !c.slides);
       if (!c) {
-        box.innerHTML = `<span class="tp-src">${inp ? esc((TYPE_META[inp.type]?.label || inp.type || '').toUpperCase()) : '—'}</span><span class="tp-live">${inp && inp.status === 'live' ? 'LIVE' : ''}</span>`;
+        box.innerHTML = `<div class="tp-ctl"><span class="tp-src">${inp ? esc((TYPE_META[inp.type]?.label || inp.type || '').toUpperCase()) : '—'}</span><span class="tp-live">${inp && inp.status === 'live' ? 'LIVE' : ''}</span></div>`;
         return;
       }
       if (c.slides) {
-        box.innerHTML = b('prev', '‹', 'หน้าก่อนหน้า') + `<span class="tp-pos mono"></span>` + b('next', '›', 'หน้าถัดไป') + '<span class="tp-src">SLIDES</span>';
+        box.innerHTML = `<div class="tp-ctl">${b('prev', icon('skip-back'), 'หน้าก่อนหน้า')}${b('next', icon('skip-fwd'), 'หน้าถัดไป')}<span class="tp-sep"></span><span class="tp-src">SLIDES</span><span class="tp-pos mono"></span></div>`;
         return;
       }
-      box.innerHTML = (c.pl ? b('prev', icon('skip-back'), 'รายการก่อนหน้า') : '')
-        + b('restart', icon('restart'), 'เริ่มใหม่ตั้งแต่ต้น')
-        + b('play', icon('play'), 'เล่น / หยุดชั่วคราว')
-        + (c.pl ? b('next', icon('skip-fwd'), 'รายการถัดไป') : '')
-        + (c.replay ? '' : b('loop', icon('repeat'), 'เล่นวนซ้ำ'))
-        + (c.marks ? b('in', 'I', 'Mark In — ตั้งจุดเริ่มที่ตำแหน่งนี้ (คลิกแถบแล้วกด I)') + b('out', 'O', 'Mark Out — ตั้งจุดจบที่ตำแหน่งนี้ (คลิกแถบแล้วกด O)') + b('clear', '✕', 'ล้าง In / Out') : '')
-        + `<span class="tp-cur mono">00:00.0</span>
-           <div class="tp-track" role="slider" aria-label="ตำแหน่งในคลิป" tabindex="0"><div class="tp-range" hidden></div><div class="tp-fill"></div><i class="tp-mk tp-in" hidden></i><i class="tp-mk tp-out" hidden></i><div class="tp-head"></div></div>
-           <span class="tp-dur mono"></span><span class="tp-rem mono" title="เวลาที่เหลือ"></span>`
-        + (c.pl ? '<span class="tp-pos mono"></span>' : '');
+      box.innerHTML = `<div class="tp-seek"><div class="tp-track" role="slider" aria-label="ตำแหน่งในคลิป" tabindex="0"><div class="tp-range" hidden></div><div class="tp-fill"></div><i class="tp-mk tp-in" hidden></i><i class="tp-mk tp-out" hidden></i><div class="tp-head"></div></div></div>
+        <div class="tp-ctl">`
+        + b('restart', '<svg class="i" viewBox="0 0 24 24"><path d="M6 5v14"/><path d="M19 5 9 12l10 7z" fill="currentColor"/></svg>', 'เริ่มใหม่ (ไปที่ In)')
+        + b('play', icon('play'), 'เล่น / หยุดชั่วคราว', 'tp-play')
+        + (c.pl ? b('prev', icon('skip-back'), 'รายการก่อนหน้า') + b('next', icon('skip-fwd'), 'รายการถัดไป') : '')
+        + (c.replay ? '' : b('loop', icon('repeat'), 'เล่นวนซ้ำ (Loop)'))
+        + (c.marks ? '<span class="tp-sep"></span>' + b('in', 'IN', 'Mark In — ตั้งจุดเริ่มที่ตำแหน่งนี้ (คลิกแถบแล้วกด I)', 'tp-txt') + b('out', 'OUT', 'Mark Out — ตั้งจุดจบที่ตำแหน่งนี้ (คลิกแถบแล้วกด O)', 'tp-txt') + b('clear', icon('x'), 'ล้าง In / Out') : '')
+        + (c.pl ? '<span class="tp-pos mono"></span>' : '')
+        + `<span class="tp-time mono"><span class="tp-cur">00:00:00:00</span><i>/</i><span class="tp-dur"></span></span>
+           <span class="tp-rem mono" title="เวลาที่เหลือ"></span></div>`;
     },
     act(bus, k) {
       const inp = byId(bus === 'pgm' ? state.programId : state.previewId);
