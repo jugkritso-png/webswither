@@ -1076,7 +1076,7 @@ impl Session {
                                     _ => return,
                                 }
                             }
-                            let samples: Vec<f32> = buf[..n].chunks_exact(4).map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect();
+                            let samples: Vec<f32> = buf[..n].as_chunks::<4>().0.iter().map(|b| f32::from_le_bytes(*b)).collect();
                             if tx.send(Msg::Audio(samples)).is_err() {
                                 break;
                             }

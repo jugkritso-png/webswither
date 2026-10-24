@@ -142,7 +142,10 @@ jobs:
             ffmpeg -hide_banner -loglevel error -listen 1 -i "${{ matrix.stream }}" -c copy -y "$RUNNER_TEMP/selftest.flv" &
             sleep 1
           fi
-          if [ "$RUNNER_OS" = Linux ]; then xvfb-run -a "${{ matrix.exe }}" & else "${{ matrix.exe }}" & fi
+          EXE="${{ matrix.exe }}"
+          # macOS: เปิดจากตัวแอป (.app) ที่แพ็กแล้ว — ไลบรารี OMT อยู่ใน Contents/Resources/omt
+          if [ "$RUNNER_OS" = macOS ]; then EXE=$(find desktop/target/universal-apple-darwin/release/bundle/macos -path '*.app/Contents/MacOS/*' -type f | head -1); echo "app: $EXE"; fi
+          if [ "$RUNNER_OS" = Linux ]; then xvfb-run -a "$EXE" & else "$EXE" & fi
           for i in $(seq 1 120); do [ -s "$WEBMIX_SELFTEST_OUT" ] && break; sleep 1; done
           sleep 2
           test -s "$WEBMIX_SELFTEST_OUT" || { echo "แอปไม่ส่งผลทดสอบภายใน 120 วินาที"; exit 1; }
