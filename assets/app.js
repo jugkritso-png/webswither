@@ -1518,37 +1518,47 @@
         const durEl = $('.tp-dur', box);
         durEl.textContent = dur ? fmtTc(z - a) : '--:--:--:--';
         durEl.classList.toggle('marked', marked);
+        durEl.parentElement.classList.toggle('marked', marked);
         durEl.title = marked ? `ช่วง In–Out (IN ${fmtTc(a)} · OUT ${fmtTc(z)})` : 'ความยาวคลิป';
         const rem = dur ? Math.max(0, z - t) / (el.playbackRate || 1) : 0;
         const remEl = $('.tp-rem', box);
         remEl.textContent = dur ? `-${fmtTc(rem)}` : '';
         const warn = dur && !c.loop && playing ? (rem <= 5 ? 'crit' : rem <= 15 ? 'warn' : '') : '';
         remEl.dataset.level = warn;
+        remEl.parentElement.dataset.level = warn;
+        remEl.parentElement.hidden = !dur;
+        $('.tp-dur-l', box).textContent = marked ? 'IN–OUT' : 'DURATION';
         box.dataset.level = bus === 'pgm' ? warn : '';
       }
     },
-    // แบบ vMix: แถวบน = แถบเลื่อนเต็มความกว้าง · แถวล่าง = ปุ่มควบคุม | Mark In / Out | ไทม์โค้ด ตำแหน่ง / ความยาว | เวลาที่เหลือ
+    // แถวบน = แถบเลื่อนเต็มความกว้าง · แถวล่าง = กลุ่มปุ่มเล่น | กลุ่ม Mark In / Out | กล่องเวลา (ตำแหน่ง · ความยาว · เหลือ)
+    // หน้าตาตามระบบของแอป: กลุ่มปุ่มแบบ .seg (EFFECT / DURATION) และกล่องเวลาแบบนาฬิกา TIME / ON AIR ด้านบน
     build(box, inp, c) {
       const b = (k, ic, title, cls = '') => `<button type="button" class="tp-btn ${cls}" data-tp="${k}" title="${title}">${ic}</button>`;
+      const tc = (label, cls, title) => `<div class="tp-tc ${cls}-w" title="${title}"><span class="tc-label">${label}</span><span class="${cls} tc-value">--:--:--:--</span></div>`;
       box.classList.toggle('tp-2row', !!c && !c.slides);
       if (!c) {
         box.innerHTML = `<div class="tp-ctl"><span class="tp-src">${inp ? esc((TYPE_META[inp.type]?.label || inp.type || '').toUpperCase()) : '—'}</span><span class="tp-live">${inp && inp.status === 'live' ? 'LIVE' : ''}</span></div>`;
         return;
       }
       if (c.slides) {
-        box.innerHTML = `<div class="tp-ctl">${b('prev', icon('skip-back'), 'หน้าก่อนหน้า')}${b('next', icon('skip-fwd'), 'หน้าถัดไป')}<span class="tp-sep"></span><span class="tp-src">SLIDES</span><span class="tp-pos mono"></span></div>`;
+        box.innerHTML = `<div class="tp-ctl"><div class="tp-grp">${b('prev', icon('skip-back'), 'หน้าก่อนหน้า')}${b('next', icon('skip-fwd'), 'หน้าถัดไป')}</div><span class="tp-src">SLIDES</span><div class="tp-tc"><span class="tc-label">PAGE</span><span class="tp-pos tc-value"></span></div></div>`;
         return;
       }
       box.innerHTML = `<div class="tp-seek"><div class="tp-track" role="slider" aria-label="ตำแหน่งในคลิป" tabindex="0"><div class="tp-range" hidden></div><div class="tp-fill"></div><i class="tp-mk tp-in" hidden></i><i class="tp-mk tp-out" hidden></i><div class="tp-head"></div></div></div>
-        <div class="tp-ctl">`
+        <div class="tp-ctl"><div class="tp-grp">`
         + b('restart', '<svg class="i" viewBox="0 0 24 24"><path d="M6 5v14"/><path d="M19 5 9 12l10 7z" fill="currentColor"/></svg>', 'เริ่มใหม่ (ไปที่ In)')
         + b('play', icon('play'), 'เล่น / หยุดชั่วคราว', 'tp-play')
         + (c.pl ? b('prev', icon('skip-back'), 'รายการก่อนหน้า') + b('next', icon('skip-fwd'), 'รายการถัดไป') : '')
         + (c.replay ? '' : b('loop', icon('repeat'), 'เล่นวนซ้ำ (Loop)'))
-        + (c.marks ? '<span class="tp-sep"></span>' + b('in', 'IN', 'Mark In — ตั้งจุดเริ่มที่ตำแหน่งนี้ (คลิกแถบแล้วกด I)', 'tp-txt') + b('out', 'OUT', 'Mark Out — ตั้งจุดจบที่ตำแหน่งนี้ (คลิกแถบแล้วกด O)', 'tp-txt') + b('clear', icon('x'), 'ล้าง In / Out') : '')
-        + (c.pl ? '<span class="tp-pos mono"></span>' : '')
-        + `<span class="tp-time mono"><span class="tp-cur">00:00:00:00</span><i>/</i><span class="tp-dur"></span></span>
-           <span class="tp-rem mono" title="เวลาที่เหลือ"></span></div>`;
+        + '</div>'
+        + (c.marks ? '<div class="tp-grp tp-marks">' + b('in', 'IN', 'Mark In — ตั้งจุดเริ่มที่ตำแหน่งนี้ (คลิกแถบแล้วกด I)', 'tp-txt') + b('out', 'OUT', 'Mark Out — ตั้งจุดจบที่ตำแหน่งนี้ (คลิกแถบแล้วกด O)', 'tp-txt') + b('clear', icon('x'), 'ล้าง In / Out') + '</div>' : '')
+        + (c.pl ? '<div class="tp-tc"><span class="tc-label">ITEM</span><span class="tp-pos tc-value"></span></div>' : '')
+        + '<div class="tp-tcs">'
+        + tc('POSITION', 'tp-cur', 'ตำแหน่ง (ชั่วโมง:นาที:วินาที:เฟรม)')
+        + tc('<span class="tp-dur-l">DURATION</span>', 'tp-dur', 'ความยาวคลิป')
+        + tc('REMAIN', 'tp-rem', 'เวลาที่เหลือ')
+        + '</div></div>';
     },
     act(bus, k) {
       const inp = byId(bus === 'pgm' ? state.programId : state.previewId);
