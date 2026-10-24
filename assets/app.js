@@ -1021,6 +1021,7 @@
       drawOverlays(pvwCtx, PW, PH);
     }
 
+    enforceMarks();
     if (now - lastThumbs > 100) {
       lastThumbs = now;
       transport.update();
@@ -1391,8 +1392,8 @@
       else if (act === 'pprev' || act === 'pnext') playlist.go(inp, inp.list.index + (act === 'pnext' ? 1 : -1), true);
       else if (act === 'pplay') playlist.setPlaying(inp, !inp.list.playing);
       else if (act === 'ploop') { inp.list.loop = !inp.list.loop; renderInputs(); }
-      else if (act === 'play') { inp.el.paused ? inp.el.play().catch(() => {}) : inp.el.pause(); }
-      else if (act === 'restart') { inp.el.currentTime = 0; inp.el.play().catch(() => {}); }
+      else if (act === 'play') clipPlayToggle(inp);
+      else if (act === 'restart') clipRestart(inp);
       else if (act === 'loop') { inp.el.loop = !inp.el.loop; actionBtn.classList.toggle('is-on', inp.el.loop); }
       else if (act === 'rcap') replayCapture(inp);
       else if (act === 'cap') { inp.capRun?.on ? captionStop(inp) : captionStart(inp); renderInputs(); }
@@ -1428,17 +1429,54 @@
     if (!inp) return null;
     const v = inp.el;
     const isVid = v && v.tagName === 'VIDEO';
-    if (inp.type === 'media' && isVid && !inp.missing) return { el: v, loop: v.loop };
+    if (inp.type === 'media' && isVid && !inp.missing) return { el: v, loop: v.loop, marks: true };
     if (inp.type === 'playlist' && inp.list.items.length) return { el: inp.showImg ? null : v, loop: inp.list.loop, pl: true, pos: `${inp.list.index + 1}/${inp.list.items.length}`, playing: inp.list.playing };
     if (inp.type === 'replay' && isVid && v.getAttribute('src')) return { el: v, replay: true };
     if (inp.type === 'slides' && inp.slides.count) return { slides: true, pos: `${inp.slides.page}/${inp.slides.count}` };
     return null;
   }
-  // เวลาที่เหลือของคลิปบนจอ (วินาที) — null ถ้าไม่ใช่คลิป
+  // Mark In / Mark Out ของคลิปวิดีโอ: เล่นเฉพาะช่วง In–Out (วนซ้ำ = กลับไป In) · ไม่ตั้ง = ทั้งคลิป
+  const markIn = inp => inp && inp.mark && inp.mark.in != null ? inp.mark.in : 0;
+  const markOut = (inp, dur) => inp && inp.mark && inp.mark.out != null && inp.mark.out < dur ? inp.mark.out : dur;
+  function sanitizeMark(m) {
+    if (!m || typeof m !== 'object') return null;
+    const n = x => x != null && x !== '' && Number.isFinite(+x) && +x >= 0 ? Math.round(+x * 1000) / 1000 : null;
+    const o = { in: n(m.in), out: n(m.out) };
+    if (o.in != null && o.out != null && o.out <= o.in) o.out = null;
+    return o.in == null && o.out == null ? null : o;
+  }
+  function clipRestart(inp) {
+    const v = inp.el;
+    v.currentTime = inp.type === 'media' ? markIn(inp) : 0;
+    v.play().catch(() => {});
+  }
+  // เล่นต่อจากตำแหน่งเดิม — ถ้าอยู่ที่ Out แล้ว (หรือก่อน In) เริ่มจาก In
+  function clipPlayToggle(inp) {
+    const v = inp.el;
+    if (!v.paused) { v.pause(); return; }
+    if (inp.type === 'media' && inp.mark && isFinite(v.duration) && (v.currentTime >= markOut(inp, v.duration) - 0.05 || v.currentTime < markIn(inp) - 0.05)) v.currentTime = markIn(inp);
+    v.play().catch(() => {});
+  }
+  // ทุกเฟรม: ถึง Out → วนกลับไป In หรือหยุดที่ Out
+  function enforceMarks() {
+    for (const inp of inputs) {
+      if (inp.type !== 'media' || !inp.mark || !inp.el || inp.el.tagName !== 'VIDEO') continue;
+      const v = inp.el, d = v.duration, t = v.currentTime;
+      if (isFinite(d) && !v.paused) {
+        const a = markIn(inp), b = markOut(inp, d);
+        if (t >= b - 0.02) { if (v.loop) v.currentTime = a; else { v.pause(); v.currentTime = b; } }
+        // เบราว์เซอร์วนกลับไปที่ 0 เอง (Out = ท้ายคลิป) → ไปที่ In
+        else if (v.loop && t < a && inp.lastT != null && inp.lastT >= d - 0.6 && t + 0.5 < inp.lastT) v.currentTime = a;
+      }
+      inp.lastT = v.currentTime;
+    }
+  }
+  // เวลาที่เหลือของคลิปบนจอ (วินาที) ถึงจุด Out — null ถ้าไม่ใช่คลิป
   function clipRemaining(inp) {
     const c = clipOf(inp);
     if (!c || !c.el || !isFinite(c.el.duration) || c.loop) return null;
-    return Math.max(0, (c.el.duration - c.el.currentTime) / (c.el.playbackRate || 1));
+    const end = c.marks ? markOut(inp, c.el.duration) : c.el.duration;
+    return Math.max(0, (end - c.el.currentTime) / (c.el.playbackRate || 1));
   }
   const transport = {
     sig: { pvw: '', pgm: '' },
@@ -1461,10 +1499,25 @@
         $('[data-tp=loop]', box)?.classList.toggle('is-on', !!c.loop);
         if (c.slides) continue;
         const dur = el && isFinite(el.duration) ? el.duration : 0, t = el ? el.currentTime : 0;
-        if (!box.dataset.drag) $('.tp-fill', box).style.width = `${dur ? clamp(t / dur, 0, 1) * 100 : 0}%`;
+        if (!box.dataset.drag) this.pos(box, dur ? t / dur : 0);
+        const marked = !!(c.marks && inp.mark && dur);
+        const a = marked ? markIn(inp) : 0, z = marked ? markOut(inp, dur) : dur;
+        if (c.marks) {
+          const pct = x => `${clamp(x / (dur || 1), 0, 1) * 100}%`;
+          const mi = $('.tp-in', box), mo = $('.tp-out', box), rg = $('.tp-range', box);
+          mi.hidden = !(marked && inp.mark.in != null); mi.style.left = pct(a); mi.title = `IN ${fmtTc(a)}`;
+          mo.hidden = !(marked && inp.mark.out != null && inp.mark.out < dur); mo.style.left = pct(z); mo.title = `OUT ${fmtTc(z)}`;
+          rg.hidden = !marked; rg.style.left = pct(a); rg.style.width = pct(z - a);
+          $('[data-tp=in]', box).classList.toggle('is-on', !mi.hidden);
+          $('[data-tp=out]', box).classList.toggle('is-on', !mo.hidden);
+          $('[data-tp=clear]', box).hidden = !marked;
+        }
         $('.tp-cur', box).textContent = fmtTc(t);
-        $('.tp-dur', box).textContent = dur ? fmtTc(dur) : '--:--.-';
-        const rem = dur ? (dur - t) / (el.playbackRate || 1) : 0;
+        const durEl = $('.tp-dur', box);
+        durEl.textContent = dur ? fmtTc(z - a) : '--:--.-';
+        durEl.classList.toggle('marked', marked);
+        durEl.title = marked ? `ช่วง In–Out (IN ${fmtTc(a)} · OUT ${fmtTc(z)})` : 'ความยาวคลิป';
+        const rem = dur ? Math.max(0, z - t) / (el.playbackRate || 1) : 0;
         const remEl = $('.tp-rem', box);
         remEl.textContent = dur ? `-${fmtTc(rem)}` : '';
         const warn = dur && !c.loop && playing ? (rem <= 5 ? 'crit' : rem <= 15 ? 'warn' : '') : '';
@@ -1487,8 +1540,9 @@
         + b('play', icon('play'), 'เล่น / หยุดชั่วคราว')
         + (c.pl ? b('next', icon('skip-fwd'), 'รายการถัดไป') : '')
         + (c.replay ? '' : b('loop', icon('repeat'), 'เล่นวนซ้ำ'))
+        + (c.marks ? b('in', 'I', 'Mark In — ตั้งจุดเริ่มที่ตำแหน่งนี้ (คลิกแถบแล้วกด I)') + b('out', 'O', 'Mark Out — ตั้งจุดจบที่ตำแหน่งนี้ (คลิกแถบแล้วกด O)') + b('clear', '✕', 'ล้าง In / Out') : '')
         + `<span class="tp-cur mono">00:00.0</span>
-           <div class="tp-track" role="slider" aria-label="ตำแหน่งในคลิป" tabindex="0"><div class="tp-fill"></div></div>
+           <div class="tp-track" role="slider" aria-label="ตำแหน่งในคลิป" tabindex="0"><div class="tp-range" hidden></div><div class="tp-fill"></div><i class="tp-mk tp-in" hidden></i><i class="tp-mk tp-out" hidden></i><div class="tp-head"></div></div>
            <span class="tp-dur mono"></span><span class="tp-rem mono" title="เวลาที่เหลือ"></span>`
         + (c.pl ? '<span class="tp-pos mono"></span>' : '');
     },
@@ -1504,12 +1558,24 @@
         else if (k === 'restart' && c.el) { c.el.currentTime = 0; if (inp.list.playing) c.el.play().catch(() => {}); }
       } else {
         const el = c.el;
-        if (k === 'play') { el.paused ? el.play().catch(() => {}) : el.pause(); }
-        else if (k === 'restart') { el.currentTime = 0; el.play().catch(() => {}); }
+        if (k === 'play') clipPlayToggle(inp);
+        else if (k === 'restart') clipRestart(inp);
         else if (k === 'loop') el.loop = !el.loop;
+        else if ((k === 'in' || k === 'out') && c.marks && isFinite(el.duration)) {
+          const t = el.currentTime, m = { ...(inp.mark || {}) };
+          if (k === 'in') { m.in = t < 0.05 ? null : t; if (m.out != null && m.out <= t) m.out = null; }
+          else { m.out = t > el.duration - 0.05 ? null : t; if (m.in != null && m.in >= t) m.in = null; }
+          inp.mark = sanitizeMark(m);
+        } else if (k === 'clear') inp.mark = null;
         if (inp.type === 'media') { updateMediaButtons(inp); if (k === 'loop') renderInputs(); }
       }
       this.update();
+    },
+    // playhead (หัวเหลี่ยม + เส้น) และแถบที่เล่นไปแล้ว
+    pos(box, f) {
+      f = clamp(f, 0, 1) * 100;
+      $('.tp-fill', box).style.width = `${f}%`;
+      const h = $('.tp-head', box); if (h) h.style.left = `${f}%`;
     },
     seek(bus, frac) {
       const c = clipOf(byId(bus === 'pgm' ? state.programId : state.previewId));
@@ -1525,7 +1591,7 @@
           if (!tr) return;
           e.preventDefault();
           tr.setPointerCapture(e.pointerId);
-          const at = ev => { const r = tr.getBoundingClientRect(); const f = clamp((ev.clientX - r.left) / r.width, 0, 1); $('.tp-fill', tr).style.width = `${f * 100}%`; this.seek(bus, f); };
+          const at = ev => { const r = tr.getBoundingClientRect(); const f = clamp((ev.clientX - r.left) / r.width, 0, 1); this.pos(box, f); this.seek(bus, f); };
           box.dataset.drag = '1';
           at(e);
           const move = ev => at(ev);
@@ -1533,7 +1599,10 @@
           tr.addEventListener('pointermove', move); tr.addEventListener('pointerup', up); tr.addEventListener('pointercancel', up);
         });
         box.addEventListener('keydown', e => {
-          if (!e.target.closest('.tp-track') || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight')) return;
+          if (!e.target.closest('.tp-track')) return;
+          const mk = { i: 'in', o: 'out' }[e.key.toLowerCase()];
+          if (mk) { e.preventDefault(); e.stopPropagation(); this.act(bus, mk); return; }
+          if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
           e.preventDefault(); e.stopPropagation();
           const c = clipOf(byId(bus === 'pgm' ? state.programId : state.previewId));
           if (c && c.el) c.el.currentTime = clamp(c.el.currentTime + (e.key === 'ArrowRight' ? 5 : -5), 0, c.el.duration || 0);
@@ -4101,7 +4170,7 @@
       case 'play': {
         const inp = byId(v);
         if (inp && inp.type === 'playlist') playlist.go(inp, 0, true);
-        else if (inp && inp.el && inp.el.tagName === 'VIDEO' && inp.type === 'media') { inp.el.currentTime = 0; inp.el.play().catch(() => {}); }
+        else if (inp && inp.el && inp.el.tagName === 'VIDEO' && inp.type === 'media') clipRestart(inp);
         break;
       }
       case 'recStart': if (!rec.active && !rec.starting) await toggleRecord(); break;
@@ -5393,8 +5462,8 @@
         case 'media': {
           if (!inp || !INSERT_TYPES.includes(inp.type)) break;
           const vid = inp.el && inp.el.tagName === 'VIDEO' && inp.type === 'media';
-          if (v === 'play' && vid) { inp.el.paused ? inp.el.play().catch(() => {}) : inp.el.pause(); }
-          else if (v === 'restart' && vid) { inp.el.currentTime = 0; inp.el.play().catch(() => {}); }
+          if (v === 'play' && vid) clipPlayToggle(inp);
+          else if (v === 'restart' && vid) clipRestart(inp);
           else if (v === 'loop' && vid) inp.el.loop = !inp.el.loop;
           else if ((v === 'prev' || v === 'next') && inp.type === 'playlist') playlist.go(inp, inp.list.index + (v === 'next' ? 1 : -1), true);
           else if (v === 'play' && inp.type === 'playlist') playlist.setPlaying(inp, !inp.list.playing);
@@ -8209,7 +8278,7 @@ onmessage = async e => {
           const o = { id: i.id, type: i.type, name: i.name };
           if (i.text) o.text = i.text;
           if (i.type === 'camera' && i.cam) o.cam = { ...i.cam };
-          if (i.type === 'media') { o.file = i.fileName || ''; o.loop = !!i.el.loop; }
+          if (i.type === 'media') { o.file = i.fileName || ''; o.loop = !!i.el.loop; if (i.mark) o.mark = { ...i.mark }; }
           if (i.type === 'image') o.file = i.fileName || '';
           if (i.type === 'wireless') o.peerId = i.peerId;
           if (i.type === 'srt') o.srt = { ...i.srt, passphrase: secrets ? i.srt.passphrase : '', pass: secrets ? i.srt.pass || '' : '' };
@@ -8379,7 +8448,7 @@ onmessage = async e => {
         }
         case 'media': case 'image': {
           const inp = raw.type === 'media'
-            ? createMediaInput({ ...base, fileName: String(raw.file || ''), loop: raw.loop !== false, status: 'nosignal', missing: true })
+            ? createMediaInput({ ...base, fileName: String(raw.file || ''), loop: raw.loop !== false, mark: sanitizeMark(raw.mark), status: 'nosignal', missing: true })
             : createImageInput({ ...base, fileName: String(raw.file || ''), status: 'nosignal', missing: true });
           return mediaStore.get(base.id).then(file => {
             if (inp.removed) return;

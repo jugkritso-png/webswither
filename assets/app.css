@@ -1792,9 +1792,24 @@ html.remote-mode body > *:not(#remote):not(svg):not(.toasts):not(.modal-backdrop
 .tp-btn .i { width: 14px; height: 14px; }
 .tp-btn.is-on { color: #4ade80; }
 .tp-track { position: relative; flex: 1; min-width: 40px; height: 22px; cursor: pointer; touch-action: none; }
-.tp-track::before { content: ""; position: absolute; left: 0; right: 0; top: 9px; height: 4px; border-radius: 2px; background: #1f2633; }
-.tp-fill { position: absolute; left: 0; top: 9px; height: 4px; border-radius: 2px; background: #e5e7eb; pointer-events: none; }
-.tp-fill::after { content: ""; position: absolute; right: -5px; top: -4px; width: 10px; height: 12px; border-radius: 3px; background: #fff; box-shadow: 0 0 0 1px rgba(0,0,0,.6); }
+.tp-track::before { content: ""; position: absolute; left: 0; right: 0; top: 9px; height: 4px; background: #1f2633; }
+.tp-fill { position: absolute; left: 0; top: 9px; height: 4px; z-index: 1; background: #e5e7eb; pointer-events: none; }
+.tp-fill { border-radius: 0; }
+/* playhead มาตรฐาน NLE: หัวเหลี่ยมด้านบน + เส้นตั้งตลอดความสูงแถบ */
+.tp-head { position: absolute; top: 0; bottom: 0; width: 0; pointer-events: none; z-index: 3; }
+.tp-head::before { content: ""; position: absolute; left: -5px; top: 0; width: 10px; height: 8px; background: #fff; box-shadow: 0 0 0 1px rgba(0, 0, 0, .7); }
+.tp-head::after { content: ""; position: absolute; left: -1px; top: 6px; bottom: 0; width: 2px; background: #fff; box-shadow: 0 0 0 1px rgba(0, 0, 0, .5); }
+/* ช่วง In–Out + เครื่องหมาย [ ] */
+.tp-range { position: absolute; top: 7px; height: 8px; background: rgba(245, 165, 36, .28); border-top: 1px solid rgba(245, 165, 36, .8); border-bottom: 1px solid rgba(245, 165, 36, .8); pointer-events: none; z-index: 1; }
+.tp-mk { position: absolute; top: 3px; bottom: 3px; width: 6px; border: 2px solid #f5a524; pointer-events: none; z-index: 2; }
+.tp-mk[hidden] { display: none; }
+.tp-in { border-right: none; }
+.tp-out { border-left: none; transform: translateX(-100%); }
+.tp-btn[data-tp=in], .tp-btn[data-tp=out] { font-family: var(--mono); font-size: 12px; color: var(--muted); border-color: var(--line-2); }
+.tp-btn[data-tp=in].is-on, .tp-btn[data-tp=out].is-on { color: #1a1305; background: #f5a524; border-color: #f5a524; }
+.tp-btn[data-tp=clear] { font-size: 11px; color: var(--muted); }
+.tp-btn[hidden] { display: none; }
+.tp-dur.marked { color: #f5a524; }
 .pvw .tp-fill { background: var(--pvw); } .pgm .tp-fill { background: var(--pgm); }
 .tp-track:focus-visible { outline: 2px solid #f5a524; outline-offset: 1px; border-radius: 4px; }
 .tp-cur, .tp-dur, .tp-pos { flex: none; font-size: 11px; color: var(--text); }
