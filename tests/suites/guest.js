@@ -26,6 +26,8 @@ const until = async (fn, ms = 15000) => { const end = Date.now() + ms; while (Da
   const link = await host.inputValue('#guest-link');
   ok('invite link with guest slot and name', /[?&]call=webmix-/.test(link) && /[?&]guest=[a-z0-9]+/.test(link) && /n=%E0%B8%84/.test(link), link);
   ok('invite shows a QR code', !!(await host.$('.modal #qr-target canvas, .modal #qr-target img')));
+  ok('invite manager lists the guest', (await host.locator('.gi-item.is-on').count()) === 1 && (await host.textContent('.gi-item.is-on')).includes('คุณสมศรี'));
+  await host.screenshot({ path: S + '/guest-invite.png' });
   await host.click('.modal-foot .btn-primary');
   const gid = await host.evaluate(() => window.webmix.inputs.find(i => i.type === 'guest').id);
   ok('guest input waits for the guest', await host.evaluate(id => { const i = window.webmix.inputs.find(x => x.id === id); return i.status !== 'live' && i.missing; }, gid));
@@ -35,6 +37,9 @@ const until = async (fn, ms = 15000) => { const end = Date.now() + ms; while (Da
   const guest = await gctx.newPage(); guest.on('pageerror', e => errs.push('guest ' + e.message));
   await guest.goto(link);
   ok('guest sees a join screen with their name', await guest.isVisible('#guest-join') && (await guest.textContent('#guest-join-name')) === 'คุณสมศรี');
+  ok('join page shows a camera preview', await until(() => guest.evaluate(() => document.querySelector('#gj-preview').videoWidth > 0), 8000));
+  ok('join page has name, camera and mic pickers', (await guest.inputValue('#gj-name')) === 'คุณสมศรี' && (await guest.locator('#gj-cam option').count()) >= 1 && (await guest.locator('#gj-mic option').count()) >= 1);
+  await guest.screenshot({ path: S + '/guest-join.png' });
   await guest.click('#guest-join-btn');
   const joined = await until(() => host.evaluate(id => window.webmix.inputs.find(x => x.id === id).status === 'live', gid), 20000);
   ok('guest video + audio arrive as the input', joined && await host.evaluate(id => window.webmix.audio.channels.some(c => c.inputId === id), gid));
@@ -76,6 +81,20 @@ const until = async (fn, ms = 15000) => { const end = Date.now() + ms; while (Da
   ok('guest on an overlay is ON AIR too', await until(() => guest.evaluate(() => document.querySelector('#caller').classList.contains('tally-pgm')), 5000));
   await host.evaluate(id => window.webmix.toggleInputOverlay(id, 0), gid);
 
+  // --- studio → guest: message and what the guest sees
+  { const c = host.locator(`#inputs-grid .card[data-id="${gid}"]`); await c.hover(); await c.locator('[data-card=invite]').click(); }
+  await host.waitForSelector('.gi-msg');
+  await host.fill('.gi-msg', 'อีก 1 นาทีเข้ารายการ'); await host.click('.gi-msg-send');
+  ok('message from the team shows on the guest page', await until(() => guest.evaluate(() => !document.querySelector('#guest-bubble').hidden && /อีก 1 นาที/.test(document.querySelector('#guest-bubble').textContent)), 5000));
+  await host.click('.gi-view [data-v=self]');
+  ok('studio can show the guest their own picture', await until(() => guest.evaluate(() => document.querySelector('#caller').classList.contains('view-self')), 5000));
+  await host.click('.gi-view [data-v=program]');
+  await until(() => guest.evaluate(() => !document.querySelector('#caller').classList.contains('view-self')), 5000);
+  await host.click('.gi-pvw');
+  ok('send to Preview from the invite window', await host.evaluate(id => window.webmix.state.previewId === id, gid));
+  ok('guest sees the preview state', await until(async () => /ทีมงานกำลังดูภาพคุณ/.test(await guest.textContent('#gt-state')), 5000));
+  await host.click('.modal-foot .btn-primary');
+  ok('guest page shows signal quality', await until(async () => /Mbps/.test(await guest.textContent('#gt-net')), 8000));
   // --- guest controls
   await guest.click('[data-caller=cam]');
   ok('guest can turn the camera off', await guest.evaluate(() => document.querySelector('#caller').classList.contains('cam-off') && !document.querySelector('#caller-video').srcObject.getVideoTracks()[0].enabled));

@@ -311,14 +311,31 @@
     <video id="guest-return" class="guest-return" autoplay playsinline hidden></video>
     <video id="caller-video" autoplay muted playsinline></video>
     <div id="guest-join" class="guest-join" hidden>
-      <div class="guest-card">
-        <span class="brand-mark"></span>
-        <h1>เข้าร่วมรายการสด</h1>
-        <p id="guest-join-name" class="guest-name"></p>
-        <p class="note">ระบบจะขอใช้กล้องและไมโครโฟน · แนะนำให้ใส่หูฟังเพื่อไม่ให้เสียงสะท้อน</p>
-        <button id="guest-join-btn" class="btn btn-primary btn-lg" type="button">เข้าร่วม</button>
+      <div class="guest-card gj-card">
+        <div class="gj-left">
+          <div class="gj-video"><video id="gj-preview" autoplay muted playsinline></video><span class="gj-name-chip" id="gj-name-chip"></span><span class="gj-off" id="gj-off">กำลังเปิดกล้อง…</span></div>
+          <div class="gj-dev"><span id="gj-cam-label"></span><span id="gj-mic-label"></span><button type="button" class="btn btn-sm" id="gj-speaker">ทดสอบลำโพง</button></div>
+        </div>
+        <div class="gj-right">
+          <span class="brand-mark"></span>
+          <small class="gj-kicker">คุณได้รับเชิญเข้าร่วม</small>
+          <h1 id="gj-show">รายการสด</h1>
+          <p id="guest-join-name" class="guest-name" hidden></p>
+          <label class="field"><span>ชื่อที่จะแสดง</span><input id="gj-name" class="input" maxlength="40" autocomplete="name"></label>
+          <label class="field"><span>กล้อง</span><select id="gj-cam" class="select"></select></label>
+          <label class="field"><span>ไมค์</span><select id="gj-mic" class="select"></select></label>
+          <div class="gj-meter-l">ระดับเสียง</div><span class="gj-meter"><i id="gj-meter"></i></span>
+          <p class="note gj-tip">ใส่หูฟังเพื่อไม่ให้เสียงรายการย้อนเข้าไมค์</p>
+          <button id="guest-join-btn" class="btn btn-primary btn-lg" type="button">เข้าร่วม</button>
+          <p class="note">ทีมงานจะเห็นภาพคุณก่อนออกอากาศ — ยังไม่ออกอากาศจนกว่าทีมงานตัดเข้ารายการ · ไม่ต้องติดตั้งโปรแกรม (Chrome / Edge / Safari)</p>
+        </div>
       </div>
     </div>
+    <div id="guest-top" class="guest-top" hidden><b id="gt-show"></b><span id="gt-state" class="gt-state">รอทีมงาน</span><span id="gt-net" class="gt-net"></span></div>
+    <span id="guest-cap" class="guest-cap" hidden>ภาพรายการตอนนี้ (หน่วงเล็กน้อย)</span>
+    <span id="guest-self-name" class="guest-self-name" hidden></span>
+    <div id="guest-bubble" class="guest-bubble" hidden></div>
+    <p id="guest-hear" class="guest-hear" hidden>คุณได้ยินเสียงรายการ (ไม่มีเสียงตัวเองย้อน)</p>
     <div class="caller-top">
       <span class="brand-mark"></span>
       <span class="caller-title">WebMix Camera</span>

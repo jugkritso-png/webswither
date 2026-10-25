@@ -6587,11 +6587,17 @@
       if (!conn.open) return;
       const inp = inputs.find(i => i.peerId === conn.peer);
       const tally = !inp ? 'off' : isOnAir(inp.id) ? 'pgm' : inp.id === state.previewId ? 'pvw' : 'off';
-      try { conn.send({ type: 'tally', tally }); } catch (e) {}
+      try { conn.send({ type: 'tally', tally }); if (inp && inp.type === 'guest' && inp.guestView) conn.send({ type: 'view', v: inp.guestView }); } catch (e) {}
     },
     sendTally() { for (const conn of this.conns.values()) this.sendTallyTo(conn); },
     // กล้องมือถือแบบโปร: สถานะกล้อง (ความสามารถ/ค่าปัจจุบัน/แบต/บันทึก) และคำสั่งควบคุมจากสตูดิโอ
     onCamMsg(peerId, msg) {
+      // แขกแจ้งชื่อที่จะแสดง (แก้ได้ในหน้าเข้าร่วม)
+      if (msg && msg.type === 'guest-info') {
+        const g = inputs.find(i => i.type === 'guest' && i.peerId === peerId), n = String(msg.name || '').trim().slice(0, 32);
+        if (g && n && n !== g.name) { g.name = n; renderInputs(); renderMixer(); }
+        return;
+      }
       if (!msg || msg.type !== 'cam-state' || typeof msg !== 'object') return;
       const inp = inputs.find(i => i.type === 'wireless' && i.peerId === peerId);
       if (!inp) return;
@@ -6619,7 +6625,7 @@
     },
     connectedCount() { return inputs.filter(i => i.type === 'wireless' && i.status === 'live').length; },
     guestLink(inp) {
-      const q = new URLSearchParams({ call: this.peerId, guest: inp.guest, n: inp.name });
+      const q = new URLSearchParams({ call: this.peerId, guest: inp.guest, n: inp.name, ...(show.name ? { s: show.name } : {}) });
       if (this.sig) q.set('sig', b64url(JSON.stringify(this.sig)));
       return `${pageBase()}?${q}`;
     }
@@ -7523,35 +7529,77 @@
       actions: [{ label: 'ยกเลิก' }, { label: 'สร้างลิงก์เชิญ', primary: true, value: 'add' }]
     });
     if (result?.value !== 'add') return;
-    const slot = uid() + uid().slice(0, 4);
-    const inp = addInput({ type: 'guest', name: result.form.name.value.trim().slice(0, 32) || `GUEST ${n}`, guest: slot, peerId: guestPeerId(slot),
-      el: createVideo(null), status: 'nosignal', missing: true });
-    audio.mixMinus(inp.id);
-    showGuestInvite(inp);
+    showGuestInvite(newGuestSlot(result.form.name.value.trim().slice(0, 32) || `GUEST ${n}`));
   }
 
+  // เชิญแขก (design 32): รายชื่อแขกทุกช่องทางซ้าย · ลิงก์เชิญ / QR / สิ่งที่แขกเห็น / ข้อความถึงแขก / ส่งเข้า Preview ทางขวา
+  function newGuestSlot(name) {
+    const slot = uid() + uid().slice(0, 4);
+    const inp = addInput({ type: 'guest', name, guest: slot, peerId: guestPeerId(slot), el: createVideo(null), status: 'nosignal', missing: true });
+    audio.mixMinus(inp.id);
+    return inp;
+  }
   async function showGuestInvite(inp) {
     await wireless.refreshLink();
-    const link = wireless.guestLink(inp);
+    let cur = inp;
+    const guests = () => inputs.filter(i => i.type === 'guest');
+    const gState = g => g.status === 'live' ? (isOnAir(g.id) ? 'ออกอากาศ' : g.id === state.previewId ? 'Preview' : 'เชื่อมต่อแล้ว') : 'รอเข้าร่วม';
     await dialog({
-      title: `ลิงก์เชิญ — ${inp.name}`,
-      body: `
-        <p class="modal-text">ส่งลิงก์นี้ให้แขก (LINE / อีเมล) หรือให้สแกน QR Code — แขกกด “เข้าร่วม” แล้วอนุญาตกล้อง/ไมค์</p>
-        <div class="qr-box" id="qr-target"></div>
-        <div class="link-row"><input class="input" id="guest-link" readonly value="${esc(link)}"><button type="button" class="btn btn-icon" id="copy-link" title="คัดลอกลิงก์">${icon('copy')}</button></div>
-        <p class="note">สถานะ: <b>${inp.status === 'live' ? 'เชื่อมต่ออยู่' : 'ยังไม่ได้เข้าร่วม'}</b> · แนะนำให้แขกใส่หูฟัง · ${wireless.sig && wireless.sig.u
-          ? 'เชื่อมต่อผ่าน TURN ของ Stream Gateway — แขกที่ใช้ 4G/5G หรือ Wi-Fi บริษัทเข้าร่วมได้ (ลิงก์ใช้ได้ 7 วัน)'
-          : 'ยังไม่ได้ตั้ง Stream Gateway — แขกบางเครือข่าย (4G/5G, Wi-Fi บริษัท) อาจเชื่อมต่อไม่ได้'}</p>`,
+      title: 'เชิญแขก',
+      wide: true,
+      body: `<p class="note gi-sub">แขกเปิดลิงก์ในเบราว์เซอร์ ไม่ต้องติดตั้งอะไร · แต่ละแขกเป็นแหล่งภาพของตัวเอง</p>
+        <div class="gi-wrap"><nav class="gi-list" aria-label="แขก"></nav><div class="gi-edit"></div></div>`,
       actions: [{ label: 'ปิด', primary: true }],
       onOpen(modal) {
-        const target = $('#qr-target', modal);
-        if (target && typeof QRCode !== 'undefined') new QRCode(target, { text: link, width: 196, height: 196, correctLevel: QRCode.CorrectLevel.L });
-        else if (target) target.remove();
-        $('#copy-link', modal).addEventListener('click', () => {
-          const field = $('#guest-link', modal);
-          (navigator.clipboard ? navigator.clipboard.writeText(field.value) : Promise.reject())
-            .then(() => toast('คัดลอกลิงก์แล้ว', 'success'))
-            .catch(() => { field.select(); document.execCommand('copy'); toast('คัดลอกลิงก์แล้ว', 'success'); });
+        modal.classList.add('gi-modal');
+        const list = $('.gi-list', modal), edit = $('.gi-edit', modal);
+        const paintList = () => {
+          list.innerHTML = guests().map(g => `<button type="button" class="gi-item ${g === cur ? 'is-on' : ''}" data-g="${esc(g.id)}"><i class="gi-dot ${g.status === 'live' ? (isOnAir(g.id) ? 'pgm' : 'on') : ''}"></i><b>${esc(g.name)}</b><small>${gState(g)}</small></button>`).join('')
+            + '<button type="button" class="btn btn-sm gi-add">+ เพิ่มช่องแขก</button>';
+        };
+        const paintEdit = () => {
+          if (!cur || !inputs.includes(cur)) { cur = guests()[0] || null; }
+          if (!cur) { edit.innerHTML = '<p class="note">ยังไม่มีแขก — กด “+ เพิ่มช่องแขก”</p>'; return; }
+          const link = wireless.guestLink(cur), v = cur.guestView || 'program';
+          edit.innerHTML = `
+            <label class="field"><span>ชื่อแขก (ใช้บนป้ายชื่อได้)</span><input class="input gi-name" maxlength="32" value="${esc(cur.name)}"></label>
+            <div class="field"><span>ลิงก์เชิญ (ส่งให้เฉพาะแขกคนนี้)</span>
+              <div class="link-row"><input class="input" id="guest-link" readonly value="${esc(link)}"><button type="button" class="btn" id="copy-link">${icon('copy')}คัดลอกลิงก์</button></div></div>
+            <div class="gi-share"><div class="qr-box" id="qr-target"></div>
+              <div class="gi-share-r"><a class="btn btn-sm" target="_blank" rel="noopener" href="https://line.me/R/msg/text/?${encodeURIComponent(link)}">ส่งทาง LINE</a>
+                <a class="btn btn-sm" href="mailto:?subject=${encodeURIComponent('เชิญร่วมรายการ ' + (show.name || ''))}&body=${encodeURIComponent(link)}">ส่งทางอีเมล</a>
+                <p class="note">สถานะ: <b>${gState(cur)}</b> · ${wireless.sig && wireless.sig.u ? 'เชื่อมต่อผ่าน TURN ของ Stream Gateway — 4G/5G เข้าร่วมได้' : 'ยังไม่ได้ตั้ง Stream Gateway — บางเครือข่ายอาจเชื่อมต่อไม่ได้'}</p></div></div>
+            <div class="field"><span>แขกเห็นอะไร</span><div class="seg gi-view"><button type="button" data-v="program" class="${v === 'program' ? 'is-active' : ''}">ภาพ Program</button><button type="button" data-v="self" class="${v === 'self' ? 'is-active' : ''}">ภาพของตัวเอง</button></div></div>
+            <p class="note">เสียงที่ส่งกลับเป็นแบบ mix-minus — แขกได้ยินรายการ แต่ไม่ได้ยินเสียงตัวเองย้อน</p>
+            <div class="field"><span>ส่งข้อความถึงแขก</span><div class="link-row"><input class="input gi-msg" maxlength="160" placeholder="เช่น อีก 1 นาทีพิธีกรจะถามคำถามแรก"><button type="button" class="btn gi-msg-send" ${cur.status === 'live' ? '' : 'disabled'}>ส่ง</button></div></div>
+            <div class="gi-acts"><button type="button" class="btn btn-danger gi-remove">ตัดแขกออก</button><span class="ml-auto"></span><button type="button" class="btn btn-green gi-pvw" ${cur.status === 'live' ? '' : 'disabled'}>ส่งเข้า Preview</button></div>`;
+          const target = $('#qr-target', edit);
+          if (typeof QRCode !== 'undefined') new QRCode(target, { text: link, width: 150, height: 150, correctLevel: QRCode.CorrectLevel.L });
+          else target.remove();
+        };
+        paintList(); paintEdit();
+        const tick = setInterval(() => { if (!modal.isConnected) { clearInterval(tick); return; } paintList(); }, 2000);
+        modal.addEventListener('click', async e => {
+          const it = e.target.closest('[data-g]');
+          if (it) { cur = byId(it.dataset.g); paintList(); paintEdit(); return; }
+          if (e.target.closest('.gi-add')) { cur = newGuestSlot(`GUEST ${guests().length + 1}`); paintList(); paintEdit(); return; }
+          if (!cur) return;
+          if (e.target.closest('#copy-link')) {
+            const field = $('#guest-link', edit);
+            (navigator.clipboard ? navigator.clipboard.writeText(field.value) : Promise.reject())
+              .then(() => toast('คัดลอกลิงก์แล้ว', 'success'))
+              .catch(() => { field.select(); document.execCommand('copy'); toast('คัดลอกลิงก์แล้ว', 'success'); });
+          }
+          const vb = e.target.closest('.gi-view [data-v]');
+          if (vb) { cur.guestView = vb.dataset.v; $$('.gi-view button', edit).forEach(b => b.classList.toggle('is-active', b === vb)); wireless.sendCam(cur, { type: 'view', v: cur.guestView }); }
+          if (e.target.closest('.gi-msg-send')) { const i = $('.gi-msg', edit); if (i.value.trim() && wireless.sendCam(cur, { type: 'msg', text: i.value.trim() })) { toast('ส่งข้อความถึงแขกแล้ว', 'success', 2000); i.value = ''; } }
+          if (e.target.closest('.gi-pvw')) { setPreview(cur.id); toast(`“${cur.name}” อยู่ใน Preview แล้ว`, 'success', 2000); paintList(); }
+          if (e.target.closest('.gi-remove')) { const id = cur.id; await removeInput(id); if (!byId(id)) { cur = null; paintList(); paintEdit(); } }
+        });
+        modal.addEventListener('change', e => {
+          if (!e.target.classList.contains('gi-name') || !cur) return;
+          const n = e.target.value.trim().slice(0, 32);
+          if (n && n !== cur.name) { cur.name = n; renderInputs(); renderMixer(); paintList(); $('#guest-link', edit).value = wireless.guestLink(cur); }
         });
       }
     });
