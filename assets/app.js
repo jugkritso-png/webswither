@@ -2387,7 +2387,11 @@
   /* ------------------------------------------------------ viewer comments */
   // คอมเมนต์จาก YouTube / Twitch / พิมพ์เอง เข้ารายการในแท็บ "คอมเมนต์" — กดคอมเมนต์เพื่อขึ้นจอผ่านแหล่งภาพ COMMENTS
   const chatFeed = { list: [], conns: {}, status: { youtube: ['off', ''], twitch: ['off', ''] }, shown: null, at: 0, hideAt: 0, autoHide: +store.get('chat-autohide', 0) || 0 };
-  const CHAT_AUTOHIDE = [0, 8, 15, 30];
+  chatFeed.clean = !!store.get('chat-clean', true);
+  const CHAT_AUTOHIDE = [0, 8, 10, 15, 30];
+  // กรองคำหยาบ (ไทย / อังกฤษ) — แทนด้วย *** ก่อนเข้ารายการ จึงไม่มีทางขึ้นจอ
+  const BAD_WORDS = /(เหี้ย|ควย|เย็ด|สัส|ไอ้สัตว์|อีสัตว์|\bfuck\w*|\bshit\w*|\bbitch\w*|\bcunt\b|\basshole\b)/gi;
+  const cleanWords = t => t.replace(BAD_WORDS, '***');
   function chatAnim() {
     if (!chatFeed.shown) return 0;
     const now = performance.now();
@@ -2402,7 +2406,8 @@
   }
   function chatAdd(m) {
     if (!m || !m.text && !m.amount || chatFeed.list.some(x => x.id === m.id)) return;
-    chatFeed.list.push({ ...m, name: String(m.name || 'ผู้ชม').slice(0, 40), text: String(m.text || '').slice(0, 300) });
+    const text = String(m.text || '').slice(0, 300);
+    chatFeed.list.push({ ...m, name: String(m.name || 'ผู้ชม').slice(0, 40), text: chatFeed.clean ? cleanWords(text) : text });
     if (chatFeed.list.length > 300) chatFeed.list.splice(0, chatFeed.list.length - 300);
     renderChatSoon();
   }
@@ -2506,19 +2511,99 @@
     }
     return inp;
   }
+  // หน้าต่างคอมเมนต์ไลฟ์: กรอง (ทั้งหมด / คำถาม / แพลตฟอร์ม) · หยุดเลื่อน · แสดงขึ้นจอ · บัญชีที่เชื่อม · ตัวอย่างการ์ด · กรองคำหยาบ
+  const isQuestion = t => /[?？]|ไหม|มั้ย|ยังไง|อย่างไร|เท่าไร|เท่าไหร่|ทำไม|ที่ไหน|เมื่อไร|เมื่อไหร่|อะไร/.test(t || '');
   async function openChatInputDialog(inp) {
     const before = inp.chat.style;
-    // ตัวอย่างระหว่างเลือกรูปแบบ (ถ้ายังไม่มีคอมเมนต์บนจอ)
     const demo = !chatFeed.shown;
-    if (demo) { chatFeed.shown = { id: 'demo', platform: 'youtube', name: 'ตัวอย่างผู้ชม', text: 'สวัสดีครับ ติดตามรายการทุกสัปดาห์เลย 👋' }; chatFeed.at = performance.now() - 400; chatFeed.hideAt = 0; }
+    if (demo) { chatFeed.shown = { id: 'demo', platform: 'youtube', name: 'ตัวอย่างผู้ชม', text: 'สวัสดีครับ ติดตามรายการทุกสัปดาห์เลย' }; chatFeed.at = performance.now() - 400; chatFeed.hideAt = 0; }
+    const view = { filter: 'all', paused: false, frozen: null };
+    const LABEL = { live: 'เชื่อมแล้ว', connecting: 'กำลังเชื่อมต่อ…', error: 'ผิดพลาด', off: 'ยังไม่เชื่อม' };
     const r = await dialog({
-      title: 'คอมเมนต์ผู้ชม',
-      body: `
-        <label class="field"><span>ชื่อแหล่งภาพ</span><input name="name" class="input" maxlength="40" value="${esc(inp.name)}"></label>
-        <label class="field"><span>รูปแบบการ์ด</span><select name="style" class="select">${Object.entries(chatLib.CHAT_STYLES).map(([k, t]) => `<option value="${k}" ${k === inp.chat.style ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
-        <p class="note">เลือกคอมเมนต์ในแท็บ “คอมเมนต์” (แผงกราฟิก) แล้วการ์ดจะขึ้นบนจอเอง — แหล่งภาพนี้พื้นโปร่งใส ใช้ซ้อนบน Program ผ่าน Overlay</p>`,
-      actions: [{ label: 'ยกเลิก' }, { label: 'บันทึก', primary: true, value: 'save' }],
-      onOpen(modal) { modal.addEventListener('change', e => { if (e.target.name === 'style') inp.chat.style = e.target.value; }); }
+      title: 'คอมเมนต์ไลฟ์',
+      wide: true,
+      body: `<div class="ct-wrap">
+        <div class="ct-left">
+          <div class="ct-bar">
+            ${[['all', 'ทั้งหมด'], ['q', 'คำถาม'], ['youtube', 'YouTube'], ['twitch', 'Twitch'], ['manual', 'พิมพ์เอง']].map(([k, n]) => `<button type="button" class="btn btn-sm ct-f ${k === 'all' ? 'is-on' : ''}" data-f="${k}">${n}</button>`).join('')}
+            <span class="ml-auto"></span><button type="button" class="btn btn-sm" data-ct="pause">หยุดเลื่อน</button>
+          </div>
+          <div class="ct-list" role="list"></div>
+          <form class="ct-manual" data-ct-form><input class="input" name="ctName" maxlength="40" placeholder="ชื่อ" aria-label="ชื่อผู้ชม"><input class="input" name="ctText" maxlength="300" placeholder="วางคอมเมนต์จาก Facebook / LINE / TikTok แล้วกดเพิ่ม" aria-label="ข้อความ"><button type="button" class="btn btn-sm" data-ct="add">เพิ่ม</button></form>
+        </div>
+        <div class="ct-right">
+          <section class="ct-card"><div class="ct-h"><h3>บัญชีที่เชื่อม</h3></div><div class="ct-conns"></div>
+            <button type="button" class="btn btn-sm" data-ct="connect">+ เชื่อมบัญชี / ตั้งค่า</button></section>
+          <section class="ct-card"><div class="ct-h"><h3>ตัวอย่างบนจอ</h3></div>
+            <div class="ct-prev"><canvas width="960" height="540" aria-label="ตัวอย่างการ์ดคอมเมนต์"></canvas></div>
+            <div class="ct-two">
+              <label class="field"><span>รูปแบบ</span><select name="style" class="select">${Object.entries(chatLib.CHAT_STYLES).map(([k, t]) => `<option value="${k}" ${k === inp.chat.style ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
+              <label class="field"><span>ซ่อนหลัง</span><select name="autohide" class="select">${CHAT_AUTOHIDE.map(v => `<option value="${v}" ${v === chatFeed.autoHide ? 'selected' : ''}>${v ? `${v} วินาที` : 'ไม่ซ่อนเอง'}</option>`).join('')}</select></label>
+            </div>
+            <label class="check"><input type="checkbox" name="clean" ${chatFeed.clean ? 'checked' : ''}> กรองคำหยาบอัตโนมัติ (แทนด้วย ***)</label>
+          </section>
+          <label class="field"><span>ชื่อแหล่งภาพ</span><input name="name" class="input" maxlength="40" value="${esc(inp.name)}"></label>
+        </div>
+      </div>`,
+      actions: [{ label: 'ซ่อนคอมเมนต์จากจอ', value: 'hide' }, { label: 'ยกเลิก' }, { label: 'บันทึก', primary: true, value: 'save' }],
+      onOpen(modal) {
+        modal.classList.add('ct-modal');
+        const list = $('.ct-list', modal), conns = $('.ct-conns', modal), f = $('form', modal).elements;
+        const pv = $('.ct-prev canvas', modal), px = pv.getContext('2d');
+        const paintConns = () => {
+          conns.innerHTML = ['youtube', 'twitch'].map(k => { const [st, text] = chatFeed.status[k] || ['off', '']; return `<div class="ct-conn is-${st}"><i style="background:${chatLib.PLATFORMS[k].color}"></i><b>${chatLib.PLATFORMS[k].label}</b><span title="${esc(text)}">${esc(st === 'error' ? text : LABEL[st])}</span></div>`; }).join('')
+            + '<div class="ct-conn is-off"><i style="background:#4f86f0"></i><b>Facebook</b><span>ดึงเองไม่ได้ — วางคอมเมนต์ในช่องด้านล่างรายการ</span></div>';
+        };
+        const paintList = () => {
+          const src = view.paused ? view.frozen : chatFeed.list;
+          const sh = chatFeed.shown && !chatFeed.hideAt && chatFeed.shown.id !== 'demo' ? chatFeed.shown : null;
+          const items = src.filter(m => view.filter === 'all' || (view.filter === 'q' ? isQuestion(m.text) : (m.platform || 'manual') === view.filter)).slice(-120).reverse();
+          list.innerHTML = items.map(m => `<div class="ct-item ${sh && sh.id === m.id ? 'is-on' : ''}" role="listitem">
+              <span class="ct-pf" style="background:${(chatLib.PLATFORMS[m.platform] || chatLib.PLATFORMS.manual).color}">${esc((chatLib.PLATFORMS[m.platform] || chatLib.PLATFORMS.manual).label.slice(0, 2).toUpperCase())}</span>
+              <div><b>${esc(m.name)}</b>${m.amount ? `<em>${esc(m.amount)}</em>` : ''}${isQuestion(m.text) ? '<small class="ct-q">คำถาม</small>' : ''}<p>${esc(m.text)}</p></div>
+              ${sh && sh.id === m.id ? '<span class="ct-on">บนจอ</span>' : `<button type="button" class="btn btn-sm" data-show="${esc(m.id)}">แสดง</button>`}</div>`).join('')
+            || '<p class="note">ยังไม่มีคอมเมนต์ — เชื่อม YouTube / Twitch หรือพิมพ์เองด้านล่าง</p>';
+          const newer = view.paused ? chatFeed.list.length - view.frozen.length : 0;
+          $('[data-ct=pause]', modal).textContent = view.paused ? `เลื่อนต่อ${newer > 0 ? ` (ใหม่ ${newer})` : ''}` : 'หยุดเลื่อน';
+        };
+        let sig = '';
+        const tick = () => {
+          if (!modal.isConnected) return;
+          const now = `${chatFeed.list.length}|${chatFeed.shown?.id}|${chatFeed.hideAt}|${JSON.stringify(chatFeed.status)}|${view.filter}|${view.paused}`;
+          if (now !== sig) { sig = now; paintList(); paintConns(); }
+          px.fillStyle = '#23324a'; px.fillRect(0, 0, 960, 540);
+          try { const src = $('#pgm-canvas'); if (src) px.drawImage(src, 0, 0, 960, 540); } catch (e) {}
+          if (!onOverlay(inp.id) && inp.id !== state.programId) chatLib.drawChat(px, 960, 540, chatFeed.shown, inp.chat.style, chatAnim());
+          setTimeout(tick, 120);
+        };
+        tick();
+        modal.addEventListener('change', e => {
+          if (e.target.name === 'style') inp.chat.style = e.target.value;
+          if (e.target.name === 'autohide') { chatFeed.autoHide = CHAT_AUTOHIDE.includes(+e.target.value) ? +e.target.value : 0; store.set('chat-autohide', chatFeed.autoHide); }
+          if (e.target.name === 'clean') { chatFeed.clean = e.target.checked; store.set('chat-clean', chatFeed.clean); }
+        });
+        const addManual = () => {
+          const text = f.ctText.value.trim();
+          if (!text) return;
+          chatAdd({ id: 'm' + uid(), platform: 'manual', name: f.ctName.value.trim() || 'ผู้ชม', text });
+          f.ctText.value = ''; f.ctText.focus();
+        };
+        f.ctText.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); addManual(); } });
+        modal.addEventListener('click', e => {
+          const fb = e.target.closest('[data-f]');
+          if (fb) { view.filter = fb.dataset.f; $$('.ct-f', modal).forEach(b => b.classList.toggle('is-on', b === fb)); return; }
+          const show = e.target.closest('[data-show]');
+          if (show) { const m = chatFeed.list.find(x => x.id === show.dataset.show); if (m) chatShow(m); return; }
+          const act = e.target.closest('[data-ct]')?.dataset.ct;
+          if (act === 'pause') { view.paused = !view.paused; view.frozen = view.paused ? chatFeed.list.slice() : null; paintList(); }
+          else if (act === 'connect') openChatConnectDialog();
+          else if (act === 'add') addManual();
+        });
+        // “ซ่อนคอมเมนต์จากจอ” ไม่ปิดหน้าต่าง
+        const hb = [...$$('.modal-foot .btn', modal)].find(b => b.textContent === 'ซ่อนคอมเมนต์จากจอ');
+        const clone = hb.cloneNode(true); hb.replaceWith(clone);
+        clone.addEventListener('click', () => chatHide());
+      }
     });
     if (demo && chatFeed.shown?.id === 'demo') chatFeed.shown = null;
     if (r?.value !== 'save') { inp.chat.style = before; return; }
