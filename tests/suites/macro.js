@@ -24,6 +24,11 @@ const results = []; const ok = (n, c, x = '') => results.push(`${c ? 'PASS' : 'F
   await p.click('.mstep-add'); await p.selectOption('.mstep[data-i="3"] select[data-k=a]', 'recStart');
   // ลำดับ: ย้ายขั้นตอนบันทึกขึ้นแล้วลงกลับ
   await p.click('.mstep[data-i="3"] [data-mv="-1"]'); await p.click('.mstep[data-i="2"] [data-mv="1"]');
+  ok('macro list beside the editor with the new one', (await p.locator('.mc-item.is-on').count()) === 1);
+  await p.dragAndDrop('.mstep[data-i="3"] .mstep-grip', '.mstep[data-i="0"]');
+  ok('drag a step to reorder', await p.inputValue('.mstep[data-i="0"] select[data-k=a]') === 'recStart');
+  await p.dragAndDrop('.mstep[data-i="0"] .mstep-grip', '.mstep[data-i="3"]');
+  ok('drag back', await p.inputValue('.mstep[data-i="3"] select[data-k=a]') === 'recStart');
   await p.click('.modal-foot .btn-primary'); await p.waitForTimeout(300);
   const m = await p.evaluate(() => window.webmix.macros.map(x => ({ name: x.name, key: x.key, steps: x.steps })));
   ok('macro saved with 4 steps in order', m.length === 1 && m[0].key === 'F2' && m[0].steps.map(s => s.a).join() === 'ovlOn,wait,program,recStart' && m[0].steps[1].v === 1.5, JSON.stringify(m));
@@ -58,7 +63,7 @@ const results = []; const ok = (n, c, x = '') => results.push(`${c ? 'PASS' : 'F
   ok('macros are saved with the show', back.length === 1 && back[0].name === 'เปิดรายการ' && back[0].key === 'F2', JSON.stringify(back));
   await p.click('.tab[data-tab=macro]');
   await p.screenshot({ path: S + '/macro.png' });
-  await p.click('.macro-edit'); await p.waitForSelector('.modal .mstep');
+  await p.click('.macro-edit'); await p.waitForSelector('.modal .mstep'); await p.screenshot({ path: process.env.WORK + '/macro-edit.png' });
   await p.screenshot({ path: S + '/macro-edit.png' });
   await p.click('.modal-foot button:has-text("ลบ Macro")'); await p.waitForTimeout(300);
   ok('delete removes it', await p.evaluate(() => window.webmix.macros.length === 0) && /ยังไม่มี Macro/.test(await p.textContent('#macro-list')));
