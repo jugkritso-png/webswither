@@ -39,6 +39,11 @@ const results = []; const ok = (n, c, x = '') => results.push(`${c ? 'PASS' : 'F
       ws.onmessage = e => { res(JSON.parse(e.data)); ws.close(); };
       setTimeout(() => res(null), 5000);
     }));
+    await p.keyboard.press('Escape');
+    await p.click('[data-action=settings]'); await p.click('[data-mtab=netvideo]');
+    const errOk = await p.waitForFunction(() => [...document.querySelectorAll('.nv-col .net-err')].filter(e => /แอปเดสก์ท็อป/.test(e.textContent)).length === 2, null, { timeout: 12000 }).then(() => true, () => false);
+    ok('settings NDI / OMT tab explains both need the desktop app', errOk, await p.textContent('.nv-grid'));
+    await p.keyboard.press('Escape');
     ok('source search answers with the same explanation', list && /แอปเดสก์ท็อป/.test(list.error || ''), JSON.stringify(list));
     ok('no page errors', errs.length === 0, JSON.stringify(errs));
     console.log(results.join('\n')); await b.close(); return;
@@ -48,8 +53,20 @@ const results = []; const ok = (n, c, x = '') => results.push(`${c ? 'PASS' : 'F
   ok('NDI output shows its LAN name and receiver count', t0.includes('“WebMix Program”') && t0.includes('ยังไม่มีเครื่องรับ'), t0);
   await p.keyboard.press('Escape');
 
+  // หน้าตั้งค่า → NDI / OMT: ค้นหาทั้งสองแบบพร้อมกัน · เพิ่มเป็นแหล่งภาพได้จากรายการ
+  await p.click('[data-action=settings]'); await p.click('[data-mtab=netvideo]');
+  const scanned = await p.waitForFunction(() => document.querySelectorAll('.nv-col .nv-src').length >= 2, null, { timeout: 12000 }).then(() => true, () => false);
+  const cols = await p.evaluate(() => Object.fromEntries([...document.querySelectorAll('.nv-col')].map(c => [c.dataset.proto, { st: c.querySelector('.nv-st').textContent, list: c.querySelector('.nv-list').textContent.replace(/\s+/g, ' ') }])));
+  ok('settings tab finds NDI and OMT sources side by side', scanned && /WebMix Program/.test(cols.ndi.list) && /WebMix OMT/.test(cols.omt.list) && /พบ/.test(cols.ndi.st) && /พบ/.test(cols.omt.st), JSON.stringify(cols));
+  await p.screenshot({ path: S + '/netvideo-scan.png' });
+  await p.locator('.nv-col[data-proto=omt] .nv-src', { hasText: 'WebMix OMT' }).locator('[data-nv-add]').click();
+  ok('“add” turns the OMT source into an input', await p.waitForFunction(() => window.webmix.inputs.some(i => i.type === 'srt' && i.srt.mode === 'omt' && i.srt.source === 'MOCKHOST (WebMix OMT)'), null, { timeout: 3000 }).then(() => true, () => false));
+  ok('source is then marked as in use', /ใช้อยู่/.test(await p.textContent('.nv-col[data-proto=omt] .nv-list')));
+  await p.keyboard.press('Escape');
+
   // รับกลับเข้ามา: เมนูเพิ่มแหล่งภาพ → NDI / OMT → เลือกจากรายการ
   await p.click('[data-action=add-menu]'); await p.click('.menu button:has-text("NDI")');
+  await p.click('.modal .net-proto button[data-value=ndi]');
   await p.waitForSelector('.modal .net-src', { timeout: 8000 }).catch(() => {});
   const found = await p.locator('.modal .net-src').evaluateAll(l => l.map(x => x.dataset.src));
   ok('add dialog has NDI / SRT / RTMP / RTSP tabs', (await p.$$('.modal .net-tabs [data-net-tab]')).length === 4);
@@ -121,7 +138,7 @@ const results = []; const ok = (n, c, x = '') => results.push(`${c ? 'PASS' : 'F
   await p.evaluate(() => window.webmix.show.autosave(true));
   await p.reload(); await p.waitForTimeout(2500);
   const back = await p.evaluate(() => window.webmix.inputs.filter(i => i.type === 'srt').map(i => ({ mode: i.srt.mode, source: i.srt.source, state: i.srtState })));
-  ok('after reload both inputs are back and reconnecting', back.length === 2 && back.every(x => x.source && ['connecting', 'waiting', 'live'].includes(x.state)), JSON.stringify(back));
+  ok('after reload both inputs are back and reconnecting', back.length === 3 && back.every(x => x.source && ['connecting', 'waiting', 'live'].includes(x.state)), JSON.stringify(back));
   ok('no page errors', errs.length === 0, JSON.stringify(errs));
   console.log(results.join('\n')); await b.close();
 })().catch(e => { console.log(results.join('\n')); console.error('CRASH', e.message); process.exit(1); });

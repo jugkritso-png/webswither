@@ -274,7 +274,7 @@ pub async fn control(mut sink: Sink, mut source: Source, cfg: std::sync::Arc<Con
                     // ค้นหาใช้เวลาได้ถึง ~1.5 วินาที — ทำในเธรดแยก
                     let r = tokio::task::spawn_blocking(move || netvideo::sources(proto)).await.unwrap_or_else(|e| Err(e.to_string()));
                     let msg = match r {
-                        Ok(list) => json!({ "type": "sources", "proto": name, "list": list }),
+                        Ok(list) => json!({ "type": "sources", "proto": name, "list": list, "version": netvideo::available(proto).ok() }),
                         Err(e) => json!({ "type": "sources", "proto": name, "list": [], "error": e }),
                     };
                     if sink.send(send_json(msg)).await.is_err() {

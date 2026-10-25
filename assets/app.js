@@ -7518,7 +7518,7 @@
       ws.onopen = () => ws.send(JSON.stringify({ type: 'sources', proto }));
       ws.onmessage = ev => {
         let m; try { m = JSON.parse(ev.data); } catch (e) { return; }
-        if (m.type === 'sources') done({ list: Array.isArray(m.list) ? m.list.map(String) : [], error: m.error || '' });
+        if (m.type === 'sources') done({ list: Array.isArray(m.list) ? m.list.map(String) : [], error: m.error || '', version: m.version ? String(m.version) : '' });
         else if (m.type === 'error') done({ list: [], error: m.message || 'Gateway ปฏิเสธ' });
       };
       ws.onerror = () => done({ list: [], error: 'เชื่อมต่อ Gateway ไม่ได้' });
@@ -7535,6 +7535,82 @@
       close();
       setTimeout(() => ({ ndi: () => openNetVideoDialog(), srt: openSrtInputDialog, rtmp: openRtmpInputDialog, rtsp: () => openRtspDialog() })[k](), 0);
     });
+  }
+
+  // หน้าตั้งค่า → แท็บ NDI / OMT: ค้นหาแหล่งทั้งสองแบบในวง LAN พร้อมกัน · สถานะไลบรารี · เพิ่มเป็นแหล่งภาพได้ทันที
+  const NET_SCAN_HELP = {
+    ndi: 'ต้องติดตั้ง NDI Tools (ฟรี) จาก ndi.video/tools · เครื่องส่ง: vMix, OBS + DistroAV, กล้อง PTZ NDI',
+    omt: 'ไลบรารีมากับแอปแล้ว · เครื่องส่ง: vMix 29 ขึ้นไป (Output → OMT)'
+  };
+  const netScanPaneHtml = () => `<div class="modal-pane" data-mpane="netvideo">
+      <div class="nv-head"><p class="note">ค้นหาแหล่งภาพ NDI® และ OMT ที่เปิดอยู่ในวง LAN เดียวกับเครื่องนี้ แล้วกดเพิ่มเป็นแหล่งภาพได้เลย · ใช้ Stream Gateway ในแอปเดสก์ท็อป</p>
+        <button type="button" class="btn" data-nv="scan">${icon('search')}ค้นหาใหม่</button></div>
+      <label class="check"><input type="checkbox" data-nv="auto" ${store.get('nv-auto', true) ? 'checked' : ''}> ค้นหาซ้ำอัตโนมัติทุก 10 วินาทีระหว่างเปิดหน้านี้</label>
+      <p class="note warn nv-gw" hidden></p>
+      <div class="nv-grid">${Object.entries(NET_PROTOS).map(([k, l]) => `<section class="nv-col" data-proto="${k}" aria-label="แหล่ง ${l}">
+          <div class="nv-col-h"><b>${l}</b><span class="nv-st is-wait">ยังไม่ได้ค้นหา</span></div>
+          <div class="nv-list" role="list"></div>
+          <p class="note">${NET_SCAN_HELP[k]}</p></section>`).join('')}</div>
+    </div>`;
+  function bindNetScanPane(modal, now) {
+    const pane = $('[data-mpane=netvideo]', modal);
+    if (!pane) return;
+    const found = { ndi: null, omt: null };
+    let busy = false, timer = 0, started = false;
+    const used = (proto, src) => inputs.find(i => i.type === 'srt' && i.srt?.mode === proto && i.srt.source === src);
+    const paint = (proto, r) => {
+      const col = $(`.nv-col[data-proto=${proto}]`, pane), st = $('.nv-st', col), list = $('.nv-list', col);
+      if (!r) { st.className = 'nv-st is-wait'; st.textContent = 'กำลังค้นหา…'; return; }
+      if (r.error) {
+        st.className = 'nv-st is-bad'; st.textContent = /ไม่พบ|not found/i.test(r.error) ? 'ไม่พบไลบรารี' : 'ค้นหาไม่ได้';
+        list.innerHTML = `<p class="note net-err">${esc(r.error)}</p>`;
+        return;
+      }
+      st.className = `nv-st ${r.list.length ? 'is-ok' : 'is-idle'}`;
+      st.textContent = `${r.list.length ? `พบ ${r.list.length} แหล่ง` : 'ยังไม่พบแหล่ง'}${r.version ? ` · ${r.version}` : ''}`;
+      list.innerHTML = r.list.map(n => {
+        const m = /^(.*?)\s*\(([^)]+)\)\s*$/.exec(n) || [, '', n], u = used(proto, n);
+        return `<div class="nv-src" role="listitem"><span class="net-thumb">${icon('monitor')}</span><span class="nv-src-t"><b>${esc(m[2])}</b><small>${esc(m[1] || 'เครื่องนี้')}</small></span>
+          ${u ? `<span class="nv-used">ใช้อยู่ · ${esc(u.name)}</span>` : `<button type="button" class="btn btn-sm" data-nv-add="${esc(n)}">เพิ่มเป็นแหล่งภาพ</button>`}</div>`;
+      }).join('') || '<p class="note">ยังไม่พบแหล่งในวง LAN — ตรวจว่าเครื่องส่งเปิดอยู่ อยู่วงเดียวกัน และไฟร์วอลล์ไม่บล็อก</p>';
+    };
+    const scan = async () => {
+      if (busy || !pane.isConnected) return;
+      const gwErr = gatewayProblem();
+      $('.nv-gw', pane).hidden = !gwErr;
+      if (gwErr) { $('.nv-gw', pane).textContent = `${gwErr} — ตั้งค่าในแท็บ สตรีมและปลายทาง (แอปเดสก์ท็อปตั้งให้เอง)`; return; }
+      busy = true;
+      $('[data-nv=scan]', pane).disabled = true;
+      await Promise.all(Object.keys(NET_PROTOS).map(async k => {
+        if (!found[k]) paint(k, null);
+        found[k] = await listNetSources(k);
+        if (pane.isConnected) paint(k, found[k]);
+      }));
+      busy = false;
+      if (pane.isConnected) $('[data-nv=scan]', pane).disabled = false;
+    };
+    const loop = () => {
+      clearTimeout(timer);
+      if (!pane.isConnected || !$('[data-nv=auto]', pane).checked) return;
+      timer = setTimeout(async () => { if (pane.classList.contains('is-active')) await scan(); loop(); }, 10000);
+    };
+    const start = () => { if (started) return; started = true; scan(); loop(); };
+    pane.addEventListener('click', e => {
+      if (e.target.closest('[data-nv=scan]')) { scan(); return; }
+      const add = e.target.closest('[data-nv-add]');
+      if (!add) return;
+      const col = add.closest('.nv-col'), proto = col.dataset.proto, source = add.dataset.nvAdd;
+      if (used(proto, source)) return;
+      const name = (/\(([^)]+)\)\s*$/.exec(source) || [, source])[1].slice(0, 32);
+      createSrtInput({ mode: proto, source, port: 0, latency: 500 }, name);
+      saveSrtInputs();
+      store.set('net-proto', proto);
+      toast(`เพิ่ม “${name}” (${NET_PROTOS[proto]}) เป็นแหล่งภาพแล้ว`, 'success');
+      paint(proto, found[proto]);
+    });
+    $('[data-nv=auto]', pane).addEventListener('change', e => { store.set('nv-auto', e.target.checked); loop(); });
+    $('[data-mtab=netvideo]', modal)?.addEventListener('click', start);
+    if (now) start();
   }
 
   async function openNetVideoDialog(proto = store.get('net-proto', 'ndi'), inp = null) {
@@ -9801,7 +9877,7 @@ onmessage = async e => {
       title: 'ตั้งค่า',
       wide: true,
       body: `
-        <div class="modal-tabs set-tabs" role="tablist"><button type="button" data-mtab="general">ทั่วไป</button><button type="button" data-mtab="output">วิดีโอและเอาต์พุต</button><button type="button" data-mtab="stream">สตรีมและปลายทาง</button><button type="button" data-mtab="audio">เสียง</button><button type="button" data-mtab="control">ควบคุม MIDI</button><button type="button" data-mtab="system">ระบบและอัปเดต</button></div>
+        <div class="modal-tabs set-tabs" role="tablist"><button type="button" data-mtab="general">ทั่วไป</button><button type="button" data-mtab="output">วิดีโอและเอาต์พุต</button><button type="button" data-mtab="stream">สตรีมและปลายทาง</button><button type="button" data-mtab="netvideo">NDI / OMT</button><button type="button" data-mtab="audio">เสียง</button><button type="button" data-mtab="control">ควบคุม MIDI</button><button type="button" data-mtab="system">ระบบและอัปเดต</button></div>
         <div class="modal-pane" data-mpane="output">
           ${live ? '<p class="note warn">กำลังบันทึกหรือสตรีมอยู่ — เปลี่ยนความละเอียดและเฟรมเรตได้หลังหยุดก่อน</p>' : ''}
           <div class="field"><span>คุณภาพการไลฟ์และบันทึก</span>${qualityHtml(qualityOf(settings.resolution, settings.fps, settings.videoKbps)?.id)}</div>
@@ -9853,8 +9929,9 @@ onmessage = async e => {
         </div>`,
       actions: [{ label: 'ยกเลิก' }, { label: 'บันทึก', primary: true, value: 'save' }],
       onOpen(modal) {
-        $('.modal-body', modal).insertAdjacentHTML('beforeend', `<div class="modal-pane" data-mpane="control">${midiPaneHtml()}</div>${settingsExtraHtml()}`);
+        $('.modal-body', modal).insertAdjacentHTML('beforeend', `<div class="modal-pane" data-mpane="control">${midiPaneHtml()}</div>${settingsExtraHtml()}${netScanPaneHtml()}`);
         bindMidiPane(modal);
+        bindNetScanPane(modal, tab === 'netvideo');
         bindSettingsExtra(modal);
         // พื้นฐาน / ขั้นสูง: ขั้นสูงกางตัวเลือกที่พับไว้ทุกหมวด
         modal.classList.add('set-modal');

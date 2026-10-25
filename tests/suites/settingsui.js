@@ -9,7 +9,7 @@ const results = []; const ok = (n, c, x = '') => results.push(`${c ? 'PASS' : 'F
   const p = await ctx.newPage(); const errs = []; p.on('pageerror', e => errs.push(e.message));
   await p.goto('http://localhost:8765/index.html'); await p.evaluate(() => localStorage.clear()); await p.reload(); await p.waitForTimeout(600);
   await p.click('[data-action=settings]'); await p.waitForSelector('.set-modal');
-  ok('six categories', (await p.$$('.set-tabs [data-mtab]')).length === 6);
+  ok('seven categories', (await p.$$('.set-tabs [data-mtab]')).length === 7);
   ok('categories on the left', await p.evaluate(() => { const t = document.querySelector('.set-tabs').getBoundingClientRect(), pane = document.querySelector('.modal-pane.is-active').getBoundingClientRect(); return t.right <= pane.left + 1 && t.height > 200; }));
   await p.click('.set-level [data-lv=adv]');
   ok('advanced opens the folded options', await p.evaluate(() => [...document.querySelectorAll('.set-modal details.adv')].every(d => d.open)));

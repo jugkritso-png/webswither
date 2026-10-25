@@ -2873,3 +2873,18 @@ button.stat-disk.bad { border-color: #E5484D; background: rgba(229,72,77,.12); }
 .cp-tr-ic { width: 28px; height: 28px; flex: none; border-radius: 50%; display: grid; place-items: center; font-size: 11px; font-weight: 800; background: #1b212b; color: var(--muted); }
 .cp-tr-ic.is-ok { background: #14532d; color: #bbf7d0; } .cp-tr-ic.is-bad { background: #4a1518; color: #ff9ea2; } .cp-tr-ic.is-wait { background: #4a3510; color: #f0b44c; }
 .cp-tr-line { display: block; margin-top: 2px; color: #a9c3ff; }
+
+/* ---- ตั้งค่า → NDI / OMT: ค้นหาแหล่งในวง LAN ---- */
+.nv-head { display: flex; align-items: flex-start; gap: 12px; } .nv-head .note { flex: 1; margin: 0; }
+.nv-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 12px; }
+.nv-col { display: flex; flex-direction: column; gap: 10px; padding: 14px; border-radius: 12px; background: #171b22; border: 1px solid #222935; min-width: 0; }
+.nv-col-h { display: flex; align-items: center; gap: 8px; } .nv-col-h b { flex: 1; font-size: 15px; }
+.nv-st { padding: 3px 10px; border-radius: 999px; font-size: 11px; font-weight: 600; background: #1b212b; color: var(--muted); }
+.nv-st.is-ok { background: #14532d; color: #bbf7d0; } .nv-st.is-bad { background: #3a1518; color: #ff9ea2; } .nv-st.is-wait { background: #2a210c; color: #f0b44c; }
+.nv-list { display: flex; flex-direction: column; gap: 8px; min-height: 60px; }
+.nv-src { display: flex; align-items: center; gap: 12px; padding: 8px 10px; border-radius: 10px; background: #0b0d12; border: 1px solid #222935; }
+.nv-src .net-thumb { width: 72px; }
+.nv-src-t { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.nv-src-t b, .nv-src-t small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .nv-src-t small { color: var(--muted); font-size: 12px; font-family: var(--mono); }
+.nv-used { font-size: 12px; color: #7fd1a7; white-space: nowrap; }
+@media (max-width: 760px) { .nv-grid { grid-template-columns: 1fr; } }
