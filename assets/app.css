@@ -2245,3 +2245,12 @@ html.is-resizing iframe, html.is-resizing canvas { pointer-events: none; }
 .rp-st { display: flex; align-items: center; gap: 10px; font-size: 13px; }
 .rp-modal .modal-foot .btn:nth-last-child(2) { margin-left: auto; }
 @media (max-width: 900px) { .rp-wrap { grid-template-columns: 1fr; } }
+
+/* ---------- แหล่งภาพเครือข่าย */
+.modal.net-modal .dg-tabs { margin-top: -4px; }
+.net-list .net-src { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 10px; text-align: left; }
+.net-thumb { width: 96px; aspect-ratio: 16 / 9; flex: none; display: grid; place-items: center; border-radius: 6px; background: #23324a; color: #9aa4b2; }
+.net-txt { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.net-txt b { font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.net-txt small { color: var(--muted); font-size: 12px; }
+.net-chip { flex: none; font-style: normal; padding: 2px 8px; border-radius: 999px; background: #111a2b; color: #a9c3ff; font-size: 11px; font-weight: 600; }

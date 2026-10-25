@@ -51,12 +51,18 @@ const results = []; const ok = (n, c, x = '') => results.push(`${c ? 'PASS' : 'F
   // รับกลับเข้ามา: เมนูเพิ่มแหล่งภาพ → NDI / OMT → เลือกจากรายการ
   await p.click('[data-action=add-menu]'); await p.click('.menu button:has-text("NDI")');
   await p.waitForSelector('.modal .net-src', { timeout: 8000 }).catch(() => {});
-  const found = await p.locator('.modal .net-src').allTextContents();
+  const found = await p.locator('.modal .net-src').evaluateAll(l => l.map(x => x.dataset.src));
+  ok('add dialog has NDI / SRT / RTMP / RTSP tabs', (await p.$$('.modal .net-tabs [data-net-tab]')).length === 4);
   ok('NDI search lists our own Program output', found.some(t => t.includes('MOCKHOST (WebMix Program)')), JSON.stringify(found));
   await p.locator('.modal .net-src', { hasText: 'WebMix Program' }).click();
   ok('picking a source fills the name', (await p.inputValue('.modal input[name=source]')) === 'MOCKHOST (WebMix Program)');
   await p.screenshot({ path: S + '/netvideo-pick.png' });
   await p.click('.modal-foot .btn-primary');
+  // แท็บ: เปิดหน้าต่าง NDI แล้วสลับไป SRT / กลับมา
+  await p.click('[data-action=add-menu]'); await p.click('.menu button:has-text("NDI")'); await p.waitForSelector('.modal .net-tabs');
+  await p.click('.modal [data-net-tab=srt]'); await p.waitForTimeout(400);
+  ok('tab switches to the SRT dialog', await p.isVisible('.modal-title:has-text("SRT")') && await p.isVisible('.modal [data-net-tab=srt].is-on'));
+  await p.keyboard.press('Escape');
   const net = mode => p.evaluate(m => window.webmix.inputs.filter(i => i.type === 'srt' && i.srt.mode === m).map(i => ({ id: i.id, name: i.name, state: i.srtState, msg: i.srtMessage || '', info: i.srtInfo, source: i.srt.source })), mode);
   const waitLive = async (mode, ms = 25000) => { for (let t = 0; t < ms; t += 500) { const l = await net(mode); if (l[0] && l[0].state === 'live' && l[0].info) return l[0]; await p.waitForTimeout(500); } return (await net(mode))[0]; };
   const ndiIn = await waitLive('ndi');

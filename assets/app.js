@@ -6685,7 +6685,7 @@
     const n = inputs.filter(i => i.type === 'srt').length + 1;
     const result = await dialog({
       title: 'เพิ่มสัญญาณ SRT',
-      body: `
+      body: `${netTabsHtml('srt')}
         <label class="field"><span>ชื่อแหล่งภาพ</span><input name="name" class="input" maxlength="32" value="SRT ${n}"></label>
         <div class="field"><span>วิธีรับสัญญาณ</span>
           <div class="seg srt-mode"><button type="button" data-value="listener" class="is-active">รอรับ (ผู้ส่งเชื่อมต่อเข้ามา)</button><button type="button" data-value="caller">ดึงจาก SRT Server</button></div>
@@ -6705,7 +6705,8 @@
           </select></label>
         </div>`,
       actions: [{ label: 'ยกเลิก' }, { label: 'เพิ่มแหล่งภาพ', primary: true, value: 'add' }],
-      onOpen(modal) {
+      onOpen(modal, close) {
+        bindNetTabs(modal, close, 'srt');
         let mode = 'listener';
         const seg = $('.srt-mode', modal);
         seg.addEventListener('click', e => {
@@ -6873,6 +6874,19 @@
       ws.onerror = () => done({ list: [], error: 'เชื่อมต่อ Gateway ไม่ได้' });
     });
   }
+  // แท็บสลับชนิดแหล่งภาพเครือข่าย (ตอนเพิ่มใหม่): NDI / OMT · SRT · RTMP · RTSP
+  const NET_TABS = [['ndi', 'NDI / OMT'], ['srt', 'SRT'], ['rtmp', 'RTMP (รับเข้า)'], ['rtsp', 'RTSP (กล้อง IP)']];
+  const netTabsHtml = cur => `<nav class="dg-tabs net-tabs" role="tablist">${NET_TABS.map(([k, n]) => `<button type="button" role="tab" class="dg-tab ${k === cur ? 'is-on' : ''}" aria-selected="${k === cur}" data-net-tab="${k}">${n}</button>`).join('')}</nav>`;
+  function bindNetTabs(modal, close, cur) {
+    modal.classList.add('net-modal');
+    $('.net-tabs', modal)?.addEventListener('click', e => {
+      const k = e.target.closest('[data-net-tab]')?.dataset.netTab;
+      if (!k || k === cur) return;
+      close();
+      setTimeout(() => ({ ndi: () => openNetVideoDialog(), srt: openSrtInputDialog, rtmp: openRtmpInputDialog, rtsp: () => openRtspDialog() })[k](), 0);
+    });
+  }
+
   async function openNetVideoDialog(proto = store.get('net-proto', 'ndi'), inp = null) {
     const gwErr = gatewayProblem();
     if (gwErr) { toast(`${gwErr} — NDI / OMT ต้องใช้ Stream Gateway ในแอปเดสก์ท็อป`, 'warn'); openSettings('stream'); return; }
@@ -6880,7 +6894,7 @@
     const cur = inp ? inp.srt.source : '';
     const r = await dialog({
       title: inp ? `แหล่งสัญญาณ — ${inp.name}` : 'รับภาพ NDI® / OMT',
-      body: `
+      body: `${!inp ? netTabsHtml('ndi') : ''}
         <div class="seg net-proto">${Object.entries(NET_PROTOS).map(([k, l]) => `<button type="button" data-value="${k}" class="${k === proto ? 'is-active' : ''}">${l}</button>`).join('')}</div>
         <div class="field"><span>แหล่งในวง LAN <button type="button" class="btn btn-sm net-refresh">ค้นหาใหม่</button></span>
           <div class="net-list" role="listbox"><p class="note">กำลังค้นหา…</p></div></div>
@@ -6888,7 +6902,8 @@
         <label class="field"><span>ชื่อแหล่งภาพ</span><input name="name" class="input" maxlength="32" value="${esc(inp ? inp.name : '')}" placeholder="ตั้งจากชื่อแหล่งให้อัตโนมัติ"></label>
         <p class="note net-help"></p>`,
       actions: [{ label: 'ยกเลิก' }, { label: inp ? 'บันทึก' : 'เพิ่มแหล่งภาพ', primary: true, value: 'ok' }],
-      onOpen(modal) {
+      onOpen(modal, close) {
+        bindNetTabs(modal, close, 'ndi');
         const f = $('form', modal), box = $('.net-list', modal), help = $('.net-help', modal);
         modal.dataset.proto = proto;
         const HELP = {
@@ -6903,7 +6918,8 @@
           const { list, error } = await listNetSources(modal.dataset.proto);
           if (my !== seq || !box.isConnected) return;
           if (error) { box.innerHTML = `<p class="note net-err">${esc(error)}</p>`; return; }
-          box.innerHTML = list.length ? list.map(n => `<button type="button" class="net-src ${n === f.source.value ? 'is-active' : ''}" data-src="${esc(n)}">${icon('monitor')}<span>${esc(n)}</span></button>`).join('')
+          // "เครื่อง (ชื่อ)" → แสดงชื่อแหล่งตัวใหญ่ และชื่อเครื่องตัวเล็ก
+          box.innerHTML = list.length ? list.map(n => { const m = /^(.*?)\s*\(([^)]+)\)\s*$/.exec(n) || [, '', n]; return `<button type="button" class="net-src ${n === f.source.value ? 'is-active' : ''}" data-src="${esc(n)}"><span class="net-thumb">${icon('monitor')}</span><span class="net-txt"><b>${esc(m[2])}</b><small>${esc(m[1] || 'ในวง LAN')}</small></span><em class="net-chip">${esc(NET_PROTOS[modal.dataset.proto] || '')}</em></button>`; }).join('')
             : '<p class="note">ยังไม่พบแหล่งในวง LAN — ตรวจว่าเครื่องส่งเปิดอยู่และอยู่วงเดียวกัน แล้วกด “ค้นหาใหม่”</p>';
         };
         $('.net-proto', modal).addEventListener('click', e => {
@@ -6976,7 +6992,7 @@
     const n = inputs.filter(i => i.type === 'srt' && i.srt.mode === 'rtsp').length + 1;
     const r = await dialog({
       title: target ? `กล้อง IP — ${target.name}` : 'เพิ่มกล้อง IP (RTSP)',
-      body: `
+      body: `${!target ? netTabsHtml('rtsp') : ''}
         <label class="field"><span>ชื่อแหล่งภาพ</span><input name="name" class="input" maxlength="32" value="${esc(target ? target.name : `IP CAM ${n}`)}"></label>
         <label class="field"><span>ยี่ห้อกล้อง</span><select name="brand" class="select">${Object.entries(RTSP_BRANDS).map(([k, b]) => `<option value="${k}" ${k === (target ? 'custom' : 'hikvision') ? 'selected' : ''}>${b[0]}</option>`).join('')}</select></label>
         <div class="rtsp-parts">
@@ -6992,7 +7008,8 @@
         </div>
         <p class="note">กล้องต้องอยู่ในวงเครือข่ายเดียวกับ Gateway (แอปเดสก์ท็อป = เครื่องนี้) · ใช้ภาพหลัก (main stream) ได้ถึง 4K · กล้อง H.265 แปลงเป็น H.264 ให้อัตโนมัติ (ใช้ CPU เพิ่ม — ตั้งกล้องเป็น H.264 จะเบากว่า)${settings.rememberKey ? '' : '<br>รหัสกล้องไม่ถูกจำหลังปิดหน้า (เหมือน Stream Key) — เปิด “จำ Stream Key” ในตั้งค่าถ้าต้องการให้จำ'}</p>`,
       actions: [{ label: 'ยกเลิก' }, { label: target ? 'บันทึก' : 'เพิ่มกล้อง', primary: true, value: 'add' }],
-      onOpen(modal) {
+      onOpen(modal, close) {
+        bindNetTabs(modal, close, 'rtsp');
         const f = $('form', modal);
         const build = () => {
           const b = RTSP_BRANDS[f.brand.value];
@@ -7035,7 +7052,7 @@
     const n = inputs.filter(i => i.type === 'srt' && i.srt.mode === 'rtmp').length + 1;
     const r = await dialog({
       title: 'รับภาพ RTMP (OBS / vMix / มือถือ / โดรน)',
-      body: `
+      body: `${netTabsHtml('rtmp')}
         <label class="field"><span>ชื่อแหล่งภาพ</span><input name="name" class="input" maxlength="32" value="RTMP ${n}"></label>
         <label class="field"><span>พอร์ต TCP บน Gateway</span><input name="port" class="input mono" type="number" min="1935" max="1944" value="${port}"></label>
         <p class="note">กดเพิ่มแล้วจะได้ที่อยู่เซิร์ฟเวอร์และ Stream key สำหรับใส่ในโปรแกรม/อุปกรณ์ที่ส่งภาพ (OBS, vMix, แอป Larix / Prism บนมือถือ, โดรน DJI, encoder)</p>`,
@@ -7069,7 +7086,8 @@
         <label class="field"><span>URL เต็ม (สำหรับแอปที่มีช่องเดียว เช่น Larix)</span><div class="link-row"><input class="input mono" readonly value="${esc(full)}">${copyBtn(full)}</div></label>
         <p class="note">อุปกรณ์ที่ส่งต้องเข้าถึงเครื่อง Gateway ได้ (วง Wi-Fi/LAN เดียวกัน หรือเซิร์ฟเวอร์ที่เปิดพอร์ต <b>TCP ${c.port}</b>) · ${/^(127\.|localhost)/.test(host) ? '<b>ยังไม่รู้ที่อยู่ในวง LAN ของเครื่องนี้ — ใช้ IP ของเครื่อง (ดูในการตั้งค่าเครือข่าย) แทน 127.0.0.1</b> · ' : ''}Windows อาจถามอนุญาตไฟร์วอลล์ครั้งแรก ให้กดอนุญาต · ผู้ส่งที่ใช้ key อื่นจะถูกปฏิเสธ · แนะนำ H.264 + AAC, keyframe ทุก 2 วินาที</p>`,
       actions: [{ label: 'ปิด', primary: true }],
-      onOpen(modal) {
+      onOpen(modal, close) {
+        bindNetTabs(modal, close, 'rtmp');
         $$('.rtmp-copy', modal).forEach(b => b.addEventListener('click', () => {
           (navigator.clipboard ? navigator.clipboard.writeText(b.dataset.copy) : Promise.reject())
             .then(() => toast('คัดลอกแล้ว', 'success'))
