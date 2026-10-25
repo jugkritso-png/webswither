@@ -7,7 +7,7 @@
 
   const { $, $$, clamp, uid, pad2, esc, icon, fmtDuration, fmtBytes, stamp, easeInOut, easeOut, isIOS, FONT, MONO,
     downloadBlob, store, toast, keepScreenOn, b64url, unb64url, peerOptionsFromSig, initCaller,
-    fillBlack, drawFit, fitFont, drawBars, drawSlate, drawClock, RELINK_HINT, drawNoSignal, drawTitle, TITLE_STYLES, drawTitleInput,
+    fillBlack, drawFit, fitFont, drawBars, drawSlate, drawClock, RELINK_HINT, drawNoSignal, drawTitle, TITLE_STYLES, drawTitleInput, titleAnim,
     createKeyer, createGpu, idb, canUseOpfs, mediaStore, createMultiview, SHORTCUTS, MANUAL,
     TIMER_MODES, TIMER_STYLES, timerText, drawTimer, drawScore, TICKER_BAR, drawTickerBar, drawTicker, sheetCsvUrl, parseCsv, desktop, chat: chatLib } = window.WebMix;
   /* ====================================================================== */
@@ -776,7 +776,7 @@
       case 'slate': case 'clock':
         return { e: genTexture('g:' + inp.id, `${inp.text}|${sec}`, GW, GH, (c, w, h) => drawSource(c, inp, w, h)), full: true };
       case 'title':
-        return { e: genTexture('g:' + inp.id, JSON.stringify(inp.title), W, H, (c, w, h) => drawTitleInput(c, inp, w, h)), full: true, under: transparent ? null : [0, 0, 0, 1] };
+        return { e: genTexture('g:' + inp.id, JSON.stringify(inp.title) + (inp.title?.anim ? titleAnim(inp).toFixed(2) : ''), W, H, (c, w, h) => drawTitleInput(c, inp, w, h)), full: true, under: transparent ? null : [0, 0, 0, 1] };
       case 'timer': {
         // วาดใหม่เมื่อตัวเลขเปลี่ยน (ทุกวินาที) หรือช่วงกะพริบตอนหมดเวลา
         const tt = timerText(inp.timer), stamp = `${tt.text}|${tt.done ? Math.floor(Date.now() / 500) % 2 : ''}|${JSON.stringify(inp.timer)}`;
@@ -3142,8 +3142,20 @@
     toggleInputOverlay(id, i);
   }
 
+  // ป้ายชื่อที่เพิ่งขึ้นจอ: เริ่มภาพเคลื่อนไหว และตั้งเวลาซ่อนเอง (ถ้าตั้งไว้)
+  function titleOnAir(c, i) {
+    const inp = byId(c.inputId), now = c.on && inp && inp.type === 'title' ? inp.id : null;
+    if (now === c.titleOn) return;
+    c.titleOn = now;
+    clearTimeout(c.hideTimer);
+    if (!now) return;
+    inp.shownAt = performance.now();
+    const sec = inp.title?.autoHide;
+    if (sec > 0) c.hideTimer = setTimeout(() => { if (ovl[i].on && ovl[i].inputId === now) setChannel(i, false); }, sec * 1000);
+  }
   function updateOverlayUI() {
     ovl.forEach((c, i) => {
+      titleOnAir(c, i);
       const inp = byId(c.inputId);
       const key = $(`.key-ovl[data-ovl="${i}"]`);
       if (key) {
@@ -4009,24 +4021,137 @@
     openTitleDialog(inp);
     return inp;
   }
+  const TITLE_SIZES = [[0.8, 'เล็ก'], [1, 'ปกติ'], [1.2, 'ใหญ่'], [1.4, 'ใหญ่มาก']];
+  const TITLE_POS = [['left', 'ล่างซ้าย'], ['center', 'ล่างกลาง'], ['right', 'ล่างขวา']];
+  const TITLE_HIDE = [[0, 'ไม่ซ่อนเอง'], [5, '5 วินาที'], [8, '8 วินาที'], [12, '12 วินาที'], [20, '20 วินาที']];
+  // ตัวช่วยอ่านค่าป้ายจากข้อมูลที่ไม่น่าเชื่อถือ (โชว์ที่โหลด / รีโมต)
+  const cleanTitle = (t = {}) => ({ headline: String(t.headline || '').slice(0, 80), subtitle: String(t.subtitle || '').slice(0, 120),
+    color: TITLE_COLORS.includes(t.color) ? t.color : TITLE_COLORS[0], style: TITLE_STYLES[t.style] ? t.style : 'lower',
+    size: TITLE_SIZES.some(([v]) => v === +t.size) ? +t.size : 1, pos: TITLE_POS.some(([v]) => v === t.pos) ? t.pos : 'left',
+    autoHide: TITLE_HIDE.some(([v]) => v === +t.autoHide) ? +t.autoHide : 0, anim: !!t.anim });
+
+  // แก้ป้ายชื่อ: ตัวอย่างบนภาพ Program จริง · สไตล์ · สี · ขนาด / ตำแหน่ง · ซ่อนเอง · ภาพเคลื่อนไหว · รายชื่อจาก Google Sheets
   async function openTitleDialog(inp) {
-    const t = inp.title || (inp.title = { headline: '', subtitle: '', color: TITLE_COLORS[0], style: 'lower' });
+    const t = inp.title = cleanTitle(inp.title || {});
+    const draft = { ...t };
+    const d = inp.data;
+    const ovlOf = () => ovl.findIndex(c => c.inputId === inp.id && c.on);
     const result = await dialog({
-      title: 'แก้ไข Title',
-      body: `
-        <label class="field"><span>ชื่อแหล่งภาพ</span><input name="name" class="input" maxlength="40" value="${esc(inp.name)}"></label>
-        <label class="field"><span>รูปแบบ</span><select name="style" class="select">${Object.entries(TITLE_STYLES).map(([k, v]) => `<option value="${k}" ${k === t.style ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
-        <label class="field"><span>ข้อความหลัก</span><input name="headline" class="input" maxlength="80" value="${esc(t.headline)}"></label>
-        <label class="field"><span>ข้อความรอง</span><input name="subtitle" class="input" maxlength="120" value="${esc(t.subtitle)}"></label>
-        <label class="field"><span>สี</span><select name="color" class="select">${TITLE_COLORS.map(c => `<option value="${c}" ${c === t.color ? 'selected' : ''}>${c}</option>`).join('')}</select></label>
-        ${dataFields(inp, 'คอลัมน์ A = ข้อความหลัก, B = ข้อความรอง · แต่ละแถว = ป้ายหนึ่งชุด (กด ‹ › บนการ์ดเพื่อเปลี่ยนแถว)')}
-        <p class="note">พื้นหลังโปร่งใส — กดปุ่ม 1–8 ใต้การ์ดเพื่อซ้อนบน Program (แก้ข้อความแล้วบนจอเปลี่ยนทันที)</p>`,
-      actions: [{ label: 'ยกเลิก' }, { label: 'บันทึก', primary: true, value: 'save' }]
+      title: 'แก้ป้ายชื่อ',
+      wide: true,
+      body: `<div class="tt-wrap">
+        <div class="tt-left">
+          <div class="tt-prev"><canvas width="960" height="540" aria-label="ตัวอย่างป้ายบนภาพ Program"></canvas></div>
+          <section class="tt-card">
+            <div class="tt-h"><h3>ข้อมูลจาก Google Sheets</h3>${d && d.url ? `<span class="tt-chip ${d.error ? 'bad' : 'ok'}">${d.error ? esc(d.error) : 'ซิงก์ทุก 10 วิ'}</span>` : ''}</div>
+            ${dataFields(inp, 'คอลัมน์ A = ข้อความหลัก, B = ข้อความรอง · แตะแถวเพื่อขึ้นป้ายคนนั้น')}
+            ${d && d.rows && d.rows.length ? `<div class="tt-rows">${d.rows.slice(0, 50).map((r, i) => `<button type="button" class="tt-row ${i === d.row ? 'is-on' : ''}" data-row="${i}"><span class="mono">${i + 1}</span><b>${esc(r[0] || '')}</b><span>${esc(r[1] || '')}</span>${i === d.row ? '<em>กำลังใช้</em>' : ''}</button>`).join('')}</div>` : ''}
+          </section>
+        </div>
+        <div class="tt-right">
+          <section class="tt-card">
+            <div class="tt-h"><h3>ข้อความ</h3></div>
+            <label class="field"><span>ชื่อแหล่งภาพ</span><input name="name" class="input" maxlength="40" value="${esc(inp.name)}"></label>
+            <div class="tt-two">
+              <label class="field"><span>บรรทัด 1 (ข้อความหลัก)</span><input name="headline" class="input" maxlength="80" value="${esc(t.headline)}"></label>
+              <label class="field"><span>บรรทัด 2 (ข้อความรอง)</span><input name="subtitle" class="input" maxlength="120" value="${esc(t.subtitle)}"></label>
+            </div>
+          </section>
+          <section class="tt-card">
+            <div class="tt-h"><h3>สไตล์</h3></div>
+            <div class="tt-styles">${Object.entries(TITLE_STYLES).map(([k, v]) => `<label class="tt-style"><input type="radio" name="style" value="${k}" ${k === t.style ? 'checked' : ''}><canvas width="192" height="108" data-style="${k}"></canvas><span>${v}</span></label>`).join('')}</div>
+          </section>
+          <section class="tt-card">
+            <div class="tt-h"><h3>สีและการแสดง</h3></div>
+            <div class="tt-colors">${TITLE_COLORS.map(c => `<label class="tt-color" title="${c}"><input type="radio" name="color" value="${c}" ${c === t.color ? 'checked' : ''}><i style="background:${c}"></i></label>`).join('')}</div>
+            <div class="tt-three">
+              <label class="field"><span>ขนาด</span><select name="size" class="select">${TITLE_SIZES.map(([v, n]) => `<option value="${v}" ${v === t.size ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
+              <label class="field"><span>ตำแหน่ง</span><select name="pos" class="select">${TITLE_POS.map(([v, n]) => `<option value="${v}" ${v === t.pos ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
+              <label class="field"><span>ซ่อนเองหลังขึ้นจอ</span><select name="autoHide" class="select">${TITLE_HIDE.map(([v, n]) => `<option value="${v}" ${v === t.autoHide ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
+            </div>
+            <label class="check"><input type="checkbox" name="anim" ${t.anim ? 'checked' : ''}> ภาพเคลื่อนไหวตอนขึ้นจอ (เลื่อนเข้า)</label>
+            <p class="note">ขนาดและตำแหน่งใช้กับป้ายชื่อล่าง · พื้นหลังโปร่งใส ซ้อนบน Program ด้วยปุ่ม 1–8 ใต้การ์ด</p>
+          </section>
+        </div>
+      </div>`,
+      actions: [{ label: 'บันทึกเป็นพรีเซ็ต', value: 'preset' }, { label: 'ดูใน Preview', value: 'pvw' }, { label: ovlOf() >= 0 ? 'ซ่อนจาก Program' : 'แสดงบน Program', value: 'pgm', danger: true }, { label: 'ยกเลิก' }, { label: 'บันทึก', primary: true, value: 'save' }],
+      onOpen(modal) {
+        modal.classList.add('tt-modal');
+        const f = $('form', modal).elements;
+        const prev = $('.tt-prev canvas', modal), pc = prev.getContext('2d');
+        const read = () => Object.assign(draft, cleanTitle({ headline: f.headline.value.trim(), subtitle: f.subtitle.value.trim(), color: f.color.value, style: f.style.value,
+          size: f.size.value, pos: f.pos.value, autoHide: f.autoHide.value, anim: f.anim.checked }));
+        const fake = { title: draft };
+        const paint = () => {
+          if (!modal.isConnected) return;
+          const src = $('#pgm-canvas');
+          pc.fillStyle = '#23324a'; pc.fillRect(0, 0, 960, 540);
+          try { if (src) pc.drawImage(src, 0, 0, 960, 540); } catch (e) {}
+          drawTitleInput(pc, fake, 960, 540);
+        };
+        const paintStyles = () => {
+          for (const c of $$('[data-style]', modal)) {
+            // ซูมเข้าไปตรงที่ป้ายของแต่ละสไตล์อยู่ ให้อ่านออกในช่องเล็ก
+            const x = c.getContext('2d'), st = c.dataset.style;
+            const [ox, oy] = st === 'top' ? [0, 0] : st === 'live' ? [96, 0] : st === 'center' ? [48, 27] : [0, 54];
+            x.setTransform(1, 0, 0, 1, 0, 0);
+            x.fillStyle = '#0b0d12'; x.fillRect(0, 0, 192, 108);
+            x.setTransform(2, 0, 0, 2, -ox * 2, -oy * 2);
+            drawTitleInput(x, { title: { ...draft, style: st, size: 1, pos: 'left', anim: false, headline: draft.headline || 'ชื่อ นามสกุล', subtitle: draft.subtitle || 'ตำแหน่ง' } }, 192, 108);
+            x.setTransform(1, 0, 0, 1, 0, 0);
+          }
+        };
+        read(); paint(); paintStyles();
+        const timer = setInterval(() => { if (!modal.isConnected) clearInterval(timer); else paint(); }, 250);
+        modal.addEventListener('input', () => { read(); paint(); paintStyles(); });
+        modal.addEventListener('change', () => { read(); paint(); });
+        $('.tt-rows', modal)?.addEventListener('click', e => {
+          const b = e.target.closest('[data-row]');
+          if (!b || !inp.data) return;
+          inp.data.row = +b.dataset.row;
+          dataSources.apply(inp);
+          f.headline.value = inp.title.headline; f.subtitle.value = inp.title.subtitle;
+          for (const r of $$('.tt-row', modal)) { r.classList.toggle('is-on', r === b); r.querySelector('em')?.remove(); }
+          b.insertAdjacentHTML('beforeend', '<em>กำลังใช้</em>');
+          read(); paint();
+        });
+        // ปุ่มพรีเซ็ต / Preview / Program ทำงานโดยไม่ปิดหน้าต่าง (บันทึกค่าที่แก้ก่อน)
+        const commit = () => { inp.name = f.name.value.trim() || inp.name; Object.assign(inp.title, read()); renderInputs(); refreshSourceSelects(); };
+        for (const btn of $$('.modal-foot .btn', modal)) {
+          const label = btn.textContent;
+          if (!['บันทึกเป็นพรีเซ็ต', 'ดูใน Preview', 'แสดงบน Program', 'ซ่อนจาก Program'].includes(label)) continue;
+          const clone = btn.cloneNode(true);
+          btn.replaceWith(clone);
+          clone.addEventListener('click', () => {
+            commit();
+            if (label === 'บันทึกเป็นพรีเซ็ต') {
+              const { headline, subtitle, color } = inp.title;
+              if (!headline && !subtitle) { toast('ใส่ข้อความก่อนบันทึกพรีเซ็ต', 'warn'); return; }
+              if (!settings.titlePresets.some(p => p.headline === headline && p.subtitle === subtitle && p.color === color) && settings.titlePresets.length < 24) {
+                settings.titlePresets.push({ headline, subtitle, color }); saveSettings(); renderTitlePresets();
+              }
+              toast('บันทึกพรีเซ็ตป้ายชื่อแล้ว (ดูที่แท็บ “ป้ายชื่อ”)', 'success');
+            } else if (label === 'ดูใน Preview') { if (inp.id !== state.programId) setPreview(inp.id); toast('ป้ายอยู่ใน Preview แล้ว', 'success'); }
+            else {
+              const on = ovlOf();
+              if (on >= 0) { setChannel(on, false); clone.textContent = 'แสดงบน Program'; }
+              else {
+                const free = ovl.findIndex(c => !c.on && (!c.inputId || c.inputId === inp.id));
+                const i = free >= 0 ? free : 0;
+                audio.ensure();
+                toggleInputOverlay(inp.id, i);
+                clone.textContent = 'ซ่อนจาก Program';
+              }
+            }
+          });
+        }
+      }
     });
     if (result?.value !== 'save') return;
     const f = result.form;
     inp.name = f.name.value.trim() || inp.name;
-    inp.title = { headline: f.headline.value.trim(), subtitle: f.subtitle.value.trim(), color: TITLE_COLORS.includes(f.color.value) ? f.color.value : TITLE_COLORS[0], style: TITLE_STYLES[f.style.value] ? f.style.value : 'lower' };
+    Object.assign(inp.title, cleanTitle({ headline: f.headline.value.trim(), subtitle: f.subtitle.value.trim(), color: f.color.value, style: f.style.value,
+      size: f.size.value, pos: f.pos.value, autoHide: f.autoHide.value, anim: f.anim.checked }));
     readDataFields(inp, f);
     renderInputs();
     refreshSourceSelects();
@@ -9010,9 +9135,7 @@ onmessage = async e => {
           break;
         }
         case 'title': {
-          const t = raw.title || {};
-          addInput({ type: 'title', ...base, title: { headline: String(t.headline || '').slice(0, 80), subtitle: String(t.subtitle || '').slice(0, 120),
-            color: TITLE_COLORS.includes(t.color) ? t.color : TITLE_COLORS[0], style: TITLE_STYLES[t.style] ? t.style : 'lower' } });
+          addInput({ type: 'title', ...base, title: cleanTitle(raw.title || {}) });
           break;
         }
         case 'media': case 'image': {

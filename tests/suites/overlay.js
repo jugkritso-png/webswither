@@ -94,7 +94,7 @@ const results = []; const ok = (n, c, x = '') => results.push(`${c ? 'PASS' : 'F
 
   // --- editing the title updates on air
   await card(title).hover(); await card(title).locator('[data-card=rename]').click();
-  await p.waitForSelector('.modal [name=style]'); await p.selectOption('.modal [name=style]', 'live'); await p.click('.modal-foot .btn-primary');
+  await p.waitForSelector('.modal [name=style]'); await p.check('.modal [name=style][value=live]'); await p.click('.modal-foot .btn-primary');
   await p.waitForTimeout(200);
   ok('title style change shows immediately (LIVE badge top-right)', !near(await pgm(0.93, 0.08), [0, 0, 0], 20) && near(await titlePx(), [0, 0, 0], 10), JSON.stringify(await pgm(0.93, 0.08)));
 

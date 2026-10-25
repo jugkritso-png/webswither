@@ -143,11 +143,70 @@
     ctx.restore();
   }
 
-  const TITLE_STYLES = { lower: 'ป้ายชื่อล่าง (Lower third)', top: 'แถบหัวข้อด้านบน', live: 'ป้าย LIVE มุมขวาบน', center: 'ข้อความกลางจอ' };
+  const TITLE_STYLES = { lower: 'ข่าว', plain: 'เรียบ', minimal: 'มินิมอล', pill: 'กล่องมน', sport: 'กีฬา', gradient: 'ไล่สี', top: 'แถบด้านบน', live: 'ป้าย LIVE', center: 'กลางจอ' };
+  const LOWER_STYLES = ['plain', 'minimal', 'pill', 'sport', 'gradient'];
+  const rrect = (ctx, x, y, w, h, r) => { ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r); ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath(); };
 
+  // ป้ายชื่อล่างแบบอื่น ๆ: ขนาด (t.size) · ตำแหน่ง ซ้าย / กลาง / ขวา (t.pos) · a = ความคืบหน้าภาพเคลื่อนไหวตอนเข้า (0–1)
+  function drawLowerStyled(ctx, w, h, t, a) {
+    const s = h / 720 * (t.size || 1), e = easeOut(a);
+    const head = t.headline || '', sub = t.subtitle || '', col = t.color || '#ef4444';
+    ctx.font = `800 ${30 * s}px ${FONT}`;
+    const hw = head ? ctx.measureText(head).width + 40 * s : 0;
+    ctx.font = `500 ${22 * s}px ${FONT}`;
+    const sw = sub ? ctx.measureText(sub).width + 40 * s : 0;
+    const boxW = Math.min(w * 0.86, Math.max(hw, sw)), hh = head ? 52 * s : 0, sh = sub ? 42 * s : 0;
+    const x = t.pos === 'center' ? (w - boxW) / 2 : t.pos === 'right' ? w * 0.94 - boxW : w * 0.06;
+    const y = h * 0.9 - hh - sh;
+    ctx.globalAlpha = Math.min(1, a * 1.6);
+    ctx.save();
+    ctx.beginPath();
+    const cw = (boxW + 30 * s) * e;
+    ctx.rect(t.pos === 'right' ? x + boxW + 15 * s - cw : t.pos === 'center' ? x + (boxW - cw) / 2 : x - 15 * s, y - 15 * s, cw + 15 * s, hh + sh + 30 * s);
+    ctx.clip();
+    const light = col === '#e5e7eb' || col === '#ffffff';
+    const textIn = (str, weight, size, fill, bx, by, bw) => { ctx.fillStyle = fill; fitFont(ctx, str, weight, size, FONT, bw - 40 * s); ctx.fillText(str, bx + 20 * s, by); };
+    if (t.style === 'plain') {
+      if (head) { ctx.fillStyle = '#ffffff'; ctx.fillRect(x, y, Math.min(hw, boxW), hh); textIn(head, 800, 30 * s, '#0b0d12', x, y + hh / 2 + 1, boxW); }
+      if (sub) { ctx.fillStyle = col; ctx.fillRect(x, y + hh, Math.min(sw, boxW), sh); textIn(sub, 500, 22 * s, light ? '#0b0d12' : '#ffffff', x, y + hh + sh / 2 + 1, boxW); }
+    } else if (t.style === 'minimal') {
+      ctx.shadowColor = 'rgba(0,0,0,.75)'; ctx.shadowBlur = 12 * s;
+      if (head) { textIn(head, 800, 32 * s, '#ffffff', x - 20 * s, y + hh / 2, boxW + 40 * s); }
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = col; ctx.fillRect(x, y + hh - 2 * s, Math.min(Math.max(hw, sw) - 40 * s, boxW), 4 * s);
+      ctx.shadowBlur = 12 * s;
+      if (sub) textIn(sub, 500, 22 * s, '#e7eaf0', x - 20 * s, y + hh + sh / 2 + 2 * s, boxW + 40 * s);
+    } else if (t.style === 'pill') {
+      ctx.fillStyle = 'rgba(10,13,20,.82)';
+      rrect(ctx, x, y, boxW, hh + sh, Math.min(28 * s, (hh + sh) / 2)); ctx.fill();
+      ctx.fillStyle = col; ctx.beginPath(); ctx.arc(x + 20 * s, y + (hh || sh) / 2 + (hh ? 0 : 0), 6 * s, 0, Math.PI * 2); ctx.fill();
+      if (head) textIn(head, 800, 28 * s, '#ffffff', x + 14 * s, y + hh / 2 + 1, boxW - 14 * s);
+      if (sub) textIn(sub, 500, 21 * s, light ? '#e7eaf0' : col, x + 14 * s, y + hh + sh / 2 - (hh ? 4 * s : 0), boxW - 14 * s);
+    } else if (t.style === 'sport') {
+      ctx.save();
+      ctx.translate(x, y); ctx.transform(1, 0, -0.18, 1, 0, 0);
+      if (head) { ctx.fillStyle = col; ctx.fillRect(0, 0, Math.min(hw, boxW), hh); }
+      if (sub) { ctx.fillStyle = '#0b0d12'; ctx.fillRect(0, hh, Math.min(sw, boxW), sh); }
+      ctx.restore();
+      if (head) textIn(head.toUpperCase(), 800, 30 * s, light ? '#0b0d12' : '#ffffff', x, y + hh / 2 + 1, boxW);
+      if (sub) textIn(sub, 600, 21 * s, '#e7eaf0', x - 8 * s, y + hh + sh / 2 + 1, boxW);
+    } else {
+      // ไล่สี: สีที่เลือก → ชมพูม่วง
+      const g = ctx.createLinearGradient(x, 0, x + boxW, 0);
+      g.addColorStop(0, col); g.addColorStop(1, '#db2777');
+      if (head) { ctx.fillStyle = g; rrect(ctx, x, y, Math.min(hw, boxW), hh, 6 * s); ctx.fill(); textIn(head, 800, 30 * s, '#ffffff', x, y + hh / 2 + 1, boxW); }
+      if (sub) { ctx.fillStyle = 'rgba(10,13,20,.85)'; ctx.fillRect(x + 6 * s, y + hh, Math.min(sw, boxW) - 6 * s, sh); textIn(sub, 500, 22 * s, '#e7eaf0', x, y + hh + sh / 2 + 1, boxW); }
+    }
+    ctx.restore();
+    ctx.globalAlpha = 1;
+  }
+
+  // ความคืบหน้าภาพเคลื่อนไหวตอนป้ายขึ้นจอ (t.anim) — inp.shownAt ตั้งเมื่อเปิด Overlay
+  const titleAnim = inp => { const t = inp.title || {}; return t.anim && inp.shownAt ? Math.min(1, (performance.now() - inp.shownAt) / 450) : 1; };
   function drawTitleInput(ctx, inp, w, h) {
     const t = inp.title || {};
     const s = h / 720;
+    if (LOWER_STYLES.includes(t.style)) { ctx.save(); ctx.textBaseline = 'middle'; ctx.textAlign = 'left'; drawLowerStyled(ctx, w, h, t, titleAnim(inp)); ctx.restore(); return; }
     const dark = t.color === '#e5e7eb' ? '#0b0d12' : '#fff';
     ctx.save();
     ctx.textBaseline = 'middle';
@@ -181,10 +240,20 @@
       ctx.fillText(t.headline || '', w / 2, h * (t.subtitle ? 0.45 : 0.5));
       if (t.subtitle) { ctx.fillStyle = t.color || '#f5a524'; fitFont(ctx, t.subtitle, 600, 32 * s, FONT, w * 0.8); ctx.fillText(t.subtitle, w / 2, h * 0.57); }
     } else {
-      drawTitle(ctx, w, h, 1, { headline: t.headline || '', subtitle: t.subtitle || '', color: t.color || '#ef4444' });
+      // ข่าว (ค่าเดิม): ขนาดและตำแหน่งปรับได้
+      const sz = t.size || 1;
+      ctx.save();
+      if (sz !== 1 || (t.pos && t.pos !== 'left')) {
+        ctx.font = `800 ${30 * s * sz}px ${FONT}`;
+        const bw = Math.min(w * 0.82, Math.max(t.headline ? ctx.measureText(t.headline).width : 0, t.subtitle ? ctx.measureText(t.subtitle).width * 0.8 : 0) + 50 * s) * sz;
+        const x0 = w * 0.06, x1 = t.pos === 'center' ? (w - bw) / 2 : t.pos === 'right' ? w * 0.94 - bw : x0, y0 = h * 0.735;
+        ctx.translate(x1, y0); ctx.scale(sz, sz); ctx.translate(-x0, -y0 - (sz - 1) * 0);
+      }
+      drawTitle(ctx, w, h, titleAnim(inp), { headline: t.headline || '', subtitle: t.subtitle || '', color: t.color || '#ef4444' });
+      ctx.restore();
     }
     ctx.restore();
   }
 
-  Object.assign(WM, { fillBlack, drawFit, fitFont, drawBars, drawSlate, drawClock, RELINK_HINT, drawNoSignal, drawTitle, TITLE_STYLES, drawTitleInput });
+  Object.assign(WM, { fillBlack, drawFit, fitFont, drawBars, drawSlate, drawClock, RELINK_HINT, drawNoSignal, drawTitle, TITLE_STYLES, drawTitleInput, titleAnim });
 })(window.WebMix);
