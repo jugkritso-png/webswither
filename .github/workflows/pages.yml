@@ -32,6 +32,12 @@ jobs:
             sed -i -E "s#(src|href)=\"(assets/[^\"?]+\.(js|css))\"#\1=\"\2?v=$v\"#g" "_site/$page"
           done
           grep -c "?v=$v" _site/index.html _site/cg-studio.html
+          # รุ่นของหน้าเว็บ: หน้าที่เปิดค้างไว้เทียบกับ version.json แล้วแจ้งให้โหลดหน้าใหม่เมื่อมีการ deploy ใหม่
+          ver=$(node -p "require('./desktop/package.json').version")
+          sed -i "s#<meta charset=\"UTF-8\">#&\n  <meta name=\"webmix-build\" content=\"$v\">#" _site/index.html
+          grep -c "webmix-build" _site/index.html
+          printf '{"version":"%s","commit":"%s","date":"%s"}\n' "$ver" "$v" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > _site/version.json
+          cat _site/version.json
       - uses: actions/configure-pages@v6
       - uses: actions/upload-pages-artifact@v5
         with:

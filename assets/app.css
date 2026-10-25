@@ -2888,3 +2888,9 @@ button.stat-disk.bad { border-color: #E5484D; background: rgba(229,72,77,.12); }
 .nv-src-t b, .nv-src-t small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .nv-src-t small { color: var(--muted); font-size: 12px; font-family: var(--mono); }
 .nv-used { font-size: 12px; color: #7fd1a7; white-space: nowrap; }
 @media (max-width: 760px) { .nv-grid { grid-template-columns: 1fr; } }
+
+/* ---- จุดแจ้งเตือนเวอร์ชันใหม่บนปุ่มตั้งค่า ---- */
+[data-action=settings].has-update { position: relative; }
+[data-action=settings].has-update::after { content: ''; position: absolute; top: 5px; right: 5px; width: 8px; height: 8px; border-radius: 50%; background: #f0b44c; box-shadow: 0 0 0 2px var(--panel, #12161c); }
+.set-ver small { margin-left: 6px; color: var(--muted); font-size: 12px; }
+.up-apk { width: 100%; }

@@ -9692,14 +9692,18 @@ onmessage = async e => {
     return false;
   };
   async function checkAppUpdate(manual) {
-    if (!desktop) return;
+    if (!desktop) return checkWebUpdate(manual);
     const info = await desktop.ready;
     if (!info) return;
     try {
       if (desktop.mobile) {
         const r = await fetch('https://api.github.com/repos/jugkritso-png/webswither/releases/latest', { cache: 'no-store' });
-        const tag = r.ok ? (await r.json()).tag_name : '';
-        appUpdate.available = tag && newerVersion(tag, info.version) ? { version: tag.replace(/^v/, '') } : null;
+        if (!r.ok) throw new Error(`GitHub ${r.status}`);
+        const rel = await r.json(), tag = rel.tag_name || '';
+        // APK ตรงสถาปัตยกรรมของเครื่อง (ARM64 = มือถือทั่วไป · x86_64 = Chromebook / emulator)
+        const abi = /x86_64|amd64/i.test(info.arch || '') ? 'x86_64' : 'arm64';
+        const apk = (rel.assets || []).find(a => a.name.endsWith(`_android-${abi}.apk`));
+        appUpdate.available = tag && newerVersion(tag, info.version) ? { version: tag.replace(/^v/, ''), notes: rel.body || '', apk: apk?.browser_download_url || RELEASES_URL, size: apk?.size || 0 } : null;
       } else {
         appUpdate.available = await desktop.updateCheck();
       }
@@ -9711,12 +9715,69 @@ onmessage = async e => {
     if (appUpdate.available) {
       const v = appUpdate.available.version;
       toast(desktop.mobile ? `มี WebMix Pro ${v} แล้ว — ดาวน์โหลด APK ใหม่ติดตั้งทับได้เลย (ข้อมูลไม่หาย)` : `มี WebMix Pro ${v} แล้ว — อัปเดตได้ในคลิกเดียว แอปจะเปิดใหม่เอง`, 'info', 20000,
-        desktop.mobile ? { label: 'คัดลอกลิงก์', run: () => copyText(RELEASES_URL) } : { label: 'ดูรายละเอียด', run: openUpdateDialog });
+        { label: 'ดูรายละเอียด', run: desktop.mobile ? openMobileUpdateDialog : openUpdateDialog });
     } else if (manual) toast(`เป็นเวอร์ชันล่าสุดแล้ว (${info.version})`, 'success');
     refreshAppVersion();
   }
+  // เวอร์ชันเว็บ: GitHub Pages เขียน version.json ทุกครั้งที่ deploy — เทียบกับรุ่นของหน้าที่เปิดอยู่ (meta webmix-build)
+  // หน้าที่เปิดค้างไว้นานจะรู้ว่ามีรุ่นใหม่ แล้วให้โหลดหน้าใหม่ (ไม่โหลดเองระหว่างไลฟ์/บันทึก)
+  const webBuild = document.querySelector('meta[name="webmix-build"]')?.content || '';
+  async function checkWebUpdate(manual) {
+    if (!/^https?:$/.test(location.protocol)) return;
+    if (!webBuild) { if (manual) toast('หน้านี้ไม่ได้มาจากเว็บหลัก (รันในเครื่อง) — ไม่มีข้อมูลเวอร์ชันให้ตรวจ', 'info'); return; }
+    let v;
+    try {
+      const r = await fetch(`version.json?t=${Date.now()}`, { cache: 'no-store' });
+      if (!r.ok) throw new Error(String(r.status));
+      v = await r.json();
+    } catch (e) {
+      if (manual) toast('ตรวจหาอัปเดตไม่ได้ (ต้องต่ออินเทอร์เน็ต)', 'warn');
+      return;
+    }
+    appUpdate.checkedAt = Date.now();
+    const fresh = v && v.commit && v.commit !== webBuild;
+    const was = appUpdate.web?.commit;
+    appUpdate.web = fresh ? { version: String(v.version || ''), commit: String(v.commit), date: v.date || '' } : null;
+    if (fresh && (manual || was !== v.commit)) {
+      const live = streamer.active || streamer.reconnecting || rec.active;
+      toast(live ? `มี WebMix เวอร์ชันใหม่ ${appUpdate.web.version} — โหลดหน้าใหม่หลังจบไลฟ์/บันทึก` : `มี WebMix เวอร์ชันใหม่ ${appUpdate.web.version} — โหลดหน้าใหม่เพื่อใช้งาน (โชว์ที่ทำไว้ไม่หาย)`,
+        'info', 15000, live ? null : { label: 'โหลดหน้าใหม่', run: reloadForUpdate });
+    } else if (!fresh && manual) toast('เป็นเวอร์ชันล่าสุดแล้ว', 'success');
+    refreshAppVersion();
+  }
+  function reloadForUpdate() {
+    if (streamer.active || streamer.reconnecting || rec.active) { toast('กำลังไลฟ์หรือบันทึกอยู่ — หยุดก่อนแล้วค่อยโหลดหน้าใหม่', 'warn', 7000); return; }
+    show.autosave(true);
+    location.reload();
+  }
+  // Android: มีอะไรใหม่ · ลิงก์ APK ตรงรุ่นเครื่อง (ติดตั้งทับได้ ข้อมูลไม่หาย)
+  function openMobileUpdateDialog() {
+    const u = appUpdate.available;
+    if (!u) return;
+    const lines = updateLines(u.notes).filter(([, l]) => !/^\|/.test(l) && !/^(การสตรีม|Linux|ติดตั้งแล้ว|รายละเอียด)/.test(l));
+    dialog({
+      title: 'อัปเดตแอป',
+      body: `<div class="up-wrap">
+        <div class="up-head"><span class="up-logo" aria-hidden="true"></span><div><b>WebMix Pro ${esc(u.version)}</b><small>เวอร์ชันปัจจุบัน ${esc(desktop.info?.version || '?')}</small></div></div>
+        ${lines.length ? `<section class="up-card"><h3>มีอะไรใหม่</h3><ul class="up-notes">${lines.map(([t, l]) => `<li><em class="${t === 'ใหม่' ? 'new' : 'fix'}">${t}</em><span>${esc(l)}</span></li>`).join('')}</ul></section>` : ''}
+        <section class="up-card"><h3>ติดตั้ง</h3>
+          <p class="note">1) คัดลอกลิงก์แล้วเปิดในเบราว์เซอร์ของเครื่อง · 2) แตะไฟล์ที่ดาวน์โหลดเพื่อติดตั้งทับ · โชว์และการตั้งค่าเดิมยังอยู่ครบ</p>
+          <input class="input mono up-apk" readonly value="${esc(u.apk || RELEASES_URL)}">${u.size ? `<small class="note">ขนาด ${fmtBytes(u.size)}</small>` : ''}</section>
+      </div>`,
+      actions: [{ label: 'ภายหลัง' }, { label: 'คัดลอกลิงก์ดาวน์โหลด', primary: true, value: 'copy' }],
+      onOpen(modal) { modal.classList.add('up-modal'); }
+    }).then(r => { if (r?.value === 'copy') copyText(u.apk || RELEASES_URL); });
+  }
+  // จุดแจ้งเตือนบนปุ่มตั้งค่าเมื่อมีเวอร์ชันใหม่
+  function paintUpdateDot() {
+    const b = $('[data-action=settings]');
+    if (!b) return;
+    const has = !!(appUpdate.available || appUpdate.web);
+    b.classList.toggle('has-update', has);
+    b.title = has ? `มีเวอร์ชันใหม่ ${(appUpdate.available || appUpdate.web).version} — ดูในตั้งค่า → ระบบและอัปเดต` : 'ตั้งค่าเอาต์พุตและการสตรีม';
+  }
   async function installAppUpdate() {
-    if (desktop.mobile) { copyText(RELEASES_URL); return; }
+    if (desktop.mobile) { openMobileUpdateDialog(); return; }
     if (streamer.active || streamer.reconnecting || rec.active) { toast('กำลังไลฟ์หรือบันทึกอยู่ — หยุดก่อนแล้วค่อยอัปเดต (แอปต้องปิดแล้วเปิดใหม่)', 'warn', 7000); return; }
     if (appUpdate.installing) return;
     appUpdate.installing = true;
@@ -9790,16 +9851,32 @@ onmessage = async e => {
       .catch(() => toast(text, 'info', 15000));
   }
   function refreshAppVersion() {
-    const el = $('.app-ver');
+    paintUpdateDot();
+    const el = desktop && $('.app-ver');
     if (el) el.outerHTML = desktopGatewayHtml().match(/<p class="note app-ver">[\s\S]*?<\/p>/)[0];
+    const row = $('.set-ver-row');
+    if (row) row.outerHTML = versionRowHtml();
   }
   document.addEventListener('click', e => {
     if (!e.target.closest('.app-update-btn')) return;
-    appUpdate.available ? (desktop.mobile ? installAppUpdate() : openUpdateDialog()) : checkAppUpdate(true);
+    if (appUpdate.web) reloadForUpdate();
+    else if (appUpdate.available) desktop.mobile ? openMobileUpdateDialog() : openUpdateDialog();
+    else checkAppUpdate(true);
   });
-  if (desktop) {
-    setTimeout(() => settings.autoUpdate !== false && checkAppUpdate(false), 20000);
-    setInterval(() => settings.autoUpdate !== false && checkAppUpdate(false), 6 * 3600 * 1000);
+  // แอป: ตอนเปิด 20 วินาทีและทุก 6 ชั่วโมง · เว็บ: ทุก 30 นาที และเมื่อกลับมาที่แท็บหลังห่างไปนาน
+  setTimeout(() => settings.autoUpdate !== false && checkAppUpdate(false), 20000);
+  setInterval(() => settings.autoUpdate !== false && checkAppUpdate(false), (desktop ? 6 * 3600 : 1800) * 1000);
+  if (!desktop) document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && settings.autoUpdate !== false && Date.now() - appUpdate.checkedAt > 10 * 60 * 1000) checkWebUpdate(false);
+  });
+  // แถวเวอร์ชันในตั้งค่า → ระบบและอัปเดต (แอปและเว็บ)
+  function versionRowHtml() {
+    const info = desktop?.info || {};
+    const nu = appUpdate.available || appUpdate.web;
+    const cur = desktop ? `WebMix Pro ${esc(info.version || '?')}` : `เวอร์ชันเว็บ${webBuild ? ` · รุ่น ${esc(webBuild)}` : ''}`;
+    const when = appUpdate.checkedAt ? ` · ตรวจล่าสุด ${new Date(appUpdate.checkedAt).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })}` : '';
+    const label = !nu ? 'ตรวจหาอัปเดต' : appUpdate.web ? 'โหลดหน้าใหม่' : desktop?.mobile ? 'ดาวน์โหลด' : 'อัปเดต';
+    return `<div class="set-row set-ver-row"><span>เวอร์ชัน</span><div><span class="set-ver">${cur}${nu ? ` <em>มี ${esc(nu.version || 'รุ่นใหม่')}</em>` : `<small>${when}</small>`}</span> <button type="button" class="btn btn-sm app-update-btn">${label}</button></div></div>`;
   }
 
   // หมวดตั้งค่าเพิ่ม: ทั่วไป · เสียง · ระบบและอัปเดต — เปลี่ยนแล้วมีผลทันที
@@ -9826,8 +9903,8 @@ onmessage = async e => {
       </div>
       <div class="modal-pane" data-mpane="system">
         <h3 class="set-h">ระบบและอัปเดต</h3>
-        ${row('เวอร์ชัน', desktop ? `<span class="set-ver">WebMix Pro ${esc(info.version || '?')}${appUpdate.available ? ` <em>มี ${esc(appUpdate.available.version)}</em>` : ''}</span> <button type="button" class="btn btn-sm app-update-btn">${appUpdate.available ? 'อัปเดต' : 'ตรวจหาอัปเดต'}</button>` : '<span class="set-ver">เวอร์ชันเว็บ — อัปเดตเองทุกครั้งที่เปิดหน้าใหม่</span>')}
-        ${desktop ? sw('autoUpdate', settings.autoUpdate !== false, 'ตรวจอัปเดตอัตโนมัติ', 'ตอนเปิดแอปและทุก 6 ชั่วโมง') : ''}
+        ${versionRowHtml()}
+        ${sw('autoUpdate', settings.autoUpdate !== false, 'ตรวจอัปเดตอัตโนมัติ', desktop ? 'ตอนเปิดแอปและทุก 6 ชั่วโมง' : 'ทุก 30 นาที และเมื่อกลับมาที่หน้านี้ — แจ้งให้โหลดหน้าใหม่เมื่อมีเวอร์ชันใหม่')}
         ${row('ตัววาดภาพ', `<span>${renderer.active === 'gpu' ? `GPU (WebGL) · ${esc(gpu.rendererName || '')}` : 'CPU (Canvas 2D)'}</span>`)}
         ${desktop ? row('ตัวเข้ารหัส', `<span>${esc(ENCODER_LABEL[info.encoder] || info.encoder || 'libx264')}</span>`) : ''}
         ${row('ข้อมูลในเครื่องนี้', '<button type="button" class="btn btn-sm" data-x-act="export">ส่งออกโชว์เป็นไฟล์</button>')}
@@ -11541,7 +11618,7 @@ onmessage = async e => {
     $$('#seg-cardsize button').forEach(b => { b.classList.toggle('is-active', b.dataset.size === cardSize()); b.addEventListener('click', () => setCardSize(b.dataset.size)); });
 
     // สำหรับดีบัก/ทดสอบอัตโนมัติ
-    window.webmix = { chatFeed, chatAdd, chatShow, chatHide, playlist, dataSources, timerControl, multiview, renderer, gpu, setRenderer: v => { settings.renderer = v; renderer.resolve(); updateStatus(); }, show, ovl, setChannel, toggleInputOverlay, useRecFolder: dir => { recFolder = dir; }, inputs, state, settings, overlays, audio, rec, iso, stinger, replayCapture, slideGo, midi, checkAppUpdate, macros, runMacro, openCamControl, abr: { state: abr, decide: abrDecide, apply: abrApply, tick: abrTick }, openDeskSummary, openDeskPreflight, liveStats, openDryRun, openFacebookDialog, fb, setDryRunSeconds: n => { DRY_RUN_SEC = n; }, disk, diskTick, setDiskFree: b => { disk.fake = b; return diskTick(); }, streamer, wireless, cut, autoTransition, setPreview, tr, ftb, padFire, chanKey, remote: remoteCtl, lufs, layoutSize, renderInputs, renderAlerts, openOutputWindow, setOrient };
+    window.webmix = { chatFeed, chatAdd, chatShow, chatHide, playlist, dataSources, timerControl, multiview, renderer, gpu, setRenderer: v => { settings.renderer = v; renderer.resolve(); updateStatus(); }, show, ovl, setChannel, toggleInputOverlay, useRecFolder: dir => { recFolder = dir; }, inputs, state, settings, overlays, audio, rec, iso, stinger, replayCapture, slideGo, midi, checkAppUpdate, checkWebUpdate, appUpdate, macros, runMacro, openCamControl, abr: { state: abr, decide: abrDecide, apply: abrApply, tick: abrTick }, openDeskSummary, openDeskPreflight, liveStats, openDryRun, openFacebookDialog, fb, setDryRunSeconds: n => { DRY_RUN_SEC = n; }, disk, diskTick, setDiskFree: b => { disk.fake = b; return diskTick(); }, streamer, wireless, cut, autoTransition, setPreview, tr, ftb, padFire, chanKey, remote: remoteCtl, lufs, layoutSize, renderInputs, renderAlerts, openOutputWindow, setOrient };
   }
 
   boot();
