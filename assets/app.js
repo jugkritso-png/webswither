@@ -257,6 +257,7 @@
     timer: { icon: 'clock', label: 'TIMER' },
     score: { icon: 'grid', label: 'SCORE' },
     ticker: { icon: 'type', label: 'TICKER' },
+    cg: { icon: 'type', label: 'CG STUDIO' },
     playlist: { icon: 'film', label: 'PLAYLIST' },
     scene: { icon: 'grid', label: 'SCENE' },
     replay: { icon: 'restart', label: 'REPLAY' },
@@ -402,6 +403,7 @@
       case 'slate': drawSlate(ctx, w, h, inp); break;
       case 'clock': drawClock(ctx, w, h, inp); break;
       case 'title': case 'timer': case 'score': case 'ticker': case 'visualizer': case 'chat': case 'captions': fillBlack(ctx, w, h); drawGraphic(ctx, inp, w, h); break;
+      case 'cg': fillBlack(ctx, w, h); window.WebMixCG.draw(ctx, inp.cg.design, w, h, { preview: true }); break;
       case 'scene': drawScene(ctx, inp, w, h); break;
       case 'slides': {
         const c = slideCanvas(inp);
@@ -615,9 +617,14 @@
   }
 
   // วาดแหล่งภาพแบบพื้นหลังโปร่งใส (รูป PNG, วิดีโอที่มี alpha, Title) — ไม่มีสัญญาณก็ไม่วาดอะไรทับ Program
-  function drawSourceT(ctx, inp, w, h) {
+  function drawSourceT(ctx, inp, w, h, cgSceneId) {
     switch (inp.type) {
       case 'title': case 'timer': case 'score': case 'ticker': case 'visualizer': case 'chat': case 'captions': drawGraphic(ctx, inp, w, h); return;
+      case 'cg': {
+        const fallback = inp.cg.onAirSnapshot && cgSceneId === inp.cg.onAirSceneId && !inp.cg.design.scenes.some(scene => scene.id === cgSceneId) ? inp.cg.onAirSnapshot : null;
+        const design = fallback ? { ...inp.cg.design, scenes: [fallback], activeSceneId: fallback.id } : inp.cg.design;
+        window.WebMixCG.draw(ctx, design, w, h, { sceneId: cgSceneId }); return;
+      }
       case 'image': if (inp.status === 'live') drawFitColored(ctx, inp, inp.el, inp.el.naturalWidth, inp.el.naturalHeight, w, h); return;
       case 'bars': case 'black': case 'slate': case 'clock': case 'scene': drawSource(ctx, inp, w, h); return;
       case 'playlist':
@@ -634,13 +641,13 @@
   // คีย์ฉากเขียว/ฟ้าของ Input นั้น (คำนวณครั้งเดียวต่อเฟรม ใช้ได้ทั้ง Program และ Preview)
   const keyWork = document.createElement('canvas');
   const keyWorkCtx = keyWork.getContext('2d', { willReadFrequently: !keyer });
-  function keyedCanvas(inp, L) {
+  function keyedCanvas(inp, L, cgSceneId) {
     const kw = Math.max(64, Math.round(Math.min(W * L.scale, keyer ? 1920 : 640))), kh = Math.round(kw * 9 / 16);
     const cache = inp._key || (inp._key = { canvas: document.createElement('canvas'), frame: -1 });
     if (cache.frame === frameNo && cache.canvas.width === kw) return cache.canvas;
     if (keyWork.width !== kw || keyWork.height !== kh) { keyWork.width = kw; keyWork.height = kh; }
     keyWorkCtx.clearRect(0, 0, kw, kh);
-    drawSourceT(keyWorkCtx, inp, kw, kh);
+    drawSourceT(keyWorkCtx, inp, kw, kh, cgSceneId);
     const out = cache.canvas;
     if (out.width !== kw || out.height !== kh) { out.width = kw; out.height = kh; }
     const octx = out.getContext('2d');
@@ -663,13 +670,13 @@
   }
 
   // วาด Input ตามตำแหน่ง/ครอป/คีย์ของมัน
-  function drawLayout(ctx, inp, L, w, h) {
+  function drawLayout(ctx, inp, L, w, h, cgSceneId) {
     const { box, vis } = layoutRects(L, w, h);
     if (vis.w <= 0 || vis.h <= 0) return;
     ctx.save();
     ctx.beginPath(); ctx.rect(vis.x, vis.y, vis.w, vis.h); ctx.clip();
-    if (L.key !== 'none') ctx.drawImage(keyedCanvas(inp, L), box.x, box.y, box.w, box.h);
-    else { ctx.translate(box.x, box.y); drawSourceT(ctx, inp, box.w, box.h); }
+    if (L.key !== 'none') ctx.drawImage(keyedCanvas(inp, L, cgSceneId), box.x, box.y, box.w, box.h);
+    else { ctx.translate(box.x, box.y); drawSourceT(ctx, inp, box.w, box.h, cgSceneId); }
     ctx.restore();
     if (L.border && L.scale < 1) {
       ctx.strokeStyle = 'rgba(255,255,255,.92)'; ctx.lineWidth = Math.max(1, 3 * h / 720);
@@ -677,7 +684,7 @@
     }
   }
 
-  function drawOverlayChannel(ctx, c, w, h, a) {
+  function drawOverlayChannel(ctx, c, w, h, a, preview = false) {
     const inp = byId(c.inputId);
     if (!inp || a <= 0) return;
     const L = layoutOf(inp), e = c.effect === 'cut' ? 1 : easeInOut(a);
@@ -699,7 +706,8 @@
       case 'wipe': ctx.beginPath(); ctx.rect(vis.x, vis.y, vis.w * e, vis.h); ctx.clip(); break;
     }
     ctx.globalAlpha = alpha;
-    drawLayout(ctx, inp, L, w, h);
+    const cgSceneId = inp.type === 'cg' ? (preview && c.staged ? inp.cg.previewSceneId : inp.cg.onAirSceneId) : undefined;
+    drawLayout(ctx, inp, L, w, h, cgSceneId);
     ctx.restore();
   }
 
@@ -715,8 +723,8 @@
 
   function drawOverlayChannels(ctx, w, h, preview) {
     for (const c of ovl) {
-      if (c.anim > 0) drawOverlayChannel(ctx, c, w, h, c.anim);
-      else if (preview && c.staged && byId(c.inputId)) drawOverlayChannel(ctx, c, w, h, 1);
+      if (c.anim > 0) drawOverlayChannel(ctx, c, w, h, c.anim, preview);
+      else if (preview && c.staged && byId(c.inputId)) drawOverlayChannel(ctx, c, w, h, 1, true);
     }
   }
 
@@ -765,7 +773,7 @@
   }
 
   // texture ของ Input: คืน { e, full } (full = ภาพเต็มเฟรม 16:9) หรือ null ถ้าไม่มีอะไรให้วาด
-  function inputTexture(inp, transparent) {
+  function inputTexture(inp, transparent, cgSceneId) {
     const sec = Math.floor(Date.now() / 1000);
     const GW = Math.min(W, 1920), GH = Math.round(GW * 9 / 16);
     const noSignal = () => transparent ? null
@@ -777,6 +785,17 @@
         return { e: genTexture('g:' + inp.id, `${inp.text}|${sec}`, GW, GH, (c, w, h) => drawSource(c, inp, w, h)), full: true };
       case 'title':
         return { e: genTexture('g:' + inp.id, JSON.stringify(inp.title) + (inp.title?.anim ? titleAnim(inp).toFixed(2) : ''), W, H, (c, w, h) => drawTitleInput(c, inp, w, h)), full: true, under: transparent ? null : [0, 0, 0, 1] };
+      case 'cg': {
+        const renderSceneId = cgSceneId || inp.cg.onAirSceneId || inp.cg.design.activeSceneId;
+        const renderScene = inp.cg.design.scenes?.find(scene => scene.id === renderSceneId) || inp.cg.design.scenes?.[0];
+        const animated = renderScene?.elements?.some(element => element.type === 'ticker' && element.visible);
+        const stamp = `${renderSceneId}|${window.WebMixCG.assetRevision}|${JSON.stringify(inp.cg.design)}|${animated ? Math.floor(performance.now() / 33) : 'static'}`;
+        return { e: genTexture('cg:' + inp.id, stamp, W, H, (c, w, h) => {
+          const fallback = inp.cg.onAirSnapshot && cgSceneId === inp.cg.onAirSceneId && !inp.cg.design.scenes.some(scene => scene.id === cgSceneId) ? inp.cg.onAirSnapshot : null;
+          const design = fallback ? { ...inp.cg.design, scenes: [fallback], activeSceneId: fallback.id } : inp.cg.design;
+          window.WebMixCG.draw(c, design, w, h, { sceneId: renderSceneId });
+        }), full: true, under: transparent ? null : [0, 0, 0, 1] };
+      }
       case 'timer': {
         // วาดใหม่เมื่อตัวเลขเปลี่ยน (ทุกวินาที) หรือช่วงกะพริบตอนหมดเวลา
         const tt = timerText(inp.timer), stamp = `${tt.text}|${tt.done ? Math.floor(Date.now() / 500) % 2 : ''}|${JSON.stringify(inp.timer)}`;
@@ -833,7 +852,7 @@
   function glDrawInput(inp, box, clip, alpha = 1, opts = {}) {
     if (!inp) return;
     if (inp.type === 'scene') { glDrawScene(inp, box, clip, alpha); return; }
-    const t = inputTexture(inp, !!opts.transparent);
+    const t = inputTexture(inp, !!opts.transparent, opts.cgSceneId);
     if (!t) return;
     const vis = intersect(box, clip);
     if (vis.w <= 0 || vis.h <= 0) return;
@@ -887,7 +906,7 @@
   }
 
   // Overlay ตามตำแหน่ง/ครอป/คีย์ของ Input พร้อมเอฟเฟกต์เข้า-ออก (เหมือน drawOverlayChannel)
-  function glOverlayChannel(c, w, h, a) {
+  function glOverlayChannel(c, w, h, a, preview = false) {
     const inp = byId(c.inputId);
     if (!inp || a <= 0) return;
     const L = layoutOf(inp), e = c.effect === 'cut' ? 1 : easeInOut(a);
@@ -908,7 +927,8 @@
       case 'slide-down': move(0, -(1 - e) * (vis.y + vis.h)); break;
       case 'wipe': vis = { ...vis, w: vis.w * e }; break;
     }
-    glDrawInput(inp, box, vis, alpha, { transparent: true, key: L.key !== 'none' ? { color: L.key, tolerance: L.tolerance } : null });
+    const cgSceneId = inp.type === 'cg' ? (preview && c.staged ? inp.cg.previewSceneId : inp.cg.onAirSceneId) : undefined;
+    glDrawInput(inp, box, vis, alpha, { transparent: true, cgSceneId, key: L.key !== 'none' ? { color: L.key, tolerance: L.tolerance } : null });
     if (L.border && L.scale < 1) {
       const t = Math.max(1, 3 * h / 720), col = [1, 1, 1, 0.92];
       gpu.solid({ x: vis.x - t / 2, y: vis.y - t / 2, w: vis.w + t, h: t }, col, alpha);
@@ -952,15 +972,15 @@
     const pfull = { x: 0, y: 0, w: PW, h: PH };
     glDrawInput(byId(state.previewId), pfull, pfull);
     for (const c of ovl) {
-      if (c.anim > 0) glOverlayChannel(c, PW, PH, c.anim);
-      else if (c.staged && byId(c.inputId)) glOverlayChannel(c, PW, PH, 1);
+      if (c.anim > 0) glOverlayChannel(c, PW, PH, c.anim, true);
+      else if (c.staged && byId(c.inputId)) glOverlayChannel(c, PW, PH, 1, true);
     }
     glClassicOverlays(PW, PH);
     pvwCtx.drawImage(gpu.canvas, 0, 0, PW, PH, 0, 0, PW, PH);
 
     gpu.begin(W, H);
     glProgramBase(W, H);
-    for (const c of ovl) if (c.anim > 0) glOverlayChannel(c, W, H, c.anim);
+    for (const c of ovl) if (c.anim > 0) glOverlayChannel(c, W, H, c.anim, false);
     glClassicOverlays(W, H);
     if (stingerOn()) {
       const e = gpu.entry('stinger');
@@ -1288,6 +1308,99 @@
       clock: { name: 'CLOCK', text: 'WEBMIX PRO STUDIO' }
     };
     return addInput({ type, ...defs[type] });
+  }
+
+  function cgOnAir(inp) { return ovl.some(c => c.on && c.inputId === inp.id); }
+  function cgStudioUrl(inp) {
+    const url = new URL('cg-studio.html', location.href);
+    url.searchParams.set('channel', inp.cg.channel);
+    return url.href;
+  }
+  function openCGStudio(inp) {
+    const page = window.open(cgStudioUrl(inp), '_blank');
+    if (!page) toast('เบราว์เซอร์บล็อกหน้าต่างใหม่ — อนุญาต Pop-up สำหรับ WebMix แล้วกดแก้ไข CG อีกครั้ง', 'warn', 6000);
+  }
+  function attachCGBridge(inp) {
+    if (!('BroadcastChannel' in window) || !inp.cg) return;
+    try {
+      const bus = new BroadcastChannel(`webmix-cg:${inp.cg.channel}`);
+      inp.cgBus = bus;
+      let cgRevision = 0;
+      const reply = (type, payload = {}) => bus.postMessage({ protocolVersion: 1, channel: inp.cg.channel, type, ...payload });
+      const onAirSlot = () => ovl.findIndex(c => c.on && c.inputId === inp.id);
+      const stagedSlot = () => ovl.findIndex(c => c.staged && c.inputId === inp.id);
+      const safeSlot = value => Number.isInteger(+value) && +value >= 0 && +value < OVL_COUNT ? +value : -1;
+      bus.onmessage = event => {
+        const msg = event.data;
+        if (!msg || msg.channel !== inp.cg.channel) return;
+        if (msg.type === 'hello' || msg.type === 'ready') {
+          reply('snapshot', { document: inp.cg.design, revision: cgRevision, visible: cgOnAir(inp), staged: stagedSlot() >= 0, slot: onAirSlot() >= 0 ? onAirSlot() : stagedSlot() >= 0 ? stagedSlot() : 0, onAirSceneId: inp.cg.onAirSceneId || '' });
+        } else if ((msg.type === 'document:update' && msg.document) || (msg.type === 'design' && msg.design)) {
+          const previous = inp.cg.design, previousSnapshot = inp.cg.onAirSnapshot, previousSceneId = inp.cg.onAirSceneId, previousPreviewSceneId = inp.cg.previewSceneId;
+          const next = window.WebMixCG.sanitize(msg.document || msg.design);
+          const oldOnAir = previous.scenes?.find(scene => scene.id === inp.cg.onAirSceneId);
+          inp.cg.onAirSnapshot = oldOnAir && !next.scenes.some(scene => scene.id === inp.cg.onAirSceneId) ? oldOnAir : null;
+          inp.cg.design = next;
+          if (stagedSlot() >= 0) inp.cg.previewSceneId = next.activeSceneId;
+          if (!inp.cg.onAirSceneId || !next.scenes.some(scene => scene.id === inp.cg.onAirSceneId) && !inp.cg.onAirSnapshot) inp.cg.onAirSceneId = next.activeSceneId;
+          if (JSON.stringify(show.serialize()).length > 2000000) {
+            inp.cg.design = previous; inp.cg.onAirSnapshot = previousSnapshot; inp.cg.onAirSceneId = previousSceneId; inp.cg.previewSceneId = previousPreviewSceneId;
+            reply('document:rollback', { document: previous, revision: cgRevision, message: 'ข้อมูล CG รวมใหญ่เกินพื้นที่บันทึก Show — ลดขนาด/จำนวนรูปก่อน' }); return;
+          }
+          cgRevision = Math.max(cgRevision + 1, Number(msg.revision) || 0);
+          renderInputs();
+          show.autosave();
+          reply('document:ack', { revision: cgRevision });
+        } else if (msg.type === 'preview:set') {
+          const at = safeSlot(msg.slot);
+          if (at < 0) { reply('error', { message: 'เลือกช่อง Preview ตั้งแต่ Overlay 1 ถึง 8' }); return; }
+          const liveAt = onAirSlot();
+          if (liveAt >= 0 && liveAt !== at) { reply('error', { message: `CG นี้กำลังออกอากาศที่ Overlay ${liveAt + 1} อยู่` }); return; }
+          if (ovl[at].on && ovl[at].inputId !== inp.id) { reply('error', { message: `Overlay ${at + 1} กำลังแสดงแหล่งภาพอื่นอยู่` }); return; }
+          ovl[at].inputId = inp.id; ovl[at].staged = true;
+          inp.cg.previewSceneId = inp.cg.design.scenes.some(scene => scene.id === msg.sceneId) ? msg.sceneId : inp.cg.design.activeSceneId;
+          updateOverlayUI();
+          reply('onair:state', { visible: cgOnAir(inp), slot: at, staged: true });
+        } else if (msg.type === 'preview:clear') {
+          const at = safeSlot(msg.slot);
+          if (at >= 0 && ovl[at].inputId === inp.id && !ovl[at].on) { ovl[at].staged = false; updateOverlayUI(); }
+          reply('onair:state', { visible: cgOnAir(inp), slot: at, staged: false });
+        } else if (msg.type === 'take') {
+          const at = safeSlot(msg.slot);
+          if (at < 0) { reply('error', { message: 'เลือกช่อง Overlay ที่จะขึ้นจอ' }); return; }
+          if (ovl[at].on && ovl[at].inputId !== inp.id) { reply('error', { message: `Overlay ${at + 1} กำลังแสดงแหล่งภาพอื่นอยู่` }); return; }
+          const other = onAirSlot();
+          if (other >= 0 && other !== at) { reply('error', { message: `CG นี้กำลังขึ้นจอที่ Overlay ${other + 1} อยู่` }); return; }
+          const effect = Object.hasOwn(OVL_EFFECTS, msg.effect) ? msg.effect : 'fade';
+          ovl[at].inputId = inp.id; ovl[at].effect = effect; ovl[at].duration = Math.max(150, Math.min(3000, +msg.duration || inp.cg.design.playback?.durationMs || 500));
+          ovl[at].staged = false;
+          inp.cg.onAirSceneId = inp.cg.design.activeSceneId; inp.cg.onAirSnapshot = null;
+          if (!ovl[at].on) setChannel(at, true); else updateOverlayUI();
+          reply('onair:state', { visible: true, slot: at });
+        } else if (msg.type === 'clear') {
+          const requested = safeSlot(msg.slot);
+          if (requested >= 0 && ovl[requested].staged && !ovl[requested].on && ovl[requested].inputId === inp.id) {
+            ovl[requested].staged = false; updateOverlayUI(); reply('onair:state', { visible: cgOnAir(inp), slot: requested, staged: false }); return;
+          }
+          const at = requested >= 0 && ovl[requested].on && ovl[requested].inputId === inp.id ? requested : onAirSlot();
+          if (at >= 0) {
+            ovl[at].effect = Object.hasOwn(OVL_EFFECTS, msg.effect) ? msg.effect : ovl[at].effect;
+            ovl[at].duration = Math.max(150, Math.min(3000, +msg.duration || ovl[at].duration));
+            setChannel(at, false);
+          }
+          reply('onair:state', { visible: cgOnAir(inp), slot: at >= 0 ? at : requested });
+        }
+      };
+      inp.status = 'live';
+    } catch (e) { console.warn('CG Studio channel unavailable', e); }
+  }
+  function addCGInput() {
+    const n = inputs.filter(i => i.type === 'cg').length + 1;
+    const inp = addInput({ type: 'cg', name: `CG ${n}`, status: 'live', cg: { channel: `${uid()}${uid()}`, design: window.WebMixCG.defaults() } });
+    attachCGBridge(inp);
+    openCGStudio(inp);
+    show.autosave();
+    return inp;
   }
 
   // ขนาดการ์ดแหล่งภาพ (เล็ก/กลาง/ใหญ่) — จำไว้ในเครื่องนี้
@@ -1807,6 +1920,7 @@
 
   // ปล่อยทรัพยากรของ Input (กล้อง, ไฟล์, การเชื่อมต่อ) แล้วนำออกจากรายการ
   function disposeInput(inp, forget) {
+    if (inp.cgBus) { inp.cgBus.postMessage({ protocolVersion: 1, channel: inp.cg.channel, type: 'disconnect', message: 'แหล่งภาพ CG Studio ถูกนำออกจาก WebMix' }); inp.cgBus.close(); inp.cgBus = null; }
     inp.stream && inp.stream.getTracks().forEach(t => t.stop());
     if (inp.type === 'captions') captionStop(inp);
     if (inp.el && inp.el.tagName === 'VIDEO') {
@@ -1869,6 +1983,7 @@
     if (inp.type === 'timer') return openTimerDialog(inp);
     if (inp.type === 'score') return openScoreDialog(inp);
     if (inp.type === 'ticker') return openTickerDialog(inp);
+    if (inp.type === 'cg') return openCGStudio(inp);
     const hasText = inp.type === 'slate' || inp.type === 'clock';
     const hasColor = COLOR_TYPES.includes(inp.type);
     const before = inp.color ? { ...inp.color } : null;
@@ -3205,6 +3320,8 @@
   function setChannel(i, on) {
     const c = ovl[i];
     if (on && !byId(c.inputId)) { toast(`เลือกแหล่งภาพให้ Overlay ${c.n} ก่อน (แท็บ ซ้อนภาพ หรือปุ่ม ${c.n} ใต้การ์ดแหล่งภาพ)`, 'warn'); return; }
+    const input = byId(c.inputId);
+    if (on && input?.type === 'cg' && !c.on) { input.cg.onAirSceneId = input.cg.design.activeSceneId; input.cg.onAirSnapshot = null; }
     c.on = on;
     if (on) { c.staged = false; playIfMedia(byId(c.inputId)); }
     updateOverlayUI();
@@ -3218,6 +3335,8 @@
       c.inputId = id;
       c.on = true;
       c.staged = false;
+      const input = byId(id);
+      if (input?.type === 'cg') { input.cg.onAirSceneId = input.cg.design.activeSceneId; input.cg.onAirSnapshot = null; }
       playIfMedia(byId(id));
     }
     updateOverlayUI();
@@ -3256,12 +3375,12 @@
   }
 
   // มือถือ (แท็บกราฟิก): การ์ดกราฟิก แตะครั้งเดียว = ขึ้นจอ / แตะอีกครั้ง = เอาออก (ใช้ช่อง Overlay ที่ว่างให้เอง)
-  const GFX_LABEL = { title: 'ป้ายชื่อ', timer: 'นับเวลา', score: 'ป้ายคะแนน', ticker: 'ตัววิ่ง', visualizer: 'คลื่นเสียง', image: 'ภาพ / โลโก้', playlist: 'Playlist' };
+  const GFX_LABEL = { title: 'ป้ายชื่อ', timer: 'นับเวลา', score: 'ป้ายคะแนน', ticker: 'ตัววิ่ง', cg: 'CG Studio', visualizer: 'คลื่นเสียง', image: 'ภาพ / โลโก้', playlist: 'Playlist' };
   function renderQuickGfx() {
     const box = $('#m-gfx');
     if (!box) return;
     const bound = new Set(ovl.map(c => c.inputId).filter(Boolean));
-    const list = inputs.filter(i => GRAPHIC_TYPES.includes(i.type) || i.type === 'image' || bound.has(i.id));
+    const list = inputs.filter(i => GRAPHIC_TYPES.includes(i.type) || i.type === 'cg' || i.type === 'image' || bound.has(i.id));
     const onAir = id => ovl.some(c => c.on && c.inputId === id);
     const sig = list.map(i => `${i.id}:${i.name}:${onAir(i.id)}`).join('|');
     if (box.dataset.sig === sig) return;
@@ -3276,6 +3395,7 @@
         <button type="button" class="gfx-card gfx-add" data-gfx-add="title">${icon('plus')}<b>ป้ายชื่อใหม่</b></button>
         <button type="button" class="gfx-card gfx-add" data-gfx-add="timer">${icon('plus')}<b>นับถอยหลัง</b></button>
         <button type="button" class="gfx-card gfx-add" data-gfx-add="score">${icon('plus')}<b>ป้ายคะแนน</b></button>
+        <button type="button" class="gfx-card gfx-add" data-gfx-add="cg">${icon('plus')}<b>CG Studio</b></button>
         <button type="button" class="gfx-card gfx-add" data-gfx-add="image">${icon('plus')}<b>โลโก้</b></button>
       </div>`;
   }
@@ -3283,7 +3403,7 @@
     if (e.target.closest('[data-gfx-clear]')) { ovl.forEach((c, i) => { if (c.on) setChannel(i, false); }); return; }
     const add = e.target.closest('[data-gfx-add]');
     if (add) {
-      ({ title: addTitleInput, timer: addTimerInput, score: addScoreInput, image: () => pickFiles('image/*', addImageFiles) })[add.dataset.gfxAdd]();
+      ({ title: addTitleInput, timer: addTimerInput, score: addScoreInput, cg: addCGInput, image: () => pickFiles('image/*', addImageFiles) })[add.dataset.gfxAdd]();
       return;
     }
     const card = e.target.closest('[data-gfx]');
@@ -3332,6 +3452,10 @@
     $('.tab[data-tab="overlay"]').classList.toggle('is-live', ovl.some(c => c.on));
     renderQuickGfx();
     updateTally();
+    for (const input of inputs) if (input.type === 'cg' && input.cgBus) {
+      const slot = ovl.findIndex(c => (c.on || c.staged) && c.inputId === input.id);
+      input.cgBus.postMessage({ protocolVersion: 1, type: 'onair:state', channel: input.cg.channel, visible: cgOnAir(input), slot, staged: slot >= 0 && ovl[slot].staged });
+    }
   }
 
   function initOverlayControls() {
@@ -9408,6 +9532,7 @@ onmessage = async e => {
       ['monitor', 'NDI® / OMT', 'รับภาพจาก vMix / OBS / กล้อง PTZ ในวง LAN (แอปเดสก์ท็อป)', () => openNetVideoDialog()]]],
     ['กราฟิกและข้อความ', [
       ['type', 'Title กราฟิกข้อความ', 'ป้ายชื่อ/ข้อความบนพื้นโปร่งใส', addTitleInput],
+      ['type', 'CG Studio', 'ออกแบบแถบชื่อ ตัววิ่ง ป้าย LIVE และคะแนนในหน้าแยก เชื่อมกับ WebMix แบบสด', addCGInput],
       ['clock', 'นาฬิกานับถอยหลัง / จับเวลา', 'นับถอยหลังก่อนเริ่ม หรือจับเวลาการแข่ง', addTimerInput],
       ['grid', 'ป้ายคะแนน', 'คะแนนสองทีม พร้อมเวลาแข่ง', addScoreInput],
       ['type', 'ตัววิ่งข่าว', 'ข้อความวิ่งด้านล่างจอ', addTickerInput],
@@ -9727,7 +9852,7 @@ onmessage = async e => {
      - ไฟล์วิดีโอ/รูปเก็บสำเนาไว้ในพื้นที่ของเบราว์เซอร์ (OPFS) จึงไม่ต้องเลือกไฟล์ใหม่
      - บันทึกเป็นไฟล์ .webmix.json เพื่อย้ายเครื่องหรือเก็บหลายรายการ (ไฟล์สื่อไม่ได้รวมอยู่ในไฟล์ ต้องเลือกใหม่บนเครื่องอื่น) */
 
-  const SHOW_TYPES = ['bars', 'black', 'slate', 'clock', 'image', 'media', 'camera', 'screen', 'wireless', 'srt', 'title', 'guest', 'timer', 'score', 'ticker', 'playlist', 'scene', 'replay', 'slides', 'visualizer', 'chat', 'captions'];
+  const SHOW_TYPES = ['bars', 'black', 'slate', 'clock', 'image', 'media', 'camera', 'screen', 'wireless', 'srt', 'title', 'guest', 'timer', 'score', 'ticker', 'cg', 'playlist', 'scene', 'replay', 'slides', 'visualizer', 'chat', 'captions'];
   const show = {
     ready: false, last: '', savedAt: 0,
     get name() { return store.get('showName', '') || 'โชว์ใหม่'; },
@@ -9749,6 +9874,7 @@ onmessage = async e => {
           if (i.type === 'wireless') o.peerId = i.peerId;
           if (i.type === 'srt') o.srt = { ...i.srt, passphrase: secrets ? i.srt.passphrase : '', pass: secrets ? i.srt.pass || '' : '' };
           if (i.type === 'title') o.title = { ...i.title };
+          if (i.type === 'cg') o.cg = { channel: i.cg.channel, design: window.WebMixCG.sanitize(i.cg.design), onAirSceneId: i.cg.onAirSceneId || i.cg.design.activeSceneId };
           // เวลาที่เดินอยู่บันทึกเป็นเวลาที่ผ่านไปแล้ว (เปิดหน้าใหม่แล้วหยุดรอให้กดเริ่ม)
           const freeze = t => ({ ...t, base: (t.base || 0) + (t.running && t.since ? Date.now() - t.since : 0), running: false, since: 0 });
           if (i.type === 'timer') o.timer = freeze(i.timer);
@@ -9908,6 +10034,14 @@ onmessage = async e => {
         }
         case 'title': {
           addInput({ type: 'title', ...base, title: cleanTitle(raw.title || {}) });
+          break;
+        }
+        case 'cg': {
+          const channel = typeof raw.cg?.channel === 'string' && /^[a-z\d]{8,64}$/i.test(raw.cg.channel) ? raw.cg.channel : `${uid()}${uid()}`;
+          const design = window.WebMixCG.sanitize(raw.cg?.design);
+          const onAirSceneId = design.scenes.some(scene => scene.id === raw.cg?.onAirSceneId) ? raw.cg.onAirSceneId : design.activeSceneId;
+          const inp = addInput({ type: 'cg', ...base, status: 'live', cg: { channel, design, onAirSceneId } });
+          attachCGBridge(inp);
           break;
         }
         case 'media': case 'image': {
