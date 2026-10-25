@@ -6,6 +6,9 @@
 //!   client → { "type": "start", "destinations": [{ "id", "name", "url" }] }
 //!   client → { "type": "add", "destination": { "id", "name", "url" } }
 //!   client → { "type": "stop", "id": "…" }
+//!   client → { "type": "probe", "destination": { "id", "name", "url" } }  ตรวจการเชื่อมต่อและรหัสสตรีมโดยไม่ส่งภาพ (ไม่ขึ้นไลฟ์)
+//!   server → { "type": "probe", "id", "ok", "message" }
+//!   client → { "type": "start", "destinations": [] }  ทดสอบเข้ารหัสอย่างเดียว — status.rx = kbps ที่รับจากไคลเอนต์
 //!   server → { "type": "status", "destinations": [{ "id", "name", "state", "message", "kbps", "lag" }], "encoder": { "speed", "fps" } | null }
 //!
 //! พารามิเตอร์ของ URL: fps, vb (kbps), res (ความสูง) · vcopy=1 = วิดีโอที่ส่งมาเป็น H.264 อยู่แล้ว (เช่นจาก WebCodecs
@@ -377,6 +380,17 @@ async fn handle_conn(stream: TcpStream, peer: SocketAddr, cfg: Arc<Config>, srt_
                             session.stop_dest(id);
                         }
                     }
+                    Some("probe") => {
+                        if let Some(d) = v.get("destination") {
+                            let id: String = d.get("id").and_then(Value::as_str).unwrap_or("").chars().take(40).collect();
+                            let url = d.get("url").and_then(Value::as_str).unwrap_or("").to_string();
+                            let (ffmpeg, out) = (cfg.ffmpeg.clone(), out_tx.clone());
+                            tokio::spawn(async move {
+                                let (ok, message) = probe_dest(&ffmpeg, &url).await;
+                                let _ = out.send(Message::Text(json!({ "type": "probe", "id": id, "ok": ok, "message": message }).to_string().into()));
+                            });
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -391,6 +405,29 @@ async fn handle_conn(stream: TcpStream, peer: SocketAddr, cfg: Arc<Config>, srt_
     let _ = tokio::time::timeout(Duration::from_secs(2), writer).await;
     eprintln!("{} disconnected", session.tag);
     Ok(())
+}
+
+/// ตรวจปลายทางโดยไม่ออกอากาศ: เชื่อมต่อและขอเผยแพร่ด้วยรหัสสตรีม (เซิร์ฟเวอร์ต้องตอบรับ) แต่ไม่ส่งภาพเลยสักเฟรม
+/// ส่งแค่หัวของแทร็กเสียงเปล่า แพลตฟอร์มจึงไม่เริ่มไลฟ์ — รหัสผิด/เซิร์ฟเวอร์ปฏิเสธ = ffmpeg เปิดปลายทางไม่ได้
+async fn probe_dest(ffmpeg: &str, url: &str) -> (bool, String) {
+    if !is_rtmp(url) && !is_srt(url) {
+        let l = url.to_ascii_lowercase();
+        let msg = if l.starts_with("ndi://") || l.starts_with("omt://") { "ส่งออกในวง LAN — ไม่ต้องตรวจรหัส" } else { "URL ต้องเป็น rtmp://, rtmps:// หรือ srt://host:port" };
+        return (false, msg.into());
+    }
+    let mut args: Vec<String> = ["-hide_banner", "-nostdin", "-loglevel", "error", "-f", "lavfi", "-i", "anullsrc=r=44100:cl=mono", "-t", "0", "-c:a", "aac"].iter().map(|s| s.to_string()).collect();
+    args.extend(output_args(url));
+    let child = quiet(Command::new(ffmpeg).args(&args)).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::piped()).kill_on_drop(true).spawn();
+    let Ok(child) = child else { return (false, "เปิด ffmpeg ไม่ได้".into()) };
+    match tokio::time::timeout(Duration::from_secs(15), child.wait_with_output()).await {
+        Err(_) => (false, "ปลายทางไม่ตอบภายใน 15 วินาที — ตรวจที่อยู่ Server และไฟร์วอลล์".into()),
+        Ok(Err(e)) => (false, e.to_string()),
+        Ok(Ok(out)) if out.status.success() => (true, String::new()),
+        Ok(Ok(out)) => {
+            let lines: Vec<String> = String::from_utf8_lossy(&out.stderr).lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty() && !l.contains("Output file is empty")).collect();
+            (false, explain_ffmpeg_error(&lines))
+        }
+    }
 }
 
 fn is_rtmp(url: &str) -> bool {
@@ -513,6 +550,9 @@ struct Session {
     tag: String,
     st: Arc<Mutex<State>>,
     last_tick: Arc<Mutex<Instant>>,
+    /// ไบต์ที่รับจากไคลเอนต์ในช่วงล่าสุด → kbps (ทดสอบอัปโหลดก่อนไลฟ์)
+    rx_bytes: Arc<AtomicU64>,
+    rx_kbps: Arc<AtomicU64>,
 }
 
 impl Session {
@@ -528,6 +568,8 @@ impl Session {
             tag,
             st: Arc::new(Mutex::new(State { dests: Vec::new(), encoder_tx: None, encoder_started: false, encoder_stats: None, verticals: Vec::new(), closed: false })),
             last_tick: Arc::new(Mutex::new(Instant::now())),
+            rx_bytes: Arc::new(AtomicU64::new(0)),
+            rx_kbps: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -549,7 +591,7 @@ impl Session {
             .collect();
         let encoder = st.encoder_stats.map(|(speed, fps)| json!({ "speed": speed, "fps": fps }));
         drop(st);
-        self.send(json!({ "type": "status", "destinations": dests, "encoder": encoder }));
+        self.send(json!({ "type": "status", "destinations": dests, "encoder": encoder, "rx": self.rx_kbps.load(Ordering::Relaxed) }));
     }
 
     fn tick_kbps(&self) {
@@ -557,6 +599,8 @@ impl Session {
         let secs = last.elapsed().as_secs_f64().max(0.5);
         *last = Instant::now();
         drop(last);
+        let rx = self.rx_bytes.swap(0, Ordering::Relaxed);
+        self.rx_kbps.store((rx as f64 * 8.0 / 1000.0 / secs).round() as u64, Ordering::Relaxed);
         let mut st = self.st.lock().unwrap();
         for d in st.dests.iter_mut() {
             d.kbps = (d.bytes as f64 * 8.0 / 1000.0 / secs).round() as u64;
@@ -565,6 +609,7 @@ impl Session {
     }
 
     fn write_input(&self, data: Vec<u8>) {
+        self.rx_bytes.fetch_add(data.len() as u64, Ordering::Relaxed);
         if let Some(tx) = &self.st.lock().unwrap().encoder_tx {
             let _ = tx.send(data);
         }

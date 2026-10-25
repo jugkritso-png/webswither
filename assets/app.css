@@ -2754,3 +2754,45 @@ html[data-orient=v] .safe-area { inset: 5% auto auto 50%; height: 90%; aspect-ra
 .rmt-pair input.rmt-pin { height: 64px; font-size: 30px; font-weight: 600; letter-spacing: .55em; text-align: center; padding-left: .55em; background: repeating-linear-gradient(90deg, transparent 0 calc(100% / 6 - 2px), var(--line-2) calc(100% / 6 - 2px) calc(100% / 6)); }
 .rmt-pair-msg:not(:first-of-type) { color: inherit; }
 .rmt-pair-once { margin: 0; text-align: center; }
+
+/* ---- ทดสอบก่อนไลฟ์ (design 66) */
+.modal.dr-modal.wide { width: min(1200px, calc(100vw - 24px)); max-width: none; }
+.dr-wrap { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 18px; }
+.dr-main { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.dr-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.dr-clock { color: var(--muted); }
+.dr-bar { position: relative; height: 6px; border-radius: 3px; background: #2a313d; overflow: hidden; }
+.dr-bar i { position: absolute; inset: 0 auto 0 0; width: 0; background: #4F86F0; transition: width .4s; }
+.dr-bar i.is-ok { background: #2EA36B; } .dr-bar i.is-warn { background: #E3B341; } .dr-bar i.is-error { background: #E5484D; }
+.dr-cap { font-size: 11px; font-weight: 700; letter-spacing: .06em; color: var(--muted); }
+.dr-rows, .dr-dests { display: flex; flex-direction: column; gap: 8px; }
+.dr-row { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 10px; background: #171B22; border: 1px solid #222935; }
+.dr-row .lv-abbr { width: 40px; height: 40px; border-radius: 10px; flex: none; }
+.dr-txt { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.dr-txt small { color: var(--muted); font-size: 12px; }
+.dr-val { font-size: 15px; white-space: nowrap; }
+.dr-mark { width: 30px; height: 30px; flex: none; border-radius: 50%; display: grid; place-items: center; font-size: 11px; font-weight: 800; background: #1B2232; color: #A9C3FF; }
+.dr-mark.is-ok { background: #14532D; color: #BBF7D0; } .dr-mark.is-warn { background: #4A3510; color: #F0B44C; } .dr-mark.is-error { background: #4a1518; color: #ff9ea2; }
+.dr-pill { padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; white-space: nowrap; background: #1B2232; color: #A9C3FF; }
+.dr-pill.is-ok { background: #14532D; color: #BBF7D0; } .dr-pill.is-error { background: #4a1518; color: #ff9ea2; }
+.dr-graph { padding: 12px 14px; border-radius: 10px; background: #0E1218; border: 1px solid #222935; }
+.dr-gh { display: flex; justify-content: space-between; gap: 10px; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+.dr-graph svg { width: 100%; height: 80px; display: block; }
+.dr-needline { stroke: #3A4250; stroke-dasharray: 4 5; vector-effect: non-scaling-stroke; }
+.dr-line { fill: none; stroke: #2EA36B; stroke-width: 2; vector-effect: non-scaling-stroke; }
+.dr-side { display: flex; flex-direction: column; gap: 14px; padding-left: 18px; border-left: 1px solid var(--line); }
+.dr-verdict { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 20px 16px; border-radius: 12px; border: 1px solid #1B2232; text-align: center; }
+.dr-verdict b { font-size: 20px; }
+.dr-verdict .dr-vtext { font-size: 13px; color: #C9D1DB; }
+.dr-vdot { width: 56px; height: 56px; border-radius: 50%; display: grid; place-items: center; font-weight: 800; background: #1B2232; color: #A9C3FF; }
+.dr-verdict.is-ok { border-color: #14532D; } .dr-verdict.is-ok .dr-vdot { background: #14532D; color: #BBF7D0; }
+.dr-verdict.is-warn { border-color: #7A5A1B; } .dr-verdict.is-warn .dr-vdot { background: #4A3510; color: #F0B44C; }
+.dr-verdict.is-error { border-color: #7f2a2e; } .dr-verdict.is-error .dr-vdot { background: #4a1518; color: #ff9ea2; }
+.dr-kv { display: flex; flex-direction: column; gap: 8px; font-size: 13px; }
+.dr-kv > div { display: flex; justify-content: space-between; gap: 10px; }
+.dr-kv span { color: var(--muted); }
+.dr-note { margin: 0; padding: 10px 12px; border-radius: 8px; background: #171B22; border: 1px solid #222935; font-size: 12px; color: var(--muted); line-height: 1.6; }
+.dr-grow { flex: 1; }
+.dr-again { height: 44px; justify-content: center; }
+.dr-go { height: 50px; font-size: 16px; justify-content: center; }
+@media (max-width: 900px) { .dr-wrap { grid-template-columns: 1fr; } .dr-side { padding-left: 0; border-left: 0; } }

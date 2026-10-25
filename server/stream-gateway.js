@@ -16,6 +16,9 @@
 //   client → { type: 'start', destinations: [{ id, name, url }] }   เริ่มเข้ารหัสและส่งไปทุกปลายทาง
 //   client → { type: 'add', destination: { id, name, url } }        เพิ่ม/เริ่มปลายทางระหว่างไลฟ์
 //   client → { type: 'stop', id }                                    หยุดเฉพาะปลายทางนั้น
+//   client → { type: 'probe', destination: { id, name, url } }       ตรวจว่าเชื่อมต่อและรหัสสตรีมใช้ได้ โดยไม่ส่งภาพ (ไม่ขึ้นไลฟ์)
+//   server → { type: 'probe', id, ok, message }
+//   client → { type: 'start', destinations: [] }                     ทดสอบเข้ารหัสอย่างเดียว (ทิ้งผลลัพธ์) — status.rx = kbps ที่รับจากไคลเอนต์
 //   server → { type: 'status', destinations: [{ id, name, state, message, kbps, lag }] }  (lag = ms ของข้อมูลที่รอส่งไปปลายทาง)
 //            state: connecting | live | error | stopped
 //   url: rtmp://… rtmps://… หรือ srt://host:port?streamid=…&passphrase=…&latency=… (SRT ส่งเป็น MPEG-TS)
@@ -96,6 +99,24 @@ function outputArgs(url) {
   return ['-f', 'flv', url];
 }
 const RETRY_MS = 5000;
+const PROBE_MS = 15000;
+
+// ตรวจปลายทางโดยไม่ออกอากาศ: เชื่อมต่อ + ขอเผยแพร่ด้วยรหัสสตรีม (เซิร์ฟเวอร์ต้องตอบรับ) แต่ไม่ส่งภาพเลยสักเฟรม
+// ส่งแค่หัวไฟล์ของแทร็กเสียงเปล่า แพลตฟอร์มจึงไม่เริ่มไลฟ์ — รหัสผิด/เซิร์ฟเวอร์ปฏิเสธ = ffmpeg เปิดปลายทางไม่ได้
+function probeDest(url) {
+  return new Promise(resolve => {
+    const lines = [];
+    const proc = spawn(FFMPEG, ['-hide_banner', '-nostdin', '-loglevel', 'error', '-f', 'lavfi', '-i', 'anullsrc=r=44100:cl=mono', '-t', '0', '-c:a', 'aac', ...outputArgs(url)], { stdio: ['ignore', 'ignore', 'pipe'] });
+    const timer = setTimeout(() => { proc.kill('SIGKILL'); resolve({ ok: false, message: `ปลายทางไม่ตอบภายใน ${PROBE_MS / 1000} วินาที — ตรวจที่อยู่ Server และไฟร์วอลล์` }); }, PROBE_MS);
+    proc.stderr.on('data', b => lines.push(...String(b).split('\n').map(l => l.trim()).filter(Boolean)));
+    proc.on('error', err => { clearTimeout(timer); resolve({ ok: false, message: err.message }); });
+    proc.on('close', code => {
+      clearTimeout(timer);
+      if (code === 0) resolve({ ok: true, message: '' });
+      else resolve({ ok: false, message: (lines.filter(l => !/Output file is empty/.test(l)).slice(-2).join(' · ') || `ffmpeg จบด้วยรหัส ${code}`).replace(/\b(rtmps?|srt):\/\/[^\s]+?(?=:?\s|:?$)/gi, m => maskUrl(m)).slice(0, 300) });
+    });
+  });
+}
 
 // ภาพแนวตั้ง 9:16 (TikTok / Reels / Shorts) สร้างจาก Program 16:9 ที่เข้ารหัสแล้ว — เข้ารหัสใหม่เฉพาะปลายทางแนวตั้ง
 //   crop = ตัดกลางภาพให้เต็มจอแนวตั้ง · fit = ภาพเต็มกลางจอ พื้นหลังเป็นภาพเดิมขยายแล้วเบลอ
@@ -510,7 +531,7 @@ wss.on('connection', (ws, req) => {
   const height = Math.min(4320, Math.max(0, Number(params.get('res')) || 0));
   // vcopy=1: วิดีโอที่ส่งมาเป็น H.264 แล้ว (WebCodecs ด้วยชิปของเครื่อง) — ส่งต่อเลย เข้ารหัสเฉพาะเสียง
   const videoCopy = params.get('vcopy') === '1';
-  let encoderStats = null;
+  let encoderStats = null, rxBytes = 0, rxKbps = 0;
 
   const dests = new Map();
   let encoder = null;
@@ -563,7 +584,8 @@ wss.on('connection', (ws, req) => {
   const report = () => send({
     type: 'status',
     destinations: [...dests.values()].map(d => ({ id: d.id, name: d.name, state: d.state, message: d.message, kbps: d.state === 'live' ? d.kbps : 0, lag: lagOf(d) })),
-    encoder: encoderStats
+    encoder: encoderStats,
+    rx: rxKbps
   });
 
   function startEncoder() {
@@ -747,6 +769,8 @@ wss.on('connection', (ws, req) => {
       d.kbps = Math.round(d.bytes * 8 / 2000);
       d.bytes = 0;
     }
+    rxKbps = Math.round(rxBytes * 8 / 2000);
+    rxBytes = 0;
     report();
   }, 2000);
 
@@ -768,9 +792,14 @@ wss.on('connection', (ws, req) => {
         if (startEncoder()) addDest(msg.destination);
       } else if (msg.type === 'stop') {
         stopDest(msg.id);
+      } else if (msg.type === 'probe' && msg.destination && typeof msg.destination === 'object') {
+        const id = String(msg.destination.id || '').slice(0, 40), url = String(msg.destination.url || '');
+        if (!OUTPUT_RE(url)) send({ type: 'probe', id, ok: false, message: /^(ndi|omt):\/\//i.test(url) ? 'ส่งออกในวง LAN — ไม่ต้องตรวจรหัส' : 'URL ต้องเป็น rtmp://, rtmps:// หรือ srt://host:port' });
+        else probeDest(url).then(r => send({ type: 'probe', id, ...r }));
       }
       return;
     }
+    rxBytes += data.length;
     if (encoder && encoder.stdin.writable) encoder.stdin.write(data);
   });
 

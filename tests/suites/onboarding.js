@@ -59,12 +59,12 @@ async function setup(ctx) {
   await p.waitForSelector('.ob-state.ok, .ob-state.err', { timeout: 30000 }).catch(() => {});
   await p.waitForFunction(() => document.querySelector('.ob-test .dest-test-out')?.textContent.startsWith('✓') || document.querySelector('.ob-test .dest-test-out.err'), null, { timeout: 30000 }).catch(() => {});
   const testOut = await p.textContent('.ob-test .dest-test-out');
-  ok('test to a working server passes', testOut.startsWith('✓') && (await p.textContent('.ob-state')).includes('ทดสอบผ่าน'), testOut);
+  ok('test to a working server passes', testOut.startsWith('✓') && /ไม่ได้ออกอากาศ/.test(testOut) && (await p.textContent('.ob-state')).includes('ทดสอบผ่าน'), testOut);
   await p.waitForTimeout(1500);
   ok('test stops by itself, no live state left', await p.evaluate(() => !window.webmix.streamer.ws && !window.webmix.streamer.active && !window.webmix.streamer.testing));
   ok('test shows no summary / stop toast', (await p.locator('.sum-grid, .sm-modal').count()) === 0 && !(await p.evaluate(() => [...document.querySelectorAll('.toast')].some(t => /หยุดสตรีม|การสตรีมหยุด/.test(t.textContent)))));
   rx.kill('SIGINT'); await p.waitForTimeout(800);
-  ok('receiver got the test video', /h264/.test(probe(`${S}/ob.flv`)), probe(`${S}/ob.flv`));
+  ok('test does not go on air: the receiver got no video', !/h264/.test(probe(`${S}/ob.flv`)), probe(`${S}/ob.flv`));
   await p.screenshot({ path: S + '/ob-2.png' });
   await p.click('[data-ob=next]');
 

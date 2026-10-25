@@ -8870,7 +8870,7 @@ onmessage = async e => {
             <span class="pf-grow"></span>
             <div class="pf-warn" hidden></div>
             <button type="button" class="btn btn-green btn-golive pf-go" data-pf="go">${icon('broadcast')}เริ่มไลฟ์</button>
-            <button type="button" class="btn pf-test" data-pf="test">ทดสอบส่งปลายทาง (ไม่กี่วินาที)</button>
+            <button type="button" class="btn pf-test" data-pf="test">ทดสอบก่อนไลฟ์ ${DRY_RUN_SEC} วินาที (ไม่ออกอากาศ)</button>
             <p class="pf-test-out" hidden></p>
           </aside>
         </div>`,
@@ -8919,17 +8919,8 @@ onmessage = async e => {
             startDestinations(list());
             if (streamer.ws || streamer.reconnecting) openLiveDialog();
           } else if (act === 'test') {
-            const out = $('.pf-test-out', modal), b = $('[data-pf=test]', modal);
-            b.disabled = true; out.hidden = false; out.className = 'pf-test-out';
-            const lines = [];
-            for (const d of list()) {
-              out.textContent = `กำลังทดสอบ ${destLabel(d)}…`;
-              const r = await testDestination(d);
-              lines.push((r.ok ? '✓ ' : '✕ ') + r.message);
-              if (!r.ok) out.classList.add('err');
-            }
-            out.textContent = lines.join('\n');
-            b.disabled = false;
+            clearInterval(timer); close();
+            openDryRun(list());
           }
         });
       }
@@ -9714,33 +9705,227 @@ onmessage = async e => {
     });
   }
 
-  // ทดสอบปลายทาง: ส่งภาพ Program สั้น ๆ จนปลายทางรับได้ ~3 วินาที แล้วหยุด — รู้ก่อนไลฟ์จริงว่าคีย์/เซิร์ฟเวอร์ใช้ได้
+  // ทดสอบปลายทางโดยไม่ออกอากาศ: Gateway เชื่อมต่อและขอเผยแพร่ด้วยรหัสสตรีม แต่ไม่ส่งภาพ — รู้ว่าคีย์/เซิร์ฟเวอร์ใช้ได้ โดยผู้ชมไม่เห็น
   const pause = ms => new Promise(r => setTimeout(r, ms));
+  const gwSocketUrl = (extra = '') => { const gw = gatewayUrl(); return `${gw}${gw.includes('?') ? '&' : '?'}fps=${settings.fps}&vb=${streamKbps()}&res=${H}${extra}`; };
+  const probeHint = m => /refused|ปฏิเสธการเชื่อมต่อ/i.test(m) && !/ตรวจที่อยู่/.test(m) ? `เซิร์ฟเวอร์ปฏิเสธการเชื่อมต่อ — ตรวจที่อยู่และพอร์ต · ${m}`
+    : /publish|unauthori|forbidden|403|401|I\/O error|Input\/output/i.test(m) && !/Stream Key/.test(m) ? `เซิร์ฟเวอร์ไม่รับรหัสสตรีม — ตรวจ Stream Key (คีย์อาจหมดอายุหรือใช้ได้ครั้งเดียว) · ${m}` : m;
+  // ตรวจหลายปลายทางในการเชื่อมต่อเดียว → Map(id → { ok, message })
+  function probeDestinations(list, ws) {
+    return new Promise(resolve => {
+      const out = new Map();
+      const own = !ws;
+      if (own) ws = new WebSocket(gwSocketUrl());
+      const done = () => { clearTimeout(t); ws.removeEventListener('message', onMsg); if (own) { try { ws.close(1000); } catch (e) {} } resolve(out); };
+      const t = setTimeout(() => { for (const d of list) if (!out.has(d.id)) out.set(d.id, { ok: false, message: 'Gateway ไม่ตอบผลตรวจภายใน 20 วินาที — Gateway รุ่นนี้อาจยังไม่รองรับการตรวจแบบไม่ออกอากาศ (อัปเดต Gateway)' }); done(); }, 20000);
+      const onMsg = ev => {
+        if (typeof ev.data !== 'string') return;
+        let m; try { m = JSON.parse(ev.data); } catch (e) { return; }
+        if (m.type === 'error') { for (const d of list) if (!out.has(d.id)) out.set(d.id, { ok: false, message: String(m.message || 'Gateway ปฏิเสธการเชื่อมต่อ') }); done(); return; }
+        if (m.type !== 'probe' || !list.some(d => d.id === m.id)) return;
+        out.set(m.id, { ok: !!m.ok, message: m.ok ? '' : probeHint(String(m.message || 'ปลายทางไม่รับการเชื่อมต่อ')) });
+        if (out.size >= list.length) done();
+      };
+      ws.addEventListener('message', onMsg);
+      const go = () => list.forEach(d => ws.send(JSON.stringify({ type: 'probe', destination: destPayload(d) })));
+      if (ws.readyState === WebSocket.OPEN) go(); else ws.addEventListener('open', go, { once: true });
+      ws.addEventListener('close', () => { if (out.size < list.length) { for (const d of list) if (!out.has(d.id)) out.set(d.id, { ok: false, message: ws.lastError || 'เชื่อมต่อ Stream Gateway ไม่ได้' }); done(); } }, { once: true });
+    });
+  }
   async function testDestination(d) {
     if (streamer.ws || streamer.reconnecting) return { ok: false, message: 'กำลังไลฟ์อยู่ — ทดสอบได้เมื่อหยุดไลฟ์แล้ว' };
+    if (isNet(d)) return { ok: true, message: `${destLabel(d)} ส่งออกในวง LAN — ไม่ต้องตรวจรหัส` };
     const problem = gatewayProblem() || destProblem(d);
     if (problem) return { ok: false, message: problem };
-    streamer.testing = true;
-    streamer.lastError = '';
-    startDestinations([d]);
-    const t0 = Date.now();
-    let liveAt = 0, result = null;
-    while (!result) {
-      await pause(300);
-      const st = streamer.dests.get(d.id);
-      if (st && st.state === 'live') {
-        liveAt = liveAt || Date.now();
-        if (Date.now() - liveAt > 2500) result = { ok: true, message: `ส่งภาพถึง ${destLabel(d)} ได้แล้ว — พร้อมไลฟ์` };
-      } else if (st && st.state === 'error') result = { ok: false, message: st.message || 'ปลายทางปฏิเสธการเชื่อมต่อ — ตรวจ Stream Key' };
-      else if (!streamer.ws && !streamer.reconnecting) result = { ok: false, message: streamer.lastError || 'เชื่อมต่อ Stream Gateway ไม่ได้' };
-      else if (Date.now() - t0 > 20000) result = { ok: false, message: 'ปลายทางไม่ตอบรับภายใน 20 วินาที — ตรวจเซิร์ฟเวอร์และ Stream Key' };
-    }
-    stopAllStreams();
-    for (let i = 0; i < 20 && (streamer.ws || streamer.reconnecting); i++) await pause(150);
-    streamer.testing = false;
-    return result;
+    const r = (await probeDestinations([d])).get(d.id);
+    return r.ok ? { ok: true, message: `เชื่อมต่อและรหัสสตรีม ${destLabel(d)} ใช้ได้ — ไม่ได้ออกอากาศ` } : r;
   }
-  const TEST_NOTE = 'ส่งภาพจริงไปปลายทางประมาณ 5 วินาที — YouTube ที่เปิด “เริ่มอัตโนมัติ” อาจขึ้นไลฟ์สั้น ๆ';
+
+  // ทดสอบก่อนไลฟ์ (design 66): ส่งภาพ Program จริงถึง Gateway ช่วงหนึ่ง (Gateway เข้ารหัสแล้วทิ้ง) + ตรวจรหัสทุกปลายทาง — ไม่ขึ้นไลฟ์
+  let DRY_RUN_SEC = 30, lastDryRun = null;
+  function dryRun(list, onTick) {
+    return new Promise(resolve => {
+      const vcopy = useVideoCopy();
+      let r;
+      try {
+        r = vcopy ? window.WebMix.wcrec.recorder({ canvas: pgmCanvas, audioNode: (audio.ensure(), audio.post || null), fps: settings.fps, videoBitsPerSecond: streamKbps() * 1000, audioBitsPerSecond: 160000, requireAvc: true, constantBitrate: true })
+          : makeRecorder('stream');
+      } catch (e) { resolve({ error: 'เริ่มทดสอบไม่ได้: ' + e.message }); return; }
+      const ws = new WebSocket(gwSocketUrl(vcopy ? '&vcopy=1' : ''));
+      const res = { t0: 0, sent: 0, speed: [], rx: [], up: [], probes: null, upload: null, dropped: null, frames: null, error: '' };
+      let lastSent = 0, timer = 0, ended = false;
+      // ความจุของเน็ต: ทดสอบความเร็วอัปโหลด (ภาพทดสอบที่นิ่งบีบอัดได้เล็กกว่าบิตเรตจริง จึงวัดความจุจากสตรีมไม่ได้)
+      // สตรีมทดสอบใช้ดูว่าส่งได้ต่อเนื่องไม่ค้าง (ข้อมูลรอส่งใน WebSocket ไม่สะสม)
+      res.backlog = 0;
+      measureUpload(v => { res.upload = v; }).then(v => { res.upload = v; res.uploadDone = true; }).catch(() => { res.upload = res.upload || 0; res.uploadDone = true; });
+      const finish = err => {
+        if (ended) return;
+        ended = true;
+        clearInterval(timer);
+        try { if (r.state !== 'inactive') r.stop(); } catch (e) {}
+        if (typeof r.droppedFrames === 'number') { res.dropped = r.droppedFrames; res.frames = (r.encodedFrames || 0) + r.droppedFrames; }
+        res.error = err || res.error;
+        // รอผลตรวจปลายทางและการวัดความเร็วเน็ตให้เสร็จ (ไม่เกิน 15 วินาที)
+        const wait = (async () => { for (let i = 0; i < 60 && (!res.probes || !res.uploadDone); i++) await pause(250); })();
+        wait.then(() => { try { ws.close(1000); } catch (e) {} resolve(res); });
+      };
+      ws.onopen = () => {
+        ws.send(JSON.stringify({ type: 'start', destinations: [] }));
+        probeDestinations(list.filter(d => !isNet(d)), ws).then(m => { res.probes = m; onTick?.(res); });
+        r.ondataavailable = e => { if (e.data.size && ws.readyState === WebSocket.OPEN) { ws.send(e.data); res.sent += e.data.size; } };
+        r.start(1000);
+        res.t0 = Date.now();
+        timer = setInterval(() => {
+          const kb = Math.round((res.sent - lastSent) * 8 / 1000); lastSent = res.sent;
+          res.up.push(kb);
+          res.backlog = Math.max(res.backlog, ws.bufferedAmount || 0);
+          onTick?.(res);
+          if (Date.now() - res.t0 >= DRY_RUN_SEC * 1000) finish();
+        }, 1000);
+      };
+      ws.onmessage = ev => {
+        if (typeof ev.data !== 'string') return;
+        let m; try { m = JSON.parse(ev.data); } catch (e) { return; }
+        if (m.type === 'error') { ws.lastError = String(m.message || ''); finish(ws.lastError); }
+        if (m.type === 'status') {
+          if (m.encoder && +m.encoder.speed) res.speed.push(+m.encoder.speed);
+          if (typeof m.rx === 'number' && m.rx > 0) res.rx.push(m.rx);
+        }
+      };
+      ws.onclose = ev => { if (!ended) finish(ws.lastError || (res.t0 ? `Gateway ปิดการเชื่อมต่อระหว่างทดสอบ (${ev.code})` : 'เชื่อมต่อ Stream Gateway ไม่ได้')); };
+      res.cancel = () => finish('ยกเลิกการทดสอบ');
+    });
+  }
+  function dryRunVerdict(res, list) {
+    const avg = a => a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0;
+    const n = Math.max(1, list.filter(d => !isNet(d)).length), local = usingLocalGateway();
+    const needMbps = (streamKbps() + 160) * (local ? n : 1) / 1000;
+    const speed = res.speed.length ? Math.min(...res.speed.slice(1).concat(res.speed.slice(-1))) : 0;
+    const upAvg = res.upload || 0, upMin = upAvg;
+    const sentMbps = avg(res.up.slice(1)) / 1000;
+    // ข้อมูลค้างส่งเกิน ~2 วินาทีของสตรีม = ส่งไม่ทัน
+    const stuck = (res.backlog || 0) * 8 / 1000 > streamKbps() * 2;
+    const rows = [
+      { key: 'enc', name: 'เข้ารหัสทันเวลา', state: !speed ? 'warn' : speed >= 1 ? 'ok' : 'error', value: speed ? speed.toFixed(2) + 'x' : '—',
+        detail: !speed ? 'Gateway ไม่ได้ส่งความเร็วการเข้ารหัสกลับมา' : speed >= 1 ? `เข้ารหัส ${formatTag(Math.min(W, H), settings.fps)} ได้เร็วกว่าเวลาจริง` : 'เข้ารหัสไม่ทัน — ลดความละเอียด/เฟรมเรต หรือใช้ชิปของเครื่อง' },
+      { key: 'up', name: 'อัปโหลดพอและสม่ำเสมอ', state: stuck ? 'error' : !upAvg ? 'warn' : upMin >= needMbps * 1.15 ? 'ok' : upMin >= needMbps * 0.95 ? 'warn' : 'error', value: upAvg ? upAvg.toFixed(1) + ' Mbps' : '—',
+        detail: stuck ? 'ข้อมูลค้างส่งระหว่างทดสอบ — เน็ตส่งไม่ทันบิตเรตนี้' : `${upAvg ? `วัดได้ ${upAvg.toFixed(1)}` : 'วัดความเร็วเน็ตไม่ได้'} · ต้องใช้ ${needMbps.toFixed(1)} Mbps${local && n > 1 ? ` (${n} ปลายทาง)` : ''} · ส่งภาพจริง ${sentMbps.toFixed(1)} Mbps ไม่ค้าง` },
+      { key: 'drop', name: 'ภาพไม่ตกเฟรม', state: res.dropped == null ? 'ok' : res.dropped / Math.max(1, res.frames) > 0.02 ? 'warn' : 'ok', value: res.dropped == null ? '—' : `${res.dropped} ทิ้ง`,
+        detail: res.dropped == null ? `ส่งภาพต่อเนื่อง ${Math.round((res.sent * 8 / 1e6) * 10) / 10} Mb ใน ${DRY_RUN_SEC} วินาที` : `ส่งครบ ${res.frames - res.dropped} จาก ${res.frames} เฟรม` }
+    ];
+    const probes = list.map(d => ({ d, r: isNet(d) ? { ok: true, message: 'ส่งออกในวง LAN — ไม่ต้องตรวจรหัส' } : res.probes?.get(d.id) || { ok: false, message: 'ไม่ได้ผลตรวจ' } }));
+    const bad = !!res.error || rows.some(x => x.state === 'error') || probes.some(p => !p.r.ok);
+    const warn = !bad && rows.some(x => x.state === 'warn');
+    return { rows, probes, bad, warn, needMbps, upAvg, spare: upAvg && needMbps ? Math.round((upAvg / needMbps - 1) * 100) : 0 };
+  }
+  function openDryRun(list) {
+    list = list || settings.destinations.filter(d => d.enabled);
+    if (streamer.ws || streamer.reconnecting) { toast('กำลังไลฟ์อยู่ — ทดสอบได้เมื่อหยุดไลฟ์แล้ว', 'warn'); return; }
+    const gwErr = gatewayProblem();
+    if (gwErr) { toast(gwErr, 'warn'); openSettings('stream'); return; }
+    let run = null;
+    dialog({
+      title: 'ทดสอบก่อนไลฟ์',
+      wide: true,
+      body: `<div class="dr-wrap">
+        <div class="dr-main">
+          <div class="dr-head"><b class="dr-stage">กำลังเตรียม…</b><span class="dr-clock mono">00:00</span></div>
+          <span class="dr-bar"><i></i></span>
+          <small class="dr-cap">${usingLocalGateway() ? 'เครื่องนี้ → GATEWAY ในเครื่อง' : 'เครื่องนี้ → GATEWAY'} (${DRY_RUN_SEC} วินาที ด้วยภาพ Program จริง)</small>
+          <div class="dr-rows"></div>
+          <section class="dr-graph"><div class="dr-gh"><span>ส่งภาพจริงระหว่างทดสอบ</span><span class="dr-need"></span></div><svg viewBox="0 0 700 80" preserveAspectRatio="none" role="img" aria-label="อัปโหลดระหว่างทดสอบ"><line class="dr-needline" x1="0" x2="700"/><polyline class="dr-line"/></svg></section>
+          <small class="dr-cap">ปลายทาง — เชื่อมต่อและตรวจรหัสสตรีม แล้วตัดก่อนส่งภาพ</small>
+          <div class="dr-dests"></div>
+        </div>
+        <aside class="dr-side">
+          <div class="dr-verdict"><span class="dr-vdot">··</span><b>กำลังทดสอบ</b><span class="dr-vtext"></span></div>
+          <div class="dr-kv"><div><span>คุณภาพที่ทดสอบ</span><b>${formatTag(Math.min(W, H), settings.fps)} · ${(streamKbps() / 1000).toFixed(1)} Mbps</b></div>
+            <div><span>ตัวเข้ารหัส</span><b>${useVideoCopy() ? 'ชิปของเครื่อง (ไม่เข้ารหัสซ้ำ)' : usingLocalGateway() && desktop?.info?.encoder ? desktop.info.encoder : 'Gateway'}</b></div>
+            <div><span>ทดสอบล่าสุด</span><b class="dr-last">${lastDryRun ? new Date(lastDryRun).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit', hour12: false }) : '—'}</b></div></div>
+          <p class="dr-note">ภาพทดสอบส่งถึง Gateway เท่านั้น ปลายทางได้รับแค่การเชื่อมต่อและรหัส จึงไม่ขึ้นไลฟ์ — YouTube ที่ตั้ง “เริ่มอัตโนมัติ” ก็ไม่ขึ้น</p>
+          <span class="dr-grow"></span>
+          <button type="button" class="btn dr-again" data-dr="again" disabled>ทดสอบอีกครั้ง</button>
+          <button type="button" class="btn btn-golive dr-go" data-dr="go" disabled>${icon('broadcast')}เริ่มไลฟ์</button>
+        </aside></div>`,
+      actions: [{ label: 'ปิด', value: 'close' }],
+      onOpen(modal, close) {
+        modal.classList.add('dr-modal');
+        const pill = (cls, text) => `<span class="dr-pill is-${cls}">${esc(text)}</span>`;
+        const mark = st => st === 'ok' ? 'OK' : st === 'run' ? '··' : st === 'warn' ? '!' : '✕';
+        const paintDests = res => {
+          $('.dr-dests', modal).innerHTML = list.map(d => {
+            const r = isNet(d) ? { ok: true, message: 'ส่งออกในวง LAN — ไม่ต้องตรวจรหัส' } : res?.probes?.get(d.id);
+            const pf = PLATFORMS[d.platform] || {};
+            return `<div class="dr-row"><span class="lv-abbr lv-${esc(d.platform)}" aria-hidden="true">${esc((pf.label || '?').slice(0, 2).toUpperCase())}</span>
+              <span class="dr-txt"><b>${esc(destLabel(d))}</b><small>${esc(!r ? 'กำลังเชื่อมต่อ…' : r.ok ? (r.message || destMasked(d) + ' · รับรหัสแล้ว ตัดก่อนส่งภาพ') : r.message)}</small></span>
+              ${!r ? pill('run', 'รอ') : r.ok ? pill('ok', isNet(d) ? 'ไม่ต้องตรวจ' : 'รหัสถูกต้อง') : pill('error', 'ไม่ผ่าน')}</div>`;
+          }).join('') || '<p class="note">ยังไม่ได้ติ๊กปลายทาง — ทดสอบเฉพาะเครื่องนี้และอินเทอร์เน็ต</p>';
+        };
+        const paintRows = rows => {
+          $('.dr-rows', modal).innerHTML = rows.map(x => `<div class="dr-row" data-k="${x.key}"><span class="dr-mark is-${x.state}">${mark(x.state)}</span>
+            <span class="dr-txt"><b>${esc(x.name)}</b><small>${esc(x.detail)}</small></span><b class="dr-val mono">${esc(x.value)}</b></div>`).join('');
+        };
+        const paintGraph = (res, needMbps) => {
+          const vals = res.up.map(v => v / 1000);
+          const max = Math.max(needMbps * 1.6, ...vals, 1);
+          const y = v => (76 - v / max * 70).toFixed(1);
+          $('.dr-needline', modal).setAttribute('y1', y(needMbps)); $('.dr-needline', modal).setAttribute('y2', y(needMbps));
+          $('.dr-line', modal).setAttribute('points', vals.map((v, i) => `${(i / Math.max(1, DRY_RUN_SEC - 1) * 700).toFixed(1)},${y(v)}`).join(' '));
+          $('.dr-need', modal).textContent = `เส้นประ = ที่ต้องใช้ ${needMbps.toFixed(1)} Mbps`;
+        };
+        const start = async () => {
+          $('[data-dr=again]', modal).disabled = true; $('[data-dr=go]', modal).disabled = true;
+          const v = $('.dr-verdict', modal); v.className = 'dr-verdict'; $('.dr-vdot', v).textContent = '··'; $('b', v).textContent = 'กำลังทดสอบ'; $('.dr-vtext', v).textContent = `ส่งภาพ Program ไป Gateway — อีก ${DRY_RUN_SEC} วินาที`;
+          paintRows([{ key: 'enc', name: 'เข้ารหัสทันเวลา', state: 'run', value: '…', detail: 'กำลังวัด' }, { key: 'up', name: 'อัปโหลดสม่ำเสมอ', state: 'run', value: '…', detail: 'กำลังวัด' }, { key: 'drop', name: 'ภาพไม่ตกเฟรม', state: 'run', value: '…', detail: 'กำลังวัด' }]);
+          paintDests(null);
+          const need = dryRunVerdict({ speed: [], rx: [], up: [], sent: 0 }, list).needMbps;
+          const p = dryRun(list, res => {
+            if (!modal.isConnected) { res.cancel?.(); return; }
+            const sec = Math.min(DRY_RUN_SEC, Math.round((Date.now() - res.t0) / 1000));
+            $('.dr-stage', modal).textContent = `กำลังทดสอบ ${sec} / ${DRY_RUN_SEC} วินาที`;
+            $('.dr-clock', modal).textContent = `00:${pad2(sec)}`;
+            $('.dr-bar i', modal).style.width = `${sec / DRY_RUN_SEC * 100}%`;
+            $('.dr-vtext', v).textContent = `ส่งภาพ Program ไป Gateway — อีก ${DRY_RUN_SEC - sec} วินาที`;
+            paintGraph(res, need);
+            if (res.probes) paintDests(res);
+          });
+          run = p;
+          const res = await p;
+          if (!modal.isConnected) return;
+          lastDryRun = Date.now();
+          $('.dr-last', modal).textContent = new Date(lastDryRun).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit', hour12: false });
+          const vd = dryRunVerdict(res, list);
+          $('.dr-stage', modal).textContent = res.error ? 'ทดสอบไม่สำเร็จ' : 'ทดสอบเสร็จ';
+          $('.dr-bar i', modal).style.width = '100%';
+          $('.dr-bar i', modal).className = vd.bad ? 'is-error' : vd.warn ? 'is-warn' : 'is-ok';
+          paintRows(vd.rows); paintDests(res); paintGraph(res, vd.needMbps);
+          v.className = 'dr-verdict ' + (vd.bad ? 'is-error' : vd.warn ? 'is-warn' : 'is-ok');
+          $('.dr-vdot', v).textContent = vd.bad ? '!' : vd.warn ? '!' : 'OK';
+          $('b', v).textContent = vd.bad ? 'ยังไม่พร้อม' : vd.warn ? 'ไลฟ์ได้ แต่ควรดู' : 'พร้อมไลฟ์';
+          const badDest = vd.probes.find(p => !p.r.ok);
+          $('.dr-vtext', v).textContent = res.error ? res.error
+            : badDest ? `${destLabel(badDest.d)}: ${badDest.r.message.split(' · ')[0]} — แก้แล้วกดทดสอบอีกครั้ง`
+            : vd.bad || vd.warn ? vd.rows.filter(x => x.state !== 'ok').map(x => x.detail).join(' · ')
+            : `ทุกข้อผ่าน${vd.spare > 0 ? ` — เน็ตเหลือเผื่อ ${vd.spare}%` : ''}`;
+          $('[data-dr=again]', modal).disabled = false;
+          $('[data-dr=go]', modal).disabled = !!vd.bad || !list.length;
+        };
+        modal.addEventListener('click', async e => {
+          const act = e.target.closest('[data-dr]')?.dataset.dr;
+          if (act === 'again') start();
+          else if (act === 'go') {
+            close();
+            const cd = [0, 3, 10].includes(store.get('pfCountdown', 3)) ? store.get('pfCountdown', 3) : 3;
+            if (cd && !(await countdown(cd))) return;
+            startDestinations(list);
+            if (!isPhoneUI() && (streamer.ws || streamer.reconnecting)) openLiveDialog();
+          }
+        });
+        start();
+      }
+    }).then(() => { run?.then?.(() => {}); });
+  }
+  const TEST_NOTE = 'ตรวจการเชื่อมต่อและรหัสสตรีมโดยไม่ส่งภาพ — ไม่ขึ้นไลฟ์ ผู้ชมไม่เห็น';
   async function runDestTest(btn, out, d) {
     btn.disabled = true;
     const label = btn.innerHTML;
@@ -10902,7 +11087,7 @@ onmessage = async e => {
     $$('#seg-cardsize button').forEach(b => { b.classList.toggle('is-active', b.dataset.size === cardSize()); b.addEventListener('click', () => setCardSize(b.dataset.size)); });
 
     // สำหรับดีบัก/ทดสอบอัตโนมัติ
-    window.webmix = { chatFeed, chatAdd, chatShow, chatHide, playlist, dataSources, timerControl, multiview, renderer, gpu, setRenderer: v => { settings.renderer = v; renderer.resolve(); updateStatus(); }, show, ovl, setChannel, toggleInputOverlay, useRecFolder: dir => { recFolder = dir; }, inputs, state, settings, overlays, audio, rec, iso, stinger, replayCapture, slideGo, midi, checkAppUpdate, macros, runMacro, openCamControl, abr: { state: abr, decide: abrDecide, apply: abrApply, tick: abrTick }, openDeskSummary, openDeskPreflight, liveStats, streamer, wireless, cut, autoTransition, setPreview, tr, ftb, padFire, chanKey, remote: remoteCtl, lufs, layoutSize, renderInputs, renderAlerts, openOutputWindow, setOrient };
+    window.webmix = { chatFeed, chatAdd, chatShow, chatHide, playlist, dataSources, timerControl, multiview, renderer, gpu, setRenderer: v => { settings.renderer = v; renderer.resolve(); updateStatus(); }, show, ovl, setChannel, toggleInputOverlay, useRecFolder: dir => { recFolder = dir; }, inputs, state, settings, overlays, audio, rec, iso, stinger, replayCapture, slideGo, midi, checkAppUpdate, macros, runMacro, openCamControl, abr: { state: abr, decide: abrDecide, apply: abrApply, tick: abrTick }, openDeskSummary, openDeskPreflight, liveStats, openDryRun, setDryRunSeconds: n => { DRY_RUN_SEC = n; }, streamer, wireless, cut, autoTransition, setPreview, tr, ftb, padFire, chanKey, remote: remoteCtl, lufs, layoutSize, renderInputs, renderAlerts, openOutputWindow, setOrient };
   }
 
   boot();
