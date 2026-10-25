@@ -9610,9 +9610,10 @@ onmessage = async e => {
     youtube: 'หาคีย์: YouTube Studio → สร้าง → ไลฟ์สด → คัดลอก “คีย์สตรีม”',
     facebook: 'หาคีย์: facebook.com/live/producer → “ซอฟต์แวร์สตรีม” → คัดลอก “คีย์สตรีม”',
     twitch: 'หาคีย์: Twitch Creator Dashboard → Settings → Stream → Primary Stream key',
+    tiktok: 'หาคีย์: TikTok LIVE Studio / LIVE Center → คัดลอก “Server URL” และ “Stream Key”',
+    srt: 'ใส่ปลายทาง srt://host:port จากเครื่องรับ (vMix / OBS / SRT Server) · รหัสผ่านใส่ได้ในตั้งค่า',
     custom: 'ใส่ RTMP Server URL และ Stream Key จากผู้ให้บริการ'
   };
-  const obSteps = n => `<ol class="ob-steps">${['กล้อง', 'ช่องทางไลฟ์', 'คุณภาพ'].map((t, i) => `<li class="${i + 1 < n ? 'done' : i + 1 === n ? 'now' : ''}">${t}</li>`).join('')}</ol>`;
   const obSheet = modal => { modal.classList.add('ob'); if (isPhoneUI()) modal.classList.add('m-sheet'); };
   function shouldOnboard() {
     if (store.get('onboarded', false) || /[?&]call=/.test(location.search)) return false;
@@ -9620,85 +9621,161 @@ onmessage = async e => {
     if (navigator.webdriver || (desktop && desktop.info && desktop.info.selftest)) return false;
     return firstRun;
   }
-  async function openOnboarding() {
+  // เริ่มต้นใช้งาน (design 27): หน้าต่างเดียว 4 ขั้น — ปลายทาง (เลือกได้หลายที่) → รหัสสตรีม → กล้องและไมค์ → ทดสอบ/คุณภาพ
+  const OB_PLATS = [['youtube', 'YT', 'YouTube', '#C8323A'], ['facebook', 'FB', 'Facebook', '#2F62D6'], ['twitch', 'TW', 'Twitch', '#6441A5'],
+    ['tiktok', 'TT', 'TikTok', '#111111'], ['custom', 'RTMP', 'RTMP อื่น ๆ', '#4A5263'], ['srt', 'SRT', 'SRT', '#2C6E6A']];
+  const OB_STEPS = ['ปลายทาง', 'รหัสสตรีม', 'กล้องและไมค์', 'ทดสอบ'];
+  function openOnboarding() {
     store.set('onboarded', true);
-    // ขั้นที่ 1: กล้อง
-    const hasCam = () => inputs.some(i => i.type === 'camera');
-    const r1 = await dialog({
-      title: 'ยินดีต้อนรับสู่ WebMix',
-      body: `${obSteps(1)}<p class="ob-lead">ตั้งค่าให้พร้อมไลฟ์ใน 3 ขั้น — ข้ามแล้วกลับมาทำทีหลังได้จากเมนู “เพิ่มเติม → เริ่มต้นใช้งาน”</p>
-        <p class="modal-text">${hasCam() ? 'มีกล้องในรายการแหล่งภาพแล้ว ✓' : 'เริ่มจากเพิ่มกล้องและไมค์ของเครื่องนี้เป็นแหล่งภาพแรก'}</p>`,
-      actions: [{ label: 'ข้าม', value: 'skip' }, { label: hasCam() ? 'ถัดไป' : 'เพิ่มกล้อง', value: 'cam', primary: true }],
-      onOpen: obSheet
-    });
-    if (!r1) return;
-    if (r1.value === 'cam' && !hasCam()) await openCameraDialog();
-
-    // ขั้นที่ 2: ช่องทางไลฟ์
-    const first = settings.destinations[0];
-    const tiles = ['youtube', 'facebook', 'twitch', 'custom'];
-    const startPlat = first && tiles.includes(first.platform) ? first.platform : 'youtube';
+    let step = 0, preview = null, meterRaf = 0, picked = qualityOf(settings.resolution, settings.fps, settings.videoKbps) || QUALITY[1];
+    // ปลายทางที่มีอยู่แล้ว (มีคีย์) ถูกเลือกไว้ให้ · ยังไม่มีเลย → YouTube
+    const sel = new Set(settings.destinations.filter(d => d.key || (d.server && !PLATFORMS[d.platform]?.server)).map(d => d.platform).filter(k => OB_PLATS.some(p => p[0] === k)));
+    if (!sel.size) sel.add('youtube');
+    const drafts = {};
+    for (const [k] of OB_PLATS) { const d = settings.destinations.find(x => x.platform === k); drafts[k] = d ? { ...d } : newDest(k); }
     const needGw = !usingLocalGateway() && !!gatewayProblem();
-    let draft = null;
-    const r2 = await dialog({
-      title: 'ไลฟ์ไปที่ไหน',
-      body: `${obSteps(2)}
-        <div class="ob-plats" role="radiogroup" aria-label="แพลตฟอร์ม">${tiles.map(k => `
-          <label class="ob-plat"><input type="radio" name="plat" value="${k}" ${k === startPlat ? 'checked' : ''}><span>${k === 'custom' ? 'อื่น ๆ (RTMP)' : esc(PLATFORMS[k].label.replace(/ Live$/, ''))}</span></label>`).join('')}</div>
-        <label class="field ob-server" hidden><span>RTMP Server URL</span><input name="server" class="input mono" placeholder="rtmp://..." value="${esc(first && first.platform === 'custom' ? first.server : '')}"></label>
-        <div class="field"><span>Stream Key</span>
-          <div class="link-row"><input name="key" class="input mono" type="password" autocomplete="off" placeholder="วางคีย์สตรีมที่นี่" aria-label="Stream Key" value="${esc(first ? first.key : '')}">
-          <button type="button" class="btn ob-paste">${icon('copy')}วาง</button></div></div>
-        <p class="note ob-help"></p>
+    const stopPreview = () => { cancelAnimationFrame(meterRaf); if (preview) { preview.stream?.getTracks().forEach(t => t.stop()); preview.ctx?.close().catch(() => {}); } preview = null; };
+    const label = k => OB_PLATS.find(p => p[0] === k)[2];
+    const pane = () => {
+      if (step === 0) return `<h3>จะไลฟ์ไปที่ไหน</h3><p class="ob-p">เลือกได้หลายที่ — ส่งพร้อมกันจากเครื่องนี้ (เพิ่มทีหลังได้)</p>
+        <div class="ob-tiles">${OB_PLATS.map(([k, ab, name, color]) => `<button type="button" class="ob-tile" data-plat="${k}" aria-pressed="${sel.has(k)}"><span class="ob-chip" style="background:${color}">${ab}</span><b>${name}</b></button>`).join('')}</div>`;
+      if (step === 1) return `<h3>ใส่รหัสสตรีม</h3><p class="ob-p">คัดลอกจากหน้า YouTube Studio / Facebook Live Producer — เก็บไว้ในเครื่องนี้เท่านั้น</p>
+        ${[...sel].map(k => { const d = drafts[k], noSrv = !PLATFORMS[k].server; return `<div class="ob-key" data-k="${k}">
+          ${noSrv ? `<label class="field"><span>${label(k)} · ${k === 'srt' ? 'ปลายทาง SRT' : 'Server URL'}</span><input name="srv-${k}" class="input mono" placeholder="${k === 'srt' ? 'srt://host:port' : 'rtmp://...'}" value="${esc(d.server || '')}"></label>` : ''}
+          ${k === 'srt' ? '' : `<div class="field"><span>${label(k)} · Stream key</span><span class="link-row"><input name="key-${k}" class="input mono" type="password" autocomplete="off" placeholder="วางรหัสที่นี่" aria-label="${label(k)} Stream key" value="${esc(d.key || '')}"><button type="button" class="btn ob-paste" data-k="${k}">${icon('copy')}วาง</button></span></div>`}
+          <small class="note ob-help">${esc(KEY_HELP[k] || '')}</small><p class="ob-state" data-k="${k}"></p></div>`; }).join('')}
         ${needGw ? `<label class="field"><span>Stream Gateway (WebSocket) — การไลฟ์จากเว็บต้องมีตัวกลางส่งสัญญาณ</span><input name="gateway" class="input mono" placeholder="wss://gateway.example.com:8080/?token=..." value="${esc(settings.gateway)}"></label>` : ''}
         <div class="ob-test"><button type="button" class="btn ob-test-btn">${icon('broadcast')}ทดสอบปลายทาง</button><p class="dest-test-out" hidden></p></div>
-        <p class="note">${TEST_NOTE}</p>`,
-      actions: [{ label: 'ข้าม', value: 'skip' }, { label: 'ถัดไป', value: 'next', primary: true }],
-      onOpen(modal) {
-        obSheet(modal);
-        const f = $('form', modal);
-        const plat = () => $('input[name=plat]:checked', modal).value;
-        const sync = () => { $('.ob-server', modal).hidden = plat() !== 'custom'; $('.ob-help', modal).textContent = KEY_HELP[plat()]; };
-        $$('input[name=plat]', modal).forEach(r => r.addEventListener('change', sync));
-        sync();
-        $('.ob-paste', modal).addEventListener('click', async () => {
-          let text = '';
-          try { text = (await navigator.clipboard.readText()).trim(); } catch (e) {}
-          if (!text) { toast('อ่านคลิปบอร์ดไม่ได้ — กดค้างที่ช่องคีย์แล้วเลือก “วาง”', 'warn'); f.key.focus(); return; }
-          const m = /^(rtmps?:\/\/.+)\/([^/]+)$/i.exec(text);
-          if (m) { f.key.value = m[2]; if (plat() === 'custom') f.server.value = m[1]; } else f.key.value = text;
-        });
-        draft = () => {
-          const k = plat();
-          if (f.gateway) settings.gateway = f.gateway.value.trim();
-          return { ...(first && first.platform === k ? first : newDest(k)), platform: k, server: k === 'custom' ? f.server.value.trim() : PLATFORMS[k].server, key: f.key.value.trim(), enabled: true };
-        };
-        $('.ob-test-btn', modal).addEventListener('click', e => runDestTest(e.currentTarget, $('.ob-test .dest-test-out', modal), draft()));
+        <p class="note">${TEST_NOTE}</p>`;
+      if (step === 2) return `<h3>กล้องและไมค์</h3>
+        <div class="ob-cam"><div class="ob-video"><video muted playsinline autoplay></video><span class="ob-novideo">กำลังเปิดกล้อง…</span></div>
+          <div class="ob-camf"><label class="field"><span>กล้อง</span><select name="obcam" class="select"></select></label>
+            <label class="field"><span>ไมค์</span><select name="obmic" class="select"></select></label>
+            <div class="ob-meter-l">พูดทดสอบ</div><span class="ob-meter"><i></i></span>
+            <button type="button" class="btn ob-phone">${icon('phone')}ใช้มือถือเป็นกล้องเพิ่ม (QR)</button>
+            ${inputs.some(i => i.type === 'camera') ? '<p class="note">มีกล้องในรายการแหล่งภาพแล้ว — กล้องตัวเดิมจะไม่ถูกเพิ่มซ้ำ</p>' : ''}</div></div>`;
+      return `<div class="ob-done"><span class="ob-ok">OK</span><h3>พร้อมไลฟ์แล้ว</h3>
+        <p class="ob-p">${[...sel].map(label).join(' · ')} — เลือกคุณภาพตามความเร็วอินเทอร์เน็ต (ไม่แน่ใจให้กด “วัดความเร็วเน็ต”)</p></div>
+        ${qualityHtml(picked.id)}
+        <div class="ob-done-btns"><button type="button" class="btn ob-help-btn">${icon('help')}ดูคู่มือสั้น</button></div>`;
+    };
+    // เก็บค่าที่พิมพ์ในขั้นรหัสสตรีมไว้ก่อนเปลี่ยนขั้น
+    const keep = modal => {
+      for (const k of sel) {
+        const srv = $(`[name="srv-${k}"]`, modal), key = $(`[name="key-${k}"]`, modal);
+        if (srv) drafts[k].server = srv.value.trim();
+        if (key) drafts[k].key = key.value.trim();
       }
-    });
-    if (!r2) return;
-    if (r2.value === 'next' && draft) {
-      const d = draft();
-      if (d.key || d.platform === 'custom') {
-        const i = settings.destinations.findIndex(x => x.id === d.id);
-        if (i >= 0) settings.destinations[i] = d; else settings.destinations.unshift(d);
-        // ปลายทางเริ่มต้นที่ยังว่าง (ไม่มีคีย์) ไม่ต้องเก็บไว้ให้สับสน
-        settings.destinations = settings.destinations.filter(x => x.id === d.id || x.key).slice(0, MAX_DESTINATIONS);
-      }
+      const gw = $('[name=gateway]', modal);
+      if (gw) settings.gateway = gw.value.trim();
+    };
+    const save = () => {
+      const chosen = [...sel].map(k => ({ ...drafts[k], platform: k, enabled: true })).filter(d => d.key || (d.server && !PLATFORMS[d.platform].server));
+      const others = settings.destinations.filter(x => !chosen.some(c => c.id === x.id) && x.key && !sel.has(x.platform));
+      settings.destinations = [...chosen, ...others].slice(0, MAX_DESTINATIONS);
       saveSettings();
-    }
-
-    // ขั้นที่ 3: คุณภาพ
-    let picked = qualityOf(settings.resolution, settings.fps, settings.videoKbps) || QUALITY[1];
-    const r3 = await dialog({
-      title: 'คุณภาพการไลฟ์',
-      body: `${obSteps(3)}<p class="modal-text">เลือกตามความเร็วอินเทอร์เน็ต — ไม่แน่ใจให้กด “วัดความเร็วเน็ต”</p>${qualityHtml(picked.id)}
-        <p class="note">ปรับความละเอียด/เฟรมเรต/บิตเรตเองได้ที่ ตั้งค่า → เอาต์พุต → ขั้นสูง</p>`,
-      actions: [{ label: 'เสร็จสิ้น', value: 'done', primary: true }],
-      onOpen(modal) { obSheet(modal); bindQuality(modal, q => { picked = q; }); }
-    });
-    if (r3 && !(rec.active || streamer.active)) applyQuality(picked);
-    if (r3) toast('พร้อมแล้ว — กด STREAM เพื่อเริ่มไลฟ์', 'success', 5000);
+    };
+    const startPreview = async modal => {
+      const v = $('.ob-video video', modal), note = $('.ob-novideo', modal);
+      if (!needMedia()) { note.textContent = 'อุปกรณ์นี้ใช้กล้องไม่ได้'; return; }
+      let devs;
+      try { devs = await listDevices('videoinput'); } catch (e) { note.textContent = e.quiet ? 'ยังไม่ได้อนุญาตกล้อง' : e.message; return; }
+      if (step !== 2 || !modal.isConnected) return;
+      const cams = devs.filter(d => d.kind === 'videoinput'), mics = devs.filter(d => d.kind === 'audioinput');
+      const cs = $('[name=obcam]', modal), ms = $('[name=obmic]', modal);
+      cs.innerHTML = cams.map((d, i) => `<option value="${esc(d.deviceId)}">${esc(d.label || 'กล้อง ' + (i + 1))}</option>`).join('') || '<option value="">ไม่พบกล้อง</option>';
+      ms.innerHTML = '<option value="">ไม่ใช้ไมค์</option>' + mics.map((d, i) => `<option value="${esc(d.deviceId)}">${esc(d.label || 'ไมค์ ' + (i + 1))}</option>`).join('');
+      if (mics.length) ms.selectedIndex = 1;
+      const open = async () => {
+        stopPreview();
+        if (!cs.value) { note.textContent = 'ไม่พบกล้องในเครื่องนี้'; return; }
+        const cam = { deviceId: cs.value, micId: ms.value, w: 1920, h: 1080, label: cs.options[cs.selectedIndex].text, micLabel: ms.value ? ms.options[ms.selectedIndex].text : '' };
+        try {
+          const stream = await startCamera(cam);
+          if (step !== 2 || !modal.isConnected) { stream.getTracks().forEach(t => t.stop()); return; }
+          preview = { stream, cam };
+          v.srcObject = stream; v.play().catch(() => {}); note.hidden = true;
+          if (stream.getAudioTracks().length) {
+            const ac = new AudioContext(), an = ac.createAnalyser(); an.fftSize = 512; ac.resume().catch(() => {});
+            ac.createMediaStreamSource(stream).connect(an);
+            preview.ctx = ac;
+            const buf = new Float32Array(an.fftSize), bar = $('.ob-meter i', modal);
+            const tick = () => { an.getFloatTimeDomainData(buf); let pk = 0; for (const x of buf) pk = Math.max(pk, Math.abs(x)); const db = 20 * Math.log10(pk || 1e-6); bar.style.width = `${Math.max(0, Math.min(100, (db + 60) / 60 * 100))}%`; meterRaf = requestAnimationFrame(tick); };
+            tick();
+          }
+        } catch (e) { note.hidden = false; note.textContent = 'เปิดกล้องไม่สำเร็จ: ' + e.message; }
+      };
+      cs.onchange = open; ms.onchange = open;
+      open();
+    };
+    const render = modal => {
+      $('.ob-stepper', modal).innerHTML = OB_STEPS.map((t, i) => `<li class="${i < step ? 'done' : i === step ? 'now' : ''}"><span>${i < step ? '✓' : i + 1}</span>${t}</li>`).join('');
+      $('.ob-pane', modal).innerHTML = pane();
+      $('.ob-count', modal).textContent = `ขั้นที่ ${step + 1} จาก 4`;
+      $('[data-ob=back]', modal).hidden = step === 0;
+      $('[data-ob=next]', modal).textContent = step === 3 ? 'เสร็จสิ้น — ไปที่สตูดิโอ' : 'ถัดไป';
+      $('[data-ob=next]', modal).disabled = step === 0 && !sel.size;
+      if (step === 2) startPreview(modal);
+      if (step === 3) bindQuality(modal, q => { picked = q; });
+    };
+    // ใช้กล้องที่ดูตัวอย่างอยู่เป็นแหล่งภาพเลย (ไม่เปิดกล้องซ้ำ) ถ้ายังไม่มีกล้องตัวนี้ในรายการ
+    const useCamera = () => {
+      if (preview && preview.stream && !inputs.some(i => i.type === 'camera' && i.cam?.deviceId === preview.cam.deviceId)) {
+        const { stream, cam } = preview; preview.stream = null;
+        addStreamInput(stream, { type: 'camera', name: cam.label.replace(/\s*\([0-9a-f]{4}:[0-9a-f]{4}\)\s*$/i, '').slice(0, 32), cam });
+      }
+      stopPreview();
+    };
+    return dialog({
+      title: 'เริ่มต้นใช้งาน WebMix',
+      wide: true,
+      body: `<ol class="ob-stepper" aria-label="ขั้นตอน"></ol><div class="ob-pane"></div>`,
+      actions: [{ label: 'ปิด' }],
+      onOpen(modal, close) {
+        obSheet(modal);
+        $('.modal-title', modal).insertAdjacentHTML('afterend', '<button type="button" class="btn btn-ghost btn-sm ob-skip ml-auto" data-ob="skip">ข้าม ตั้งค่าเอง</button>');
+        $('[data-close]', modal).classList.remove('ml-auto');
+        $('.modal-foot', modal).innerHTML = `<button type="button" class="btn" data-ob="back">ย้อนกลับ</button><span class="ml-auto"></span><span class="ob-count"></span><button type="button" class="btn btn-primary" data-ob="next">ถัดไป</button>`;
+        render(modal);
+        modal.addEventListener('click', async e => {
+          const t = e.target.closest('[data-plat]');
+          if (t) { const k = t.dataset.plat; if (sel.has(k)) sel.delete(k); else sel.add(k); t.setAttribute('aria-pressed', String(sel.has(k))); $('[data-ob=next]', modal).disabled = !sel.size; return; }
+          const paste = e.target.closest('.ob-paste');
+          if (paste) {
+            const k = paste.dataset.k; let text = '';
+            try { text = (await navigator.clipboard.readText()).trim(); } catch (err) {}
+            const f = $(`[name="key-${k}"]`, modal);
+            if (!text) { toast('อ่านคลิปบอร์ดไม่ได้ — กดค้างที่ช่องคีย์แล้วเลือก “วาง”', 'warn'); f.focus(); return; }
+            const m = /^(rtmps?:\/\/.+)\/([^/]+)$/i.exec(text), srv = $(`[name="srv-${k}"]`, modal);
+            if (m) { f.value = m[2]; if (srv) srv.value = m[1]; } else f.value = text;
+            return;
+          }
+          if (e.target.closest('.ob-test-btn')) {
+            keep(modal);
+            const btn = $('.ob-test-btn', modal), out = $('.ob-test .dest-test-out', modal);
+            for (const k of sel) {
+              const r = await runDestTest(btn, out, { ...drafts[k], platform: k, enabled: true });
+              const st = $(`.ob-state[data-k="${k}"]`, modal);
+              if (st) { st.className = 'ob-state ' + (r.ok ? 'ok' : 'err'); st.textContent = `${label(k)}: ${r.ok ? 'ทดสอบผ่าน ใช้ได้' : r.message}`; }
+            }
+            return;
+          }
+          if (e.target.closest('.ob-phone')) { showWirelessDialog(); return; }
+          if (e.target.closest('.ob-help-btn')) { openHelp(1); return; }
+          const act = e.target.closest('[data-ob]')?.dataset.ob;
+          if (act === 'skip') { keep(modal); stopPreview(); close(); }
+          else if (act === 'back') { keep(modal); if (step === 2) stopPreview(); step = Math.max(0, step - 1); render(modal); }
+          else if (act === 'next') {
+            keep(modal);
+            if (step < 3) { if (step === 1) save(); if (step === 2) useCamera(); step++; render(modal); return; }
+            save();
+            if (!(rec.active || streamer.active)) applyQuality(picked);
+            close('done');
+            toast('พร้อมแล้ว — กด STREAM เพื่อเริ่มไลฟ์', 'success', 5000);
+          }
+        });
+      }
+    }).then(r => { stopPreview(); return r; });
   }
   function applyQuality(q) {
     const before = `${settings.resolution}|${settings.fps}`;
