@@ -1308,7 +1308,29 @@
     thumbs.clear();
     $('#input-count').textContent = inputs.length;
     if (!inputs.length) {
-      grid.innerHTML = '<div class="empty-state">ยังไม่มีแหล่งภาพ — กด “เพิ่มแหล่งภาพ” เพื่อเพิ่มกล้อง ไฟล์วิดีโอ หรือแหล่งภาพอื่น</div>';
+      // หน้าว่าง: ขั้นตอนเริ่มต้น + ทางลัดเพิ่มแหล่งภาพที่ใช้บ่อย (ลากไฟล์มาวางก็ได้)
+      grid.innerHTML = `<div class="empty-state">
+        <div class="es-plus" aria-hidden="true">+</div>
+        <div><b>ยังไม่มีแหล่งภาพ</b><p>เพิ่มกล้อง หน้าจอ วิดีโอ หรือรูปก่อน — หรือลากไฟล์มาวางตรงนี้</p></div>
+        <div class="es-tiles">
+          <button type="button" data-empty="cam"><b>กล้อง</b><small>เว็บแคม / USB</small></button>
+          <button type="button" data-empty="screen"><b>แชร์หน้าจอ</b><small>ทั้งจอหรือหน้าต่าง</small></button>
+          <button type="button" data-empty="phone"><b>มือถือเป็นกล้อง</b><small>สแกน QR</small></button>
+          <button type="button" data-empty="file"><b>ไฟล์</b><small>วิดีโอ รูป PDF</small></button>
+        </div>
+        <button type="button" class="btn btn-primary" data-empty="menu">${icon('plus')} เพิ่มแหล่งภาพ</button>
+        <p class="es-steps">ขั้นที่ 1 เพิ่มแหล่งภาพ → 2 ตั้งปลายทางไลฟ์ → 3 กด STREAM</p>
+      </div>`;
+      grid.querySelector('.empty-state').addEventListener('click', e => {
+        const b = e.target.closest('[data-empty]');
+        if (!b) return;
+        const k = b.dataset.empty;
+        if (k === 'cam') openCameraDialog();
+        else if (k === 'screen') addScreen();
+        else if (k === 'phone') showWirelessDialog();
+        else if (k === 'file') pickFiles('video/*,image/*,application/pdf', files => addDroppedFiles(files));
+        else $('[data-action=add-menu]')?.click();
+      });
     }
     // ขนาดการ์ด: ภาพตัวอย่างละเอียดขึ้นตามขนาด (ไม่เบลอเมื่อการ์ดใหญ่)
     const [tw, th] = THUMB_SIZE[cardSize()];
@@ -1924,11 +1946,39 @@
         const tmp = await navigator.mediaDevices.getUserMedia(kind === 'videoinput' ? { video: true } : { audio: true });
         tmp.getTracks().forEach(t => t.stop());
       } catch (e) {
+        if (e.name === 'NotAllowedError' || e.name === 'SecurityError') {
+          const r = await permissionGuide(kind);
+          if (r === 'retry') return listDevices(kind);
+          const q = new Error('permission'); q.quiet = true;
+          throw q;
+        }
         throw new Error('ไม่ได้รับอนุญาตให้ใช้อุปกรณ์ (' + e.message + ')');
       }
       list = await navigator.mediaDevices.enumerateDevices();
     }
     return list;
+  }
+
+  // เบราว์เซอร์/ระบบบล็อกกล้องหรือไมค์ → บอกวิธีเปิดสิทธิ์ทีละขั้น แล้วให้ลองอีกครั้งหรือใช้แหล่งภาพอื่น
+  async function permissionGuide(kind) {
+    const what = kind === 'audioinput' ? 'ไมค์' : 'กล้องและไมค์';
+    const mac = /Mac/.test(navigator.platform || navigator.userAgent);
+    const r = await dialog({
+      title: `ยังไม่ได้อนุญาตให้ใช้${what}`,
+      body: `<div class="perm-guide">
+        <div class="perm-head"><span class="perm-ic">!</span><p>เบราว์เซอร์บล็อกไว้ — WebMix จึงยังเห็นภาพและได้ยินเสียงไม่ได้</p></div>
+        <ol class="perm-steps">
+          <li><b>1</b><span>คลิกไอคอนแม่กุญแจ / ตั้งค่าเว็บไซต์ ทางซ้ายของช่องที่อยู่เว็บ</span></li>
+          <li><b>2</b><span>เปลี่ยน “กล้อง” และ “ไมโครโฟน” เป็น <strong>อนุญาต</strong></span></li>
+          <li><b>3</b><span>กด “ลองอีกครั้ง” ด้านล่าง</span></li>
+        </ol>
+        <p class="perm-note">${desktop && mac ? 'แอปเดสก์ท็อปบน macOS: ' : 'ถ้าใช้แอปเดสก์ท็อปบน macOS: '}เปิด การตั้งค่าระบบ → ความเป็นส่วนตัวและความปลอดภัย → กล้อง / ไมโครโฟน แล้วเปิดให้ WebMix Pro</p>
+      </div>`,
+      actions: [{ label: 'ใช้แหล่งภาพอื่นไปก่อน', value: 'other' }, { label: 'ลองอีกครั้ง', value: 'retry', primary: true }],
+      onOpen(modal) { modal.classList.add('perm-modal'); }
+    });
+    if (r?.value === 'other') setTimeout(() => $('[data-action=add-menu]')?.click(), 0);
+    return r?.value || null;
   }
 
   // หาอุปกรณ์จากชื่อ เมื่อรหัสอุปกรณ์เดิมใช้ไม่ได้แล้ว (รหัสเปลี่ยนได้ เช่นหลังล้างข้อมูลเว็บไซต์หรือย้ายพอร์ต USB)
@@ -1981,7 +2031,7 @@
   async function openCameraDialog(target) {
     if (!needMedia()) return;
     let devices;
-    try { devices = await listDevices('videoinput'); } catch (e) { toast(e.message, 'error'); return; }
+    try { devices = await listDevices('videoinput'); } catch (e) { if (!e.quiet) toast(e.message, 'error'); return; }
     const cams = devices.filter(d => d.kind === 'videoinput');
     const mics = devices.filter(d => d.kind === 'audioinput');
     if (!cams.length) { toast('ไม่พบกล้องในเครื่องนี้', 'error'); return; }
@@ -2043,6 +2093,16 @@
     pool.appendChild(el);
     el.onchange = () => { if (el.files.length) handler(Array.from(el.files)); el.remove(); };
     el.click();
+  }
+
+  // ไฟล์ที่ลากมาวาง / เลือกจากหน้าว่าง: แยกตามชนิดไฟล์
+  function addDroppedFiles(files) {
+    const by = re => files.filter(f => re.test(f.type) || re.test(f.name));
+    const vids = by(/^video\/|\.(mp4|webm|mov|mkv)$/i), imgs = by(/^image\/|\.(png|jpe?g|gif|webp)$/i), pdfs = by(/pdf$/i);
+    if (vids.length) addVideoFiles(vids);
+    if (imgs.length) addImageFiles(imgs);
+    if (pdfs.length) addSlidesFiles(pdfs);
+    if (!vids.length && !imgs.length && !pdfs.length) toast('ไฟล์ชนิดนี้ใช้เป็นแหล่งภาพไม่ได้ — รองรับวิดีโอ รูป และ PDF', 'warn');
   }
 
   const baseName = name => name.replace(/\.[^.]+$/, '').slice(0, 32);
@@ -2129,7 +2189,7 @@
   async function openMicDialog() {
     if (!needMedia()) return;
     let devices;
-    try { devices = await listDevices('audioinput'); } catch (e) { toast(e.message, 'error'); return; }
+    try { devices = await listDevices('audioinput'); } catch (e) { if (!e.quiet) toast(e.message, 'error'); return; }
     const mics = devices.filter(d => d.kind === 'audioinput');
     if (!mics.length) { toast('ไม่พบไมโครโฟนในเครื่องนี้', 'error'); return; }
     const result = await dialog({
@@ -5048,6 +5108,10 @@
       obj.lastAt = now;
       obj.level = db > obj.level ? db : Math.max(db, obj.level - 26 * dt);
       if (db >= obj.peak || now - obj.peakAt > 1500) { obj.peak = db; obj.peakAt = now; }
+      // นับครั้งที่เสียงแตะ 0 dB (ใช้เตือน “ดังเกิน”)
+      const hot = db > -0.3;
+      if (hot && !obj.hot) { (obj.clips || (obj.clips = [])).push(Date.now()); if (obj.clips.length > 20) obj.clips.shift(); }
+      obj.hot = hot;
       if (obj.ui) {
         obj.ui.cover.style.height = `${(1 - meterPct(obj.level)) * 100}%`;
         obj.ui.peak.style.bottom = `${meterPct(obj.peak) * 100}%`;
@@ -5166,7 +5230,8 @@
     if (!audio.channels.length) {
       const hint = document.createElement('div');
       hint.className = 'mixer-empty';
-      hint.textContent = 'ยังไม่มีช่องเสียง — กด “เพิ่มแหล่งเสียง” (ไมค์ เพลง เสียงเอฟเฟกต์ เสียงจากคอม) หรือเพิ่มกล้อง/ไฟล์วิดีโอที่มีเสียง';
+      hint.innerHTML = `<b>ยังไม่มีช่องเสียง</b><span>เสียงจากกล้องและวิดีโอจะมาเอง · หรือเพิ่มไมค์ เพลง เสียงจากคอม</span><button type="button" class="btn btn-sm">${icon('plus')} เพิ่มแหล่งเสียง</button>`;
+      hint.querySelector('button').onclick = () => $('[data-action=add-audio]')?.click();
       mixer.appendChild(hint);
     }
     cardVu.sync();
@@ -7567,8 +7632,9 @@ onmessage = async e => {
   }
 
   // การ์ดเตือนบนหน้าสวิตช์ (มือถือ): เรียงตามความรุนแรง บอกว่าเกิดอะไรและควรทำอะไร · กด "รับทราบ" เพื่อซ่อนจนกว่าจะเกิดใหม่
-  const alertDismissed = new Set();
+  const alertDismissed = new Set(), trouble = { lowFps: 0 }, wideAlerts = matchMedia('(min-width: 761px) and (min-height: 501px)');
   function renderAlerts() {
+    renderNetBanner();
     const box = $('#m-alerts');
     if (!box) return;
     const live = !!(streamer.ws || streamer.reconnecting);
@@ -7576,7 +7642,8 @@ onmessage = async e => {
     if (battery && !battery.charging && battery.level <= 0.15 && (live || rec.active)) {
       list.push({ key: 'battery', level: 'red', title: `แบตเหลือ ${Math.round(battery.level * 100)}%`, text: 'เสียบสายชาร์จตอนนี้ — ถ้าแบตหมด ไลฟ์และการบันทึกจะหยุด' });
     }
-    if (streamer.reconnecting) {
+    // เดสก์ท็อป / แท็บเล็ตมีแถบเตือนเน็ตหลุดแยกอยู่แล้ว (renderNetBanner)
+    if (streamer.reconnecting && !wideAlerts.matches) {
       list.push({ key: 'gw', level: 'amber', title: `การเชื่อมต่อหลุด — กำลังเชื่อมต่อใหม่ (ครั้งที่ ${streamer.attempt || 1})`, text: 'ปลายทางที่ไลฟ์อยู่จะเริ่มต่อให้เองเมื่อเชื่อมต่อได้' });
     }
     for (const [id, st] of streamer.dests) {
@@ -7584,6 +7651,30 @@ onmessage = async e => {
       const d = settings.destinations.find(z => z.id === id);
       const others = [...streamer.dests.values()].filter(x => x.state === 'live').length;
       list.push({ key: 'dest-' + id, level: 'amber', title: `${destLabel(d) || id} หลุด — กำลังเชื่อมต่อใหม่`, text: (st.message ? st.message + ' · ' : '') + (others ? `ปลายทางอื่นยังออกอากาศปกติ (${others})` : 'ลองใหม่อัตโนมัติ'), action: { label: 'หยุดเฉพาะช่องนี้', run: () => stopDestination(id) } });
+    }
+    // กล้อง / มือถือ / แขก หลุดหลังจากเคยมีภาพ
+    for (const inp of inputs) {
+      if (!['camera', 'wireless', 'guest', 'ndi', 'srt', 'rtsp', 'rtmp'].includes(inp.type)) continue;
+      if (inp.status === 'live') { inp.wasLive = true; continue; }
+      if (!inp.wasLive) continue;
+      list.push({ key: 'lost-' + inp.id, level: 'amber', icon: String(inputs.indexOf(inp) + 1), title: `${inp.name} หลุด`, text: 'กำลังรอเชื่อมต่อใหม่… (ภาพสุดท้ายค้างไว้ในการ์ด)',
+        action: inp.type === 'camera' ? { label: 'เชื่อมต่อใหม่', run: () => relinkInput(inp) } : { label: 'ลบออก', run: () => removeInput(inp.id) } });
+    }
+    // ตกเฟรม: ภาพช้ากว่าเฟรมเรตที่ตั้งไว้ต่อเนื่อง 5 วินาที
+    const target = +settings.fps || 30;
+    trouble.lowFps = fps && fps < target * 0.8 && !document.hidden ? (trouble.lowFps || Date.now()) : 0;
+    if (trouble.lowFps && Date.now() - trouble.lowFps > 5000) {
+      const bg = inputs.some(i => i.bg && i.bg.mode && i.bg.mode !== 'none');
+      list.push({ key: 'fps', level: 'amber', icon: '%', title: `เครื่องทำงานหนัก — ภาพเหลือ ${Math.round(fps)} จาก ${target} fps`,
+        text: 'ลองลดความละเอียด Program' + (bg ? ' หรือปิด AI ลบพื้นหลัง' : '') + ' · ปิดโปรแกรมอื่นที่ไม่ใช้',
+        action: { label: 'ตั้งค่าภาพ', run: () => openSettings('output') } });
+    }
+    // เสียงแตก: แตะ 0 dB ตั้งแต่ 3 ครั้งใน 10 วินาที
+    for (const ch of audio.channels) {
+      const n = (ch.clips || []).filter(t => Date.now() - t < 10000).length;
+      if (n < 3 || ch.muted) continue;
+      list.push({ key: 'clip-' + ch.id, level: 'red', icon: 'dB', title: `${ch.name} ดังเกิน (CLIP)`, text: `พีคแตะ 0 dB ${n} ครั้ง · แนะนำลดระดับ 4 dB`,
+        action: { label: 'ลด 4 dB', run: () => { ch.db = Math.max(-60, (ch.db === -Infinity ? -60 : ch.db) - 4); ch.clips = []; audio.applyGain(ch); renderMixer(); } } });
     }
     if (live && streamer.encoder && streamer.encoder.speed && streamer.encoder.speed < 0.9) {
       list.push({ key: 'enc', level: 'gray', title: `เข้ารหัสไม่ทัน (${streamer.encoder.speed.toFixed(2)}x)`, text: 'ภาพที่ผู้ชมเห็นอาจกระตุก — ลดความละเอียดหรือเฟรมเรตในตั้งค่า', action: { label: 'ตั้งค่า', run: () => openSettings('output') } });
@@ -7597,15 +7688,38 @@ onmessage = async e => {
     box.hidden = !shown.length;
     box.innerHTML = shown.map((a, i) => `
       <div class="m-alert is-${a.level}" role="${a.level === 'red' ? 'alert' : 'status'}">
+        <span class="m-alert-ic" aria-hidden="true">${esc(a.icon || '!')}</span>
         <div class="m-alert-text"><b>${esc(a.title)}</b><small>${esc(a.text)}</small></div>
-        <div class="m-alert-actions">${a.action ? `<button type="button" class="btn btn-sm" data-alert-act="${i}">${esc(a.action.label)}</button>` : ''}<button type="button" class="btn btn-sm btn-ghost" data-alert-ok="${esc(a.key)}">รับทราบ</button></div>
+        <div class="m-alert-actions">${a.action ? `<button type="button" class="btn btn-sm" data-alert-act="${i}">${esc(a.action.label)}</button>` : ''}<button type="button" class="btn btn-sm btn-ghost m-alert-ok" data-alert-ok="${esc(a.key)}">รับทราบ</button></div>
+        <button type="button" class="m-alert-x" data-alert-ok="${esc(a.key)}" aria-label="ปิด">${icon('x')}</button>
       </div>`).join('');
     box.onclick = e => {
       const act = e.target.closest('[data-alert-act]');
       if (act) { shown[+act.dataset.alertAct]?.action?.run(); return; }
       const okb = e.target.closest('[data-alert-ok]');
-      if (okb) { alertDismissed.add(okb.dataset.alertOk); box.dataset.sig = ''; renderAlerts(); }
+      if (okb) { alertDismissed.add(okb.dataset.alertOk); box.dataset.sig = '-'; renderAlerts(); }
     };
+  }
+
+  // เน็ตหลุดระหว่างไลฟ์: แถบเตือนใต้แถบบน + ป้าย “ไม่ได้ส่งออก” บนจอ Program (เดสก์ท็อป / แท็บเล็ต)
+  function renderNetBanner() {
+    const el = $('#net-banner');
+    if (!el) return;
+    const on = !!streamer.reconnecting;
+    $('#pgm-offair').hidden = !on;
+    el.hidden = !on;
+    document.body.classList.toggle('has-netbanner', on);
+    if (!on) { el.dataset.sig = ''; return; }
+    const ids = [...streamer.dests.keys()];
+    const chips = (ids.length ? ids.map(id => settings.destinations.find(d => d.id === id)).filter(Boolean) : settings.destinations.filter(d => d.enabled))
+      .map(d => `<span class="nb-chip">${esc(destLabel(d))}</span>`).join('');
+    const sig = streamer.attempt + chips;
+    if (el.dataset.sig === sig) return;
+    el.dataset.sig = sig;
+    el.innerHTML = `<span class="nb-spin" aria-hidden="true"></span><b>อินเทอร์เน็ตหลุด — กำลังต่อใหม่ (ครั้งที่ ${streamer.attempt || 1})</b>
+      <span class="nb-text">ยังบันทึกลงเครื่องต่อ · ปลายทางจะกลับมาเองเมื่อต่อได้</span><span class="nb-chips">${chips}</span>
+      <button type="button" class="btn btn-sm" data-nb="live">ดูปลายทาง</button>`;
+    $('[data-nb=live]', el).onclick = () => $('#btn-stream')?.click();
   }
 
   // สรุปหลังไลฟ์ (มือถือ)
@@ -8511,6 +8625,17 @@ onmessage = async e => {
     }));
 
     $('#inputs-grid').addEventListener('click', onGridClick);
+    // ลากไฟล์วิดีโอ / รูป / PDF มาวางในแผงแหล่งภาพ
+    const srcPanel = $('#inputs-grid').closest('.panel') || $('#inputs-grid');
+    srcPanel.addEventListener('dragover', e => { if ([...(e.dataTransfer?.types || [])].includes('Files')) { e.preventDefault(); srcPanel.classList.add('is-drop'); } });
+    srcPanel.addEventListener('dragleave', e => { if (!srcPanel.contains(e.relatedTarget)) srcPanel.classList.remove('is-drop'); });
+    srcPanel.addEventListener('drop', e => {
+      srcPanel.classList.remove('is-drop');
+      const files = [...(e.dataTransfer?.files || [])];
+      if (!files.length) return;
+      e.preventDefault();
+      addDroppedFiles(files);
+    });
     bindMacroPane();
 
     // มือถือ: แท็บล่าง และปุ่ม "หยุดไลฟ์…" บนแจ้งเตือนของ Android (MainActivity เรียก WebMix.nativeAction)
@@ -9042,7 +9167,7 @@ onmessage = async e => {
     $$('#seg-cardsize button').forEach(b => { b.classList.toggle('is-active', b.dataset.size === cardSize()); b.addEventListener('click', () => setCardSize(b.dataset.size)); });
 
     // สำหรับดีบัก/ทดสอบอัตโนมัติ
-    window.webmix = { chatFeed, chatAdd, chatShow, chatHide, playlist, dataSources, timerControl, multiview, renderer, gpu, setRenderer: v => { settings.renderer = v; renderer.resolve(); updateStatus(); }, show, ovl, setChannel, toggleInputOverlay, useRecFolder: dir => { recFolder = dir; }, inputs, state, settings, overlays, audio, rec, iso, stinger, replayCapture, slideGo, midi, checkAppUpdate, macros, runMacro, openCamControl, abr: { state: abr, decide: abrDecide, apply: abrApply, tick: abrTick }, streamer, wireless, cut, autoTransition, setPreview, tr, ftb, padFire, chanKey, remote: remoteCtl, lufs, layoutSize };
+    window.webmix = { chatFeed, chatAdd, chatShow, chatHide, playlist, dataSources, timerControl, multiview, renderer, gpu, setRenderer: v => { settings.renderer = v; renderer.resolve(); updateStatus(); }, show, ovl, setChannel, toggleInputOverlay, useRecFolder: dir => { recFolder = dir; }, inputs, state, settings, overlays, audio, rec, iso, stinger, replayCapture, slideGo, midi, checkAppUpdate, macros, runMacro, openCamControl, abr: { state: abr, decide: abrDecide, apply: abrApply, tick: abrTick }, streamer, wireless, cut, autoTransition, setPreview, tr, ftb, padFire, chanKey, remote: remoteCtl, lufs, layoutSize, renderInputs, renderAlerts };
   }
 
   boot();
