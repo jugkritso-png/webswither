@@ -22,20 +22,20 @@ const results = []; const ok = (n, c, x = '') => results.push(`${c ? 'PASS' : 'F
 
   const px = (x, y) => p.evaluate(([x, y]) => Array.from(window.webmix.multiview.ctx.getImageData(x, y, 1, 1).data.slice(0, 3)), [x, y]);
   const near = (a, c, t = 40) => a.every((v, i) => Math.abs(v - c[i]) <= t);
-  ok('preview framed in green', near(await px(5, 300), [34, 197, 94]), JSON.stringify(await px(5, 300)));
-  ok('program framed in red', near(await px(965, 300), [239, 68, 68]), JSON.stringify(await px(965, 300)));
+  ok('preview framed in green', near(await px(8, 300), [46, 163, 107]), JSON.stringify(await px(8, 300)));
+  ok('program framed in red', near(await px(966, 300), [229, 72, 77]), JSON.stringify(await px(966, 300)));
   const L = await p.evaluate(() => window.webmix.multiview.layout(window.webmix.inputs.length));
   const tile = i => [Math.round((i % L.cols) * L.tw + 5), Math.round(L.gridTop + Math.floor(i / L.cols) * L.th + L.th / 3)];
-  ok('program input tile has a red tally border', near(await px(...tile(1)), [239, 68, 68]), JSON.stringify(await px(...tile(1))));
-  ok('preview input tile has a green tally border', near(await px(...tile(2)), [34, 197, 94]), JSON.stringify(await px(...tile(2))));
-  ok('overlay input counts as on air (red)', near(await px(...tile(4)), [239, 68, 68]));
-  ok('idle input tile has a plain border', !near(await px(...tile(3)), [239, 68, 68]) && !near(await px(...tile(3)), [34, 197, 94]));
+  ok('program input tile has a red tally border', near(await px(...tile(1)), [229, 72, 77]), JSON.stringify(await px(...tile(1))));
+  ok('preview input tile has a green tally border', near(await px(...tile(2)), [46, 163, 107]), JSON.stringify(await px(...tile(2))));
+  ok('overlay input counts as on air (red)', near(await px(...tile(4)), [229, 72, 77]));
+  ok('idle input tile has a plain border', !near(await px(...tile(3)), [229, 72, 77]) && !near(await px(...tile(3)), [46, 163, 107]));
   // มิเตอร์เสียงของวิดีโอที่มีเสียง (แถบขวาของการ์ด)
   await p.click('body'); await p.waitForTimeout(1500);
   const meterLit = await p.evaluate(L => {
     const g = window.webmix.multiview.ctx, i = 4, tx = (i % L.cols) * L.tw + 3, ty = L.gridTop + Math.floor(i / L.cols) * L.th + 3, tw = L.tw - 6, th = L.th - 6;
-    const lh = Math.max(22, th * 0.15), mh = th - lh - 20;
-    const d = g.getImageData(tx + tw - 14, ty + 8 + mh * 0.9, 1, 1).data; return d[1] > 120 || d[0] > 200;
+    const lh = Math.min(38, Math.max(26, th * 0.17)), ly = ty + th - lh - 3;
+    const d = g.getImageData(tx + tw - 14 - 80 + 3, ly + lh / 2, 1, 1).data; return d[1] > 120 || d[0] > 200;
   }, L);
   ok('audio meter moves for an input with sound', meterLit);
   // สลับภาพจาก Multiview: แตะครั้งแรก = Preview (เขียว) · แตะซ้ำ = Program (แดง)
@@ -50,12 +50,12 @@ const results = []; const ok = (n, c, x = '') => results.push(`${c ? 'PASS' : 'F
   let s = await bus();
   ok('multiview: first tap puts the source on Preview', s.pvw === 3 && s.pgm === 1, JSON.stringify(s));
   await p.waitForTimeout(200);
-  ok('multiview: tapped tile turns green', near(await px(...tile(3)), [34, 197, 94]), JSON.stringify(await px(...tile(3))));
+  ok('multiview: tapped tile turns green', near(await px(...tile(3)), [46, 163, 107]), JSON.stringify(await px(...tile(3))));
   await at(center(3));
   s = await bus();
   ok('multiview: second tap on the same source takes it to Program', s.pgm === 3 && s.pvw === 1, JSON.stringify(s));
   await p.waitForTimeout(200);
-  ok('multiview: it turns red', near(await px(...tile(3)), [239, 68, 68]), JSON.stringify(await px(...tile(3))));
+  ok('multiview: it turns red', near(await px(...tile(3)), [229, 72, 77]), JSON.stringify(await px(...tile(3))));
   await at(center(3));
   s = await bus();
   ok('multiview: tapping the on-air source changes nothing', s.pgm === 3 && s.pvw === 1, JSON.stringify(s));
@@ -113,7 +113,7 @@ const results = []; const ok = (n, c, x = '') => results.push(`${c ? 'PASS' : 'F
   const t = await tctx.newPage(); t.on('pageerror', e => errs.push('ipad ' + e.message));
   let popped = false; t.on('popup', () => { popped = true; });
   await t.goto('http://localhost:8765/index.html'); await t.waitForTimeout(900);
-  await t.tap('[data-action=multiview]'); await t.waitForTimeout(400);
+  await t.tap('#m-tabs [data-mmore]'); await t.tap('.menu button:has-text("Multiview")'); await t.waitForTimeout(400);
   ok('iPad: Multiview opens in the same page (no new tab)', await t.isVisible('.mv-inline canvas') && !popped);
   await tctx.close();
 

@@ -8,7 +8,7 @@
   // วาดเฉพาะตอนเปิดหน้าต่าง Multiview ที่ 15 fps แล้วส่งภาพไปหน้าต่างนั้น (ลากไปจอที่สองแล้วกดปุ่มเต็มจอ)
   // สลับภาพจาก Multiview ได้: แตะแหล่งภาพครั้งแรก = Preview (กรอบเขียว) · แตะแหล่งภาพเดิมอีกครั้ง = ขึ้น Program (กรอบแดง)
   // แตะจอ PREVIEW ใหญ่ = ขึ้น Program · คีย์บอร์ด: 1–9 เลือก Preview, Space = Cut, Enter = Auto
-  const createMultiview = ctx => ({
+  const createMultiview = ctx => (ctx.meterPct && (ctx_meterPct = ctx.meterPct), {
     canvas: null, ctx: null, win: null, track: null, timer: null, hover: -1, flash: null, inline: null,
     W: 1920, H: 1080,
     ensureCanvas() {
@@ -36,7 +36,7 @@
         button{position:fixed;bottom:10px;right:10px;padding:8px 14px;border-radius:8px;border:1px solid #3a4250;background:rgba(15,18,24,.85);color:#e8ecf1;font:600 13px system-ui;cursor:pointer;opacity:0;transition:opacity .3s}
         body:hover button,button:focus-visible{opacity:1}</style></head>
         <body><video autoplay muted playsinline></video><button type="button">เต็มจอ</button>
-        <p>แตะแหล่งภาพ = Preview · แตะซ้ำ = ขึ้น Program · คีย์ 1–9 / Space / Enter</p>
+        <p>คลิกภาพ = Preview · ดับเบิลคลิก = ตัดเข้า Program · คีย์ 1–9 / Space / Enter · Esc = ปิด</p>
         <script>document.querySelector('button').addEventListener('click',()=>{document.fullscreenElement?document.exitFullscreen():document.documentElement.requestFullscreen()});setTimeout(()=>document.querySelector('p').style.opacity=0,6000)<\/script></body></html>`);
       win.document.close();
       this.track = this.canvas.captureStream(15).getVideoTracks()[0];
@@ -87,6 +87,7 @@
         if (/^[1-9]$/.test(e.key)) { const inp = ctx.inputs[+e.key - 1]; if (inp && inp.id !== ctx.state.programId) ctx.setPreview(inp.id); }
         else if (e.key === ' ') ctx.cut();
         else if (e.key === 'Enter') ctx.auto();
+        else if (e.key === 'Escape' && !win.document.fullscreenElement) { win.close(); this.close(); }
         else return;
         e.preventDefault();
         this.draw();
@@ -131,53 +132,78 @@
       this.track = null;
       this.win = null;
     },
+    // ตามดีไซน์: แถบบน 54 · Preview/Program ครึ่งจอ · แหล่งภาพเต็มพื้นที่ที่เหลือ (อย่างน้อย 2 แถว × 4 ช่อง)
     layout(n) {
-      const top = 44, mainH = 540, gridTop = top + mainH + 8, gridH = this.H - gridTop;
+      const top = 60, mainH = 580, gridTop = top + mainH + 6, gridH = this.H - gridTop - 6;
       let cols = 4;
       for (const c of [4, 5, 6, 8, 10]) {
         cols = c;
-        const tw = this.W / c, th = tw * 9 / 16;
+        const th = (this.W / c) * 9 / 16;
         if (Math.ceil(n / c) * th <= gridH) break;
       }
-      const tw = this.W / cols, th = tw * 9 / 16;
+      const tw = this.W / cols, rows = Math.ceil(n / cols);
+      const th = Math.min(gridH / Math.max(2, rows), tw * 9 / 16);
       return { top, mainH, gridTop, cols, tw, th };
     },
     draw() {
       const g = this.ctx, Wm = this.W, Hm = this.H;
       const L = this.layout(ctx.inputs.length);
-      g.fillStyle = '#05060a'; g.fillRect(0, 0, Wm, Hm);
-      // แถบบน: เวลา, ON AIR, สถานะสตรีม/บันทึก
-      g.textBaseline = 'middle';
-      g.fillStyle = '#e7eaf0'; g.font = `700 26px ${MONO}`; g.textAlign = 'left';
-      g.fillText(new Date().toLocaleTimeString('th-TH', { hour12: false }), 16, 22);
+      const C = { pgm: '#E5484D', pvw: '#2EA36B', pgmTag: '#C8323A', pvwTag: '#18794E', idle: '#1A1F28', mute: '#9AA4B2', amber: '#F0B44C' };
+      g.fillStyle = '#000'; g.fillRect(0, 0, Wm, Hm);
+      // แถบบน: ชื่อ · ON AIR + เวลาออกอากาศ · REC/บิตเรต/fps · วิธีใช้ · นาฬิกา
+      g.fillStyle = '#0B0E13'; rr(g, 6, 6, Wm - 12, 48, 6); g.fill();
+      g.textBaseline = 'middle'; g.textAlign = 'left';
+      let x = 24; const y = 30;
+      g.fillStyle = '#E8ECF1'; g.font = `700 19px ${FONT}`; g.fillText('WebMix · Multiview', x, y); x += g.measureText('WebMix · Multiview').width + 22;
       const live = ctx.streamer.active || ctx.streamer.reconnecting;
-      const chips = [[live ? `● STREAM ${ctx.onAirText()}` : 'STREAM OFF', live ? '#ef4444' : '#5d6578'], [ctx.rec.active ? '● REC' : 'REC OFF', ctx.rec.active ? '#ef4444' : '#5d6578'],
-        [`${ctx.formatTag(ctx.H, ctx.fps)}`, '#8b94a7']];
-      g.textAlign = 'right'; g.font = `700 20px ${MONO}`;
-      let x = Wm - 16;
-      for (const [text, color] of chips.reverse()) { g.fillStyle = color; g.fillText(text, x, 22); x -= g.measureText(text).width + 28; }
+      if (live) {
+        g.font = `700 16px ${FONT}`; const w = g.measureText('ON AIR').width + 40;
+        g.fillStyle = C.pgmTag; rr(g, x, y - 14, w, 28, 5); g.fill();
+        g.fillStyle = '#fff'; g.beginPath(); g.arc(x + 14, y, 4.5, 0, 7); g.fill();
+        g.fillText('ON AIR', x + 26, y + 1); x += w + 16;
+        g.fillStyle = C.amber; g.font = `600 22px ${MONO}`; const t = ctx.onAirText(); g.fillText(t, x, y + 1); x += g.measureText(t).width + 20;
+      }
+      const bits = [];
+      if (ctx.rec.active) bits.push(`REC ${fmtClock(Date.now() - ctx.rec.start)}`);
+      if (live) bits.push(`${(ctx.streamer.kbps / 1000).toFixed(1)} Mbps`);
+      bits.push(`${ctx.fps} fps`);
+      g.fillStyle = C.mute; g.font = `500 16px ${MONO}`; g.fillText(bits.join(' · '), x, y + 1);
+      g.textAlign = 'right'; g.fillStyle = '#E8ECF1'; g.font = `600 24px ${MONO}`;
+      const clock = new Date().toLocaleTimeString('th-TH', { hour12: false });
+      g.fillText(clock, Wm - 24, y + 1);
+      const cw = g.measureText(clock).width;
+      g.fillStyle = C.mute; g.font = `500 16px ${FONT}`;
+      g.fillText('คลิกภาพ = Preview · ดับเบิลคลิก = ตัดเข้า Program · Esc = ปิด', Wm - 24 - cw - 28, y + 1);
       // Preview / Program
-      const box = (src, bx, label, color, name) => {
-        g.drawImage(src, bx, L.top, 952, L.mainH - 4);
-        g.strokeStyle = color; g.lineWidth = 4; g.strokeRect(bx + 2, L.top + 2, 948, L.mainH - 8);
-        g.fillStyle = 'rgba(0,0,0,.65)'; g.fillRect(bx + 4, L.top + L.mainH - 46, 944, 38);
-        g.textAlign = 'left'; g.font = `800 20px ${FONT}`; g.fillStyle = color; g.fillText(label, bx + 16, L.top + L.mainH - 27);
-        g.fillStyle = '#fff'; g.font = `600 20px ${FONT}`; g.fillText(name, bx + 140, L.top + L.mainH - 27);
+      const halfW = (Wm - 18) / 2;
+      const box = (src, bx, label, tagColor, border, name, ch) => {
+        g.drawImage(src, bx, L.top, halfW, L.mainH);
+        g.strokeStyle = border; g.lineWidth = 6; g.strokeRect(bx + 3, L.top + 3, halfW - 6, L.mainH - 6);
+        const bh = 46, by = L.top + L.mainH - bh - 6;
+        g.fillStyle = 'rgba(0,0,0,.72)'; g.fillRect(bx + 6, by, halfW - 12, bh);
+        g.font = `700 18px ${FONT}`; g.textAlign = 'left';
+        const tw = g.measureText(label).width + 22;
+        g.fillStyle = tagColor; rr(g, bx + 20, by + 9, tw, 28, 4); g.fill();
+        g.fillStyle = '#fff'; g.fillText(label, bx + 31, by + bh / 2 + 1);
+        g.font = `700 19px ${FONT}`; g.fillText(name, bx + 20 + tw + 14, by + bh / 2 + 1);
+        if (ch) meter(g, ch, bx + halfW - 120, by + bh / 2 - 4, 90, 8);
       };
-      box(ctx.pvwCanvas, 4, 'PREVIEW', '#22c55e', ctx.byId(ctx.state.previewId)?.name || '—');
-      box(ctx.pgmCanvas, 964, 'PROGRAM', '#ef4444', ctx.byId(ctx.state.programId)?.name || '—');
-      // ทุก Input
+      const pvw = ctx.byId(ctx.state.previewId), pgm = ctx.byId(ctx.state.programId);
+      box(ctx.pvwCanvas, 6, 'PREVIEW', C.pvwTag, C.pvw, pvw?.name || '—', null);
+      box(ctx.pgmCanvas, 12 + halfW, 'PROGRAM', C.pgmTag, C.pgm, pgm?.name || '—', ctx.audio.channels.find(c => c.inputId === pgm?.id));
+      // ทุกแหล่งภาพ
       ctx.inputs.forEach((inp, i) => {
         const cx = (i % L.cols) * L.tw, cy = L.gridTop + Math.floor(i / L.cols) * L.th;
         const pad = 3, tw = L.tw - pad * 2, th = L.th - pad * 2, tx = cx + pad, ty = cy + pad;
-        g.save();
-        g.translate(tx, ty);
-        g.beginPath(); g.rect(0, 0, tw, th); g.clip();
-        ctx.drawSource(g, inp, tw, th);
+        g.fillStyle = '#0B0E13'; g.fillRect(tx, ty, tw, th);
+        // ภาพเต็มกว้าง 16:9 ตรงกลางช่อง (ช่องเตี้ยกว่า 16:9 → ครอบตัดบน/ล่าง)
+        g.save(); g.beginPath(); g.rect(tx, ty, tw, th); g.clip();
+        const ih = tw * 9 / 16; g.translate(tx, ty + (th - ih) / 2);
+        ctx.drawSource(g, inp, tw, ih);
         g.restore();
         const isPgm = inp.id === ctx.state.programId, ov = ctx.ovl.findIndex(c => c.on && c.inputId === inp.id), isPvw = inp.id === ctx.state.previewId;
-        const color = isPgm || ov >= 0 ? '#ef4444' : isPvw ? '#22c55e' : '#2f3644';
-        g.strokeStyle = color; g.lineWidth = isPgm || ov >= 0 || isPvw ? 6 : 2;
+        const color = isPgm || ov >= 0 ? C.pgm : isPvw ? C.pvw : C.idle;
+        g.strokeStyle = color; g.lineWidth = isPgm || ov >= 0 || isPvw ? 5 : 3;
         g.strokeRect(tx + g.lineWidth / 2, ty + g.lineWidth / 2, tw - g.lineWidth, th - g.lineWidth);
         // เมาส์ชี้อยู่ (ยังไม่ได้เลือก): กรอบประสีขาว บอกว่าแตะได้
         if (i === this.hover && !isPgm && !isPvw) {
@@ -188,28 +214,39 @@
         if (this.flash && this.flash.i === i && performance.now() - this.flash.at < 500) {
           g.fillStyle = 'rgba(239,68,68,.25)'; g.fillRect(tx, ty, tw, th);
         }
-        const lh = Math.max(22, th * 0.15);
-        g.fillStyle = 'rgba(0,0,0,.7)'; g.fillRect(tx + 5, ty + th - lh - 5, tw - 10, lh);
-        g.textAlign = 'left'; g.fillStyle = '#fff';
-        fitFont(g, `${i + 1}  ${inp.name}`, 600, lh * 0.62, FONT, tw - 90);
-        g.fillText(`${i + 1}  ${inp.name}`, tx + 12, ty + th - lh / 2 - 5);
-        const tag = isPgm ? 'PGM' : ov >= 0 ? `OV${ov + 1}` : isPvw ? 'PVW' : inp.status !== 'live' ? 'NO SIGNAL' : '';
-        if (tag) {
-          g.font = `800 ${lh * 0.55}px ${MONO}`; g.textAlign = 'right';
-          g.fillStyle = tag === 'NO SIGNAL' ? '#f87171' : color;
-          g.fillText(tag, tx + tw - 12, ty + th - lh / 2 - 5);
-        }
-        // มิเตอร์เสียงของ Input นี้ (แถบแนวตั้งขวามือ)
+        // เลขช่อง (มุมซ้ายบน)
+        g.font = `600 18px ${MONO}`; g.textAlign = 'center';
+        const nb = String(i + 1), nw = Math.max(30, g.measureText(nb).width + 14);
+        g.fillStyle = 'rgba(0,0,0,.7)'; rr(g, tx + 10, ty + 9, nw, 30, 4); g.fill();
+        g.fillStyle = '#fff'; g.fillText(nb, tx + 10 + nw / 2, ty + 25);
+        // แถบชื่อ + สถานะ + มิเตอร์
+        const lh = Math.min(38, Math.max(26, th * 0.17)), ly = ty + th - lh - 3;
+        g.fillStyle = 'rgba(0,0,0,.72)'; g.fillRect(tx + 3, ly, tw - 6, lh);
         const ch = ctx.audio.channels.find(c => c.inputId === inp.id);
-        if (ch) {
-          const mh = th - lh - 20, lvl = ctx.meterPct(ch.level);
-          g.fillStyle = 'rgba(0,0,0,.6)'; g.fillRect(tx + tw - 18, ty + 8, 10, mh);
-          g.fillStyle = ch.level > -6 ? '#ef4444' : ch.level > -18 ? '#f5a524' : '#22c55e';
-          g.fillRect(tx + tw - 18, ty + 8 + mh * (1 - lvl), 10, mh * lvl);
+        const tag = isPgm ? 'PGM' : ov >= 0 ? `OV${ov + 1}` : isPvw ? 'PVW' : inp.status !== 'live' ? 'NO SIGNAL' : '';
+        let right = tx + tw - 14;
+        if (ch) { meter(g, ch, right - 80, ly + lh / 2 - 4, 80, 8); right -= 92; }
+        if (tag) {
+          g.font = `800 ${Math.round(lh * 0.48)}px ${MONO}`; g.textAlign = 'right';
+          g.fillStyle = tag === 'NO SIGNAL' ? '#f87171' : color;
+          g.fillText(tag, right, ly + lh / 2 + 1); right -= g.measureText(tag).width + 12;
         }
+        g.textAlign = 'left'; g.fillStyle = '#fff';
+        fitFont(g, inp.name, 600, lh * 0.5, FONT, Math.max(40, right - tx - 16));
+        g.fillText(inp.name, tx + 14, ly + lh / 2 + 1);
       });
     }
   });
+  // มิเตอร์แนวนอนตามดีไซน์ (เขียวบนพื้นเทา, เหลือง/แดงเมื่อดัง)
+  const meter = (g, ch, x, y, w, h) => {
+    const lvl = Math.max(0, Math.min(1, ctx_meterPct(ch.level)));
+    g.fillStyle = '#2A313D'; rr(g, x, y, w, h, h / 2); g.fill();
+    g.fillStyle = ch.level > -6 ? '#E5484D' : ch.level > -18 ? '#F0B44C' : '#2EA36B';
+    if (lvl > 0) { rr(g, x, y, Math.max(h, w * lvl), h, h / 2); g.fill(); }
+  };
+  let ctx_meterPct = v => Math.max(0, Math.min(1, (v + 60) / 60));
+  const rr = (g, x, y, w, h, r) => { g.beginPath(); g.roundRect ? g.roundRect(x, y, w, h, r) : g.rect(x, y, w, h); };
+  const fmtClock = ms => { const s = Math.max(0, Math.floor(ms / 1000)); return [s / 3600, (s % 3600) / 60, s % 60].map(v => String(Math.floor(v)).padStart(2, '0')).join(':'); };
 
   Object.assign(WM, { createMultiview });
 })(window.WebMix);
