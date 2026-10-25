@@ -2004,8 +2004,8 @@ html.is-resizing iframe, html.is-resizing canvas { pointer-events: none; }
 .m-alert { position: relative; }
 .m-alert-ic, .m-alert-x { display: none; }
 @media (min-width: 761px) and (min-height: 501px) {
-  .m-alerts:not([hidden]) { display: flex; flex-direction: column; gap: 10px; position: fixed; z-index: 70; right: 18px; top: 72px; width: 380px; }
-  body.has-netbanner .m-alerts:not([hidden]) { top: 124px; }
+  .m-alerts:not([hidden]) { display: flex; flex-direction: column; gap: 10px; position: fixed; z-index: 70; right: 18px; top: 116px; width: 380px; }
+  body.has-netbanner .m-alerts:not([hidden]) { top: 166px; }
   .m-alert { flex-direction: row; align-items: flex-start; gap: 12px; padding: 12px 40px 12px 14px; border-radius: 12px; background: #161a21; border: 1px solid #2a313d;
     border-left: 4px solid #6b7280; box-shadow: 0 12px 30px rgba(0, 0, 0, .5); }
   .m-alert.is-red { border-left-color: #e5484d; background: #161a21; }
@@ -2279,3 +2279,73 @@ html.is-resizing iframe, html.is-resizing canvas { pointer-events: none; }
 .ab-stat { font-size: 12px; color: #3dd68c; min-height: 16px; }
 .ab-modal .modal-foot .btn:nth-last-child(2) { margin-left: auto; }
 @media (max-width: 900px) { .ab-wrap { grid-template-columns: 1fr; } .ab-tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+
+/* ---------- ตั้งค่า: เมนูหมวดด้านซ้าย */
+.modal.set-modal { width: min(1060px, calc(100vw - 24px)); max-width: none; }
+.set-level { display: flex; gap: 2px; margin-left: 14px; padding: 2px; border: 1px solid var(--line); border-radius: 8px; background: #07090c; }
+.set-level button { height: 28px; padding: 0 12px; border: 0; border-radius: 6px; background: none; color: var(--muted); font: inherit; font-size: 12px; font-weight: 700; cursor: pointer; }
+.set-level button.is-active { background: #1e232d; color: var(--text); }
+@media (min-width: 761px) {
+  .set-modal .modal-body { display: grid; grid-template-columns: 210px minmax(0, 1fr); column-gap: 22px; align-items: start; min-height: min(62vh, 600px); }
+  .set-modal .set-tabs { grid-row: 1 / span 40; position: sticky; top: 0; flex-direction: column; gap: 4px; padding: 0; border: 0; background: none; }
+  .set-modal .set-tabs button { flex: none; height: 40px; padding: 0 12px; text-align: left; font-size: 13px; font-weight: 500; }
+  .set-modal .set-tabs button.is-active { background: #1e232d; font-weight: 600; }
+  .set-modal .modal-body > :not(.set-tabs) { grid-column: 2; }
+}
+.set-h { margin: 0 0 12px; font-size: 16px; }
+.set-row { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 14px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--line); font-size: 13px; color: #c9d1db; }
+.set-row > div { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; color: var(--text); }
+.set-ver em { font-style: normal; padding: 1px 8px; border-radius: 999px; background: #111a2b; color: #a9c3ff; font-size: 11px; }
+.set-seg { display: inline-flex; gap: 2px; padding: 2px; border: 1px solid var(--line); border-radius: 8px; background: #07090c; flex-wrap: wrap; }
+.set-seg button { height: 32px; padding: 0 12px; border: 0; border-radius: 6px; background: none; color: var(--muted); font: inherit; font-size: 12px; font-weight: 700; cursor: pointer; }
+.set-seg button.is-active { background: #1e232d; color: var(--text); }
+.set-sw { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line); cursor: pointer; position: relative; }
+.set-sw > span { flex: 1; display: flex; flex-direction: column; gap: 2px; font-size: 13px; }
+.set-sw small { color: var(--muted); font-size: 12px; }
+.set-sw input { position: absolute; right: 0; width: 40px; height: 22px; margin: 0; opacity: 0; cursor: pointer; }
+.set-sw i { width: 40px; height: 22px; flex: none; border-radius: 999px; background: #2f3644; position: relative; pointer-events: none; }
+.set-sw i::after { content: ''; position: absolute; left: 2px; top: 2px; width: 18px; height: 18px; border-radius: 50%; background: #fff; transition: transform .15s; }
+.set-sw input:checked + i { background: #2ea36b; } .set-sw input:checked + i::after { transform: translateX(18px); }
+.set-sw input:focus-visible + i { outline: 2px solid #7fa6ff; outline-offset: 2px; }
+@media (max-width: 760px) { .set-row { grid-template-columns: 1fr; gap: 6px; } .set-modal .set-tabs { flex-wrap: wrap; } .set-level { margin-left: 8px; } }
+
+/* ---------- คู่มือและคีย์ลัด */
+.modal.hp-modal { width: min(1240px, calc(100vw - 24px)); max-width: none; }
+.hp-wrap { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 18px; height: min(64vh, 640px); }
+.hp-toc { display: flex; flex-direction: column; gap: 2px; overflow: auto; }
+.hp-toc button { padding: 8px 12px; border: 0; border-radius: 8px; background: none; color: #c9d1db; font: inherit; font-size: 14px; text-align: left; cursor: pointer; }
+.hp-toc button.is-on { background: rgba(245, 165, 36, .12); color: #fff; font-weight: 600; }
+.hp-main { position: relative; overflow: auto; display: flex; flex-direction: column; gap: 14px; padding-right: 4px; }
+.hp-search { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 12px; border-radius: 10px; border: 1px solid #2a313d; background: #0b0d12; color: var(--muted); }
+.hp-search input { flex: 1; border: 0; background: none; color: var(--text); font: inherit; outline: none; }
+.hp-search .i { width: 16px; height: 16px; }
+.hp-sec h3 { margin: 0 0 10px; font-size: 16px; }
+.hp-sec ul { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; font-size: 14px; color: #c9d1db; line-height: 1.55; }
+.hp-keys { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.hp-card { display: flex; flex-direction: column; gap: 10px; padding: 14px; border-radius: 12px; background: #171b22; border: 1px solid #222935; }
+.hp-card h4 { margin: 0; font-size: 14px; }
+.hp-k { display: flex; align-items: center; gap: 10px; font-size: 13px; color: #c9d1db; }
+.hp-k > span:first-child { flex: 1; }
+.hp-kb { display: flex; align-items: center; gap: 4px; flex: none; }
+.hp-kb kbd { min-width: 26px; padding: 3px 8px; border-radius: 6px; border: 1px solid #3a4250; border-bottom-width: 3px; background: #171b22; font: 600 12px var(--mono); text-align: center; color: var(--text); }
+.kb-plus { color: var(--dim); font-size: 11px; }
+.hp-modal .modal-foot .btn:nth-last-child(2) { margin-right: auto; }
+.hp-modal .modal-foot .btn-primary { margin-left: auto; }
+@media (max-width: 900px) { .hp-wrap { grid-template-columns: 1fr; height: auto; } .hp-toc { flex-direction: row; overflow-x: auto; } .hp-keys { grid-template-columns: 1fr; } }
+
+/* ---------- อัปเดตแอป */
+.modal.up-modal { width: min(760px, calc(100vw - 24px)); }
+.up-wrap { display: flex; flex-direction: column; gap: 14px; }
+.up-head { display: flex; align-items: center; gap: 16px; }
+.up-head b { display: block; font-size: 20px; } .up-head small { color: var(--muted); font-size: 13px; }
+.up-logo { width: 52px; height: 52px; flex: none; border-radius: 14px; background: #e8603c; }
+.up-card { display: flex; flex-direction: column; gap: 10px; padding: 14px; border-radius: 12px; background: #171b22; border: 1px solid #222935; }
+.up-card h3 { margin: 0; font-size: 14px; }
+.up-notes { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; font-size: 14px; }
+.up-notes li { display: flex; gap: 10px; } .up-notes em { flex: none; width: 52px; font-style: normal; font-weight: 700; }
+.up-notes em.new { color: #3dd68c; } .up-notes em.fix { color: #7fa6ff; }
+.up-row { display: flex; align-items: center; gap: 8px; } .up-row span { margin-left: auto; font-size: 13px; }
+.up-bar { height: 8px; border-radius: 4px; background: #222935; overflow: hidden; } .up-bar i { display: block; height: 100%; width: 0; background: #2f6fe8; transition: width .2s; }
+.up-live { margin: 0; padding: 12px 14px; border-radius: 10px; background: #2a1f0b; border: 1px solid #7c5a13; color: #fcd34d; font-size: 13px; }
+.up-live[hidden] { display: none; }
+.up-modal .modal-foot .btn:first-child { margin-right: auto; }

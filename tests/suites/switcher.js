@@ -157,7 +157,7 @@ const px = (page, sel, x, y) => page.evaluate(([sel, x, y]) => { const c = docum
   ok('1080p applied', await p.evaluate(() => document.querySelector('#pgm-canvas').width === 1920), await p.textContent('#st-output'));
 
   // help + word
-  await p.click('[data-action=help]'); await p.waitForSelector('.modal .kbd-grid');
+  await p.click('[data-action=help]'); await p.waitForSelector('.modal .hp-kb');
   dl = p.waitForEvent('download'); await p.click('.modal-foot .btn:has-text("Word")'); d = await dl; ok('manual download', d.suggestedFilename().endsWith('.doc'));
   // wireless
   await p.click('[data-action=wireless]'); await p.waitForSelector('.modal'); await p.waitForTimeout(800);

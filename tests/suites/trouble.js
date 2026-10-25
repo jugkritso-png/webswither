@@ -41,7 +41,7 @@ const results = []; const ok = (n, c, x = '') => results.push(`${c ? 'PASS' : 'F
   await p.waitForFunction(() => window.webmix.audio.channels.some(c => c.inputId), null, { timeout: 8000 }).catch(() => {});
   await p.evaluate(() => { const c = window.webmix.audio.channels.find(c => c.inputId); const n = Date.now(); c.clips = [n, n, n, n]; window.webmix.renderAlerts(); });
   ok('clipping alert appears', (await p.textContent('#m-alerts')).includes('CLIP'));
-  ok('desktop alert cards stack top-right', await p.evaluate(() => { const r = document.querySelector('#m-alerts').getBoundingClientRect(); return r.right > 1400 && r.top < 120 && r.width < 420; }));
+  ok('desktop alert cards stack top-right', await p.evaluate(() => { const r = document.querySelector('#m-alerts').getBoundingClientRect(); return r.right > 1400 && r.top < 170 && r.width < 420; }));
   const db0 = await p.evaluate(() => window.webmix.audio.channels.find(c => c.inputId).db);
   await p.click('#m-alerts .m-alert:has-text("CLIP") [data-alert-act]');
   const db1 = await p.evaluate(() => window.webmix.audio.channels.find(c => c.inputId).db);

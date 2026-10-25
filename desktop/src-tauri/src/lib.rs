@@ -23,6 +23,9 @@ struct AppState {
     ffmpeg: OnceCell<Result<(String, String), String>>,
     recordings: Mutex<HashMap<u32, Recording>>,
     next_id: AtomicU32,
+    /// อัปเดตที่ดาวน์โหลดไว้แล้ว รอติดตั้ง (กด "รีสตาร์ทและติดตั้ง" หรือติดตั้งเองตอนปิดแอป)
+    #[cfg(desktop)]
+    pending_update: std::sync::Mutex<Option<(tauri_plugin_updater::Update, Vec<u8>)>>,
 }
 
 struct Recording {
@@ -596,6 +599,55 @@ async fn update_install(app: tauri::AppHandle) -> Result<(), String> {
     }
 }
 
+/// ดาวน์โหลดอัปเดตเก็บไว้ก่อน (ไลฟ์ต่อได้) — ส่งความคืบหน้า { done, total } กลับทาง channel
+#[tauri::command]
+async fn update_download(app: tauri::AppHandle, on_progress: tauri::ipc::Channel<serde_json::Value>) -> Result<serde_json::Value, String> {
+    #[cfg(desktop)]
+    {
+        use tauri::Manager;
+        use tauri_plugin_updater::UpdaterExt;
+        let update = app.updater().map_err(|e| e.to_string())?.check().await.map_err(|e| e.to_string())?;
+        let Some(update) = update else { return Err("เป็นเวอร์ชันล่าสุดแล้ว".into()) };
+        let mut done: u64 = 0;
+        let bytes = update
+            .download(
+                |chunk, total| {
+                    done += chunk as u64;
+                    let _ = on_progress.send(serde_json::json!({ "done": done, "total": total }));
+                },
+                || {},
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+        let version = update.version.clone();
+        *app.state::<AppState>().pending_update.lock().unwrap() = Some((update, bytes));
+        Ok(serde_json::json!({ "version": version }))
+    }
+    #[cfg(not(desktop))]
+    {
+        let _ = (app, on_progress);
+        Err("อัปเดตในแอปใช้ได้บนคอมพิวเตอร์เท่านั้น".into())
+    }
+}
+
+/// ติดตั้งอัปเดตที่ดาวน์โหลดไว้ แล้วเปิดแอปใหม่
+#[tauri::command]
+fn update_apply(app: tauri::AppHandle) -> Result<(), String> {
+    #[cfg(desktop)]
+    {
+        use tauri::Manager;
+        let pending = app.state::<AppState>().pending_update.lock().unwrap().take();
+        let Some((update, bytes)) = pending else { return Err("ยังไม่ได้ดาวน์โหลดอัปเดต".into()) };
+        update.install(bytes).map_err(|e| e.to_string())?;
+        app.restart();
+    }
+    #[cfg(not(desktop))]
+    {
+        let _ = app;
+        Err("อัปเดตในแอปใช้ได้บนคอมพิวเตอร์เท่านั้น".into())
+    }
+}
+
 /// Android: ไลฟ์/บันทึกอยู่ → เปิดบริการเบื้องหน้าพร้อมแจ้งเตือน (ระบบไม่หยุดกล้อง/สตรีมตอนปิดจอหรือสลับแอป)
 #[tauri::command]
 fn set_live(window: tauri::WebviewWindow, active: bool, text: String) {
@@ -623,7 +675,9 @@ pub fn run() {
             selftest_cleanup,
             set_live,
             update_check,
-            update_install
+            update_install,
+            update_download,
+            update_apply
         ])
         .setup(|app| {
             #[cfg(mobile)]
@@ -639,8 +693,18 @@ pub fn run() {
             create_desktop_window(app)?;
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running WebMix Pro");
+        .build(tauri::generate_context!())
+        .expect("error while running WebMix Pro")
+        .run(|_app, _event| {
+            // ปิดแอปแล้วมีอัปเดตที่ดาวน์โหลดไว้ → ติดตั้งให้ (เปิดครั้งหน้าเป็นเวอร์ชันใหม่)
+            #[cfg(desktop)]
+            if let tauri::RunEvent::Exit = _event {
+                use tauri::Manager;
+                if let Some((update, bytes)) = _app.state::<AppState>().pending_update.lock().unwrap().take() {
+                    let _ = update.install(bytes);
+                }
+            }
+        });
 }
 
 #[cfg(desktop)]

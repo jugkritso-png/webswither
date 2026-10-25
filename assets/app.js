@@ -5535,6 +5535,7 @@
         const AC = window.AudioContext || window.webkitAudioContext;
         if (!AC) return null;
         const ctx = this.ctx = new AC({ latencyHint: 'interactive' });
+        if (store.get('monitorSink', '')) setTimeout(applySink, 0);
         this.master = ctx.createGain();
         // ลิมิตเตอร์ที่ Master กันเสียงแตก (clipping) ในไฟล์บันทึกและสตรีม
         this.limiter = ctx.createDynamicsCompressor();
@@ -8176,7 +8177,7 @@ onmessage = async e => {
     const lamp = $('#tally-lamp');
     lamp.classList.toggle('is-live', live);
     lamp.textContent = live ? 'ON AIR' : 'OFF AIR';
-    keepScreenOn(live);
+    keepScreenOn(live && settings.keepAwake !== false);
     syncLiveService(live);
     updateStatus();
   }
@@ -8205,22 +8206,64 @@ onmessage = async e => {
     }, 'image/png');
   }
 
+  // หน้าต่าง Program Output: ภาพเต็มจอไม่มีกรอบ · แถบควบคุมลอย (ON AIR · เวลา · จอ · เลือกจอ · ซ่อน · ออกจากเต็มจอ) หายเองใน 3 วินาที
   function openOutputWindow() {
     if (desktop && desktop.mobile) { toast('แอป Android เปิดหน้าต่างแยกไม่ได้ — ต่อจอผ่าน HDMI หรือ Cast แล้วกดปุ่มเต็มจอบนจอ Program แทน', 'warn', 6000); return; }
     const win = window.open('about:blank', 'webmix-program-output', 'width=1280,height=720');
     if (!win) { toast('เบราว์เซอร์บล็อกหน้าต่างใหม่ — อนุญาต Pop-up สำหรับเว็บนี้ก่อน', 'warn'); return; }
     win.document.open();
-    win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>WebMix — Program Output</title>
-      <style>html,body{margin:0;height:100%;background:#000;overflow:hidden;cursor:none}video{width:100%;height:100%;object-fit:contain;display:block}
-      p{position:fixed;left:0;right:0;bottom:12px;margin:0;text-align:center;font:12px system-ui;color:#666;transition:opacity 1s}</style></head>
-      <body><video autoplay muted playsinline></video><p>ดับเบิลคลิกเพื่อเต็มจอ</p>
-      <script>document.addEventListener('dblclick',()=>{document.fullscreenElement?document.exitFullscreen():document.documentElement.requestFullscreen()});setTimeout(()=>document.querySelector('p').style.opacity=0,3000)<\/script></body></html>`);
+    win.document.write(`<!DOCTYPE html><html lang="th"><head><meta charset="utf-8"><title>WebMix — Program Output</title>
+      <style>html,body{margin:0;height:100%;background:#000;overflow:hidden;font:13px system-ui,sans-serif;color:#e8ecf1}body.idle{cursor:none}
+      video{width:100%;height:100%;object-fit:contain;display:block}
+      #bar{position:fixed;left:50%;top:18px;transform:translateX(-50%);display:flex;align-items:center;gap:10px;padding:7px 8px 7px 14px;border-radius:999px;background:rgba(18,22,28,.92);border:1px solid #2a313d;box-shadow:0 10px 30px rgba(0,0,0,.5);transition:opacity .4s;white-space:nowrap}
+      body.idle #bar,body.idle #hint,body.hide #bar{opacity:0;pointer-events:none}
+      #st{padding:2px 8px;border-radius:5px;background:#2a313d;font-weight:800;letter-spacing:1px;font-size:11px}#st.on{background:#c8323a}
+      #tm{font:600 13px ui-monospace,monospace}#scr{color:#9aa4b2}
+      button{height:30px;padding:0 12px;border-radius:999px;border:1px solid #3a4250;background:#171b22;color:#e8ecf1;font:inherit;font-size:12px;cursor:pointer}button.p{border-color:#4f86f0;background:#2f6fe8;color:#fff}
+      #menu{position:fixed;left:50%;top:62px;transform:translateX(-50%);display:none;flex-direction:column;gap:4px;padding:6px;border-radius:12px;background:#12161c;border:1px solid #2a313d}#menu.open{display:flex}#menu button{border-radius:8px;text-align:left}
+      #hint{position:fixed;right:24px;bottom:24px;padding:6px 10px;border-radius:8px;background:rgba(18,22,28,.85);color:#9aa4b2;font-size:12px;transition:opacity .4s}</style></head>
+      <body><video autoplay muted playsinline></video>
+      <div id="bar" role="toolbar" aria-label="ควบคุม Program Output"><span id="st">OFF AIR</span><span id="tm">00:00:00</span><span id="scr"></span>
+        <button id="pick" type="button">เลือกจอ</button><button id="hide" type="button">ซ่อนแถบนี้</button><button id="fs" type="button" class="p">เต็มจอ</button></div>
+      <div id="menu" role="menu"></div><div id="hint">แถบควบคุมจะหายไปเองใน 3 วินาที · ขยับเมาส์เพื่อเรียกกลับ · ดับเบิลคลิก = เต็มจอ</div></body></html>`);
     win.document.close();
-    const v = win.document.querySelector('video');
+    const d = win.document, $w = id => d.getElementById(id);
+    const v = d.querySelector('video');
     v.srcObject = new MediaStream(pgmCanvas.captureStream(settings.fps).getVideoTracks());
     v.play().catch(() => {});
+    let idleT = 0;
+    const wake = () => { d.body.classList.remove('idle'); clearTimeout(idleT); idleT = setTimeout(() => d.body.classList.add('idle'), 3000); };
+    d.addEventListener('mousemove', wake); d.addEventListener('keydown', wake); wake();
+    const fs = () => d.fullscreenElement ? d.exitFullscreen() : d.documentElement.requestFullscreen().catch(() => {});
+    d.addEventListener('dblclick', e => { if (!e.target.closest('#bar,#menu')) fs(); });
+    $w('fs').onclick = fs;
+    $w('hide').onclick = () => { d.body.classList.add('hide'); $w('hint').textContent = 'ขยับเมาส์ไม่เรียกแถบกลับแล้ว — กด H เพื่อแสดงแถบอีกครั้ง'; };
+    d.addEventListener('keydown', e => { if (e.key === 'h' || e.key === 'H') d.body.classList.toggle('hide'); });
+    // เลือกจอ: Window Management API (Chrome / Edge) — เต็มจอบนจอที่เลือกได้เลย
+    $w('pick').onclick = async () => {
+      const menu = $w('menu');
+      if (menu.classList.toggle('open') === false) return;
+      if (!('getScreenDetails' in win)) { menu.innerHTML = '<button type="button" disabled>เบราว์เซอร์นี้เลือกจอไม่ได้ — ลากหน้าต่างไปจอที่ต้องการแล้วกดเต็มจอ</button>'; return; }
+      try {
+        const sd = await win.getScreenDetails();
+        menu.innerHTML = sd.screens.map((sc, i) => `<button type="button" data-i="${i}">จอ ${i + 1}${sc.isPrimary ? ' (หลัก)' : ''} · ${sc.width}×${sc.height}${sc.label ? ' · ' + sc.label.replace(/[<>&"]/g, '') : ''}</button>`).join('');
+        menu.onclick = e => { const b = e.target.closest('[data-i]'); if (!b) return; menu.classList.remove('open'); d.documentElement.requestFullscreen({ screen: sd.screens[+b.dataset.i] }).catch(() => {}); };
+      } catch (e) { menu.innerHTML = '<button type="button" disabled>ไม่ได้รับอนุญาตให้ดูรายชื่อจอ</button>'; }
+    };
+    // สถานะจากหน้าหลัก ทุกครึ่งวินาที
+    const tick = () => {
+      if (win.closed) return;
+      const live = !!onAirSince;
+      $w('st').textContent = live ? 'ON AIR' : 'OFF AIR'; $w('st').className = live ? 'on' : '';
+      $w('tm').textContent = $('#onair-timer').textContent;
+      const sc = win.screen;
+      $w('scr').textContent = `${sc.width}×${sc.height}${d.fullscreenElement ? ' · เต็มจอ' : ''}`;
+      $w('fs').textContent = d.fullscreenElement ? 'ออกจากเต็มจอ (Esc)' : 'เต็มจอ';
+      setTimeout(tick, 500);
+    };
+    tick();
+    return win;
   }
-
 
   const multiview = createMultiview({
     get inputs() { return inputs; }, get state() { return state; }, get ovl() { return ovl; }, get streamer() { return streamer; }, get rec() { return rec; },
@@ -8674,7 +8717,7 @@ onmessage = async e => {
     if (appUpdate.available) {
       const v = appUpdate.available.version;
       toast(desktop.mobile ? `มี WebMix Pro ${v} แล้ว — ดาวน์โหลด APK ใหม่ติดตั้งทับได้เลย (ข้อมูลไม่หาย)` : `มี WebMix Pro ${v} แล้ว — อัปเดตได้ในคลิกเดียว แอปจะเปิดใหม่เอง`, 'info', 20000,
-        desktop.mobile ? { label: 'คัดลอกลิงก์', run: () => copyText(RELEASES_URL) } : { label: 'อัปเดตเลย', run: installAppUpdate });
+        desktop.mobile ? { label: 'คัดลอกลิงก์', run: () => copyText(RELEASES_URL) } : { label: 'ดูรายละเอียด', run: openUpdateDialog });
     } else if (manual) toast(`เป็นเวอร์ชันล่าสุดแล้ว (${info.version})`, 'success');
     refreshAppVersion();
   }
@@ -8691,6 +8734,62 @@ onmessage = async e => {
       toast(`อัปเดตไม่สำเร็จ: ${e.message || e} — ดาวน์โหลดตัวติดตั้งเองได้ที่หน้า Release`, 'error', 10000, { label: 'คัดลอกลิงก์', run: () => copyText(RELEASES_URL) });
     }
   }
+  // หน้าต่างอัปเดตแอป: มีอะไรใหม่ · ดาวน์โหลดเบื้องหลัง (ไลฟ์ต่อได้) · ติดตั้งเมื่อปิดแอป หรือรีสตาร์ทและติดตั้งตอนนี้
+  const updateLines = notes => String(notes || '').split('\n').map(l => l.trim().replace(/^[-*•]\s*/, '')).filter(l => l && !/^#/.test(l)).slice(0, 12)
+    .map(l => /^(แก้|fix)/i.test(l) ? ['แก้ไข', l.replace(/^(แก้ไข|fix)\s*[:：-]?\s*/i, '')] : ['ใหม่', l.replace(/^(ใหม่|new)\s*[:：-]?\s*/i, '')]);
+  function openUpdateDialog() {
+    const u = appUpdate.available;
+    if (!u || !desktop || desktop.mobile) return installAppUpdate();
+    const info = desktop.info || {};
+    const lines = updateLines(u.notes);
+    const live = () => streamer.active || streamer.reconnecting || rec.active;
+    const dl = appUpdate.dl || (appUpdate.dl = { done: 0, total: 0, state: 'idle', error: '' });
+    const start = () => {
+      if (dl.state === 'busy' || dl.state === 'ready') return;
+      Object.assign(dl, { state: 'busy', error: '', done: 0 });
+      desktop.updateDownload(m => { dl.done = m.done; dl.total = m.total || dl.total; })
+        .then(() => { dl.state = 'ready'; })
+        .catch(e => { dl.state = 'error'; dl.error = String(e.message || e); });
+    };
+    start();
+    dialog({
+      title: 'อัปเดตแอป',
+      body: `<div class="up-wrap">
+        <div class="up-head"><span class="up-logo" aria-hidden="true"></span><div><b>WebMix Pro ${esc(u.version)}</b><small>เวอร์ชันปัจจุบัน ${esc(info.version || u.current || '?')}</small></div></div>
+        <section class="up-card"><h3>มีอะไรใหม่</h3>${lines.length ? `<ul class="up-notes">${lines.map(([t, l]) => `<li><em class="${t === 'ใหม่' ? 'new' : 'fix'}">${t}</em><span>${esc(l)}</span></li>`).join('')}</ul>` : '<p class="note">ดูรายละเอียดทั้งหมดได้ที่หน้า Release</p>'}</section>
+        <section class="up-card"><div class="up-row"><h3 class="up-state">กำลังดาวน์โหลด</h3><span class="mono up-mb"></span></div><div class="up-bar"><i></i></div>
+          <p class="note">ดาวน์โหลดเบื้องหลังได้ ไลฟ์ต่อได้ตามปกติ · เลือก “ติดตั้งเมื่อปิดแอป” แล้วเปิดครั้งหน้าจะเป็นเวอร์ชันใหม่</p></section>
+        <p class="up-live" hidden>กำลังไลฟ์หรือบันทึกอยู่ — แอปจะไม่รีสตาร์ทเองระหว่างออกอากาศ</p>
+      </div>`,
+      actions: [{ label: 'ภายหลัง' }, { label: 'ติดตั้งเมื่อปิดแอป', value: 'later' }, { label: 'รีสตาร์ทและติดตั้ง', primary: true, value: 'now' }],
+      onOpen(modal, close) {
+        modal.classList.add('up-modal');
+        const now = [...$$('.modal-foot .btn', modal)].find(b => b.textContent === 'รีสตาร์ทและติดตั้ง');
+        const nowC = now.cloneNode(true); now.replaceWith(nowC);
+        const tick = () => {
+          if (!modal.isConnected) return;
+          const pct = dl.total ? dl.done / dl.total : dl.state === 'ready' ? 1 : 0;
+          $('.up-bar i', modal).style.width = `${pct * 100}%`;
+          $('.up-mb', modal).textContent = dl.total ? `${fmtBytes(dl.done)} / ${fmtBytes(dl.total)}` : dl.done ? fmtBytes(dl.done) : '';
+          $('.up-state', modal).textContent = dl.state === 'ready' ? 'ดาวน์โหลดเสร็จ — พร้อมติดตั้ง' : dl.state === 'error' ? `ดาวน์โหลดไม่สำเร็จ: ${dl.error}` : 'กำลังดาวน์โหลด';
+          $('.up-live', modal).hidden = !live();
+          nowC.disabled = dl.state !== 'ready' || live();
+          setTimeout(tick, 200);
+        };
+        tick();
+        nowC.addEventListener('click', async () => {
+          if (live()) return;
+          show.autosave(true);
+          nowC.disabled = true; nowC.textContent = 'กำลังติดตั้ง…';
+          try { await desktop.updateApply(); } catch (e) { toast(`ติดตั้งไม่สำเร็จ: ${e.message || e}`, 'error', 9000); close(); }
+        });
+      }
+    }).then(r => {
+      if (r?.value === 'later') { appUpdate.onQuit = true; toast('จะติดตั้งเวอร์ชันใหม่ให้เมื่อปิดแอป', 'success'); }
+      if (dl.state === 'error') dl.state = 'idle';
+    });
+  }
+
   function copyText(text) {
     (navigator.clipboard ? navigator.clipboard.writeText(text) : Promise.reject())
       .then(() => toast('คัดลอกลิงก์แล้ว — เปิดในเบราว์เซอร์เพื่อดาวน์โหลด', 'success'))
@@ -8702,11 +8801,79 @@ onmessage = async e => {
   }
   document.addEventListener('click', e => {
     if (!e.target.closest('.app-update-btn')) return;
-    appUpdate.available ? installAppUpdate() : checkAppUpdate(true);
+    appUpdate.available ? (desktop.mobile ? installAppUpdate() : openUpdateDialog()) : checkAppUpdate(true);
   });
   if (desktop) {
-    setTimeout(() => checkAppUpdate(false), 20000);
-    setInterval(() => checkAppUpdate(false), 6 * 3600 * 1000);
+    setTimeout(() => settings.autoUpdate !== false && checkAppUpdate(false), 20000);
+    setInterval(() => settings.autoUpdate !== false && checkAppUpdate(false), 6 * 3600 * 1000);
+  }
+
+  // หมวดตั้งค่าเพิ่ม: ทั่วไป · เสียง · ระบบและอัปเดต — เปลี่ยนแล้วมีผลทันที
+  function settingsExtraHtml() {
+    const info = desktop?.info || {};
+    const sw = (name, on, label, note = '') => `<label class="set-sw"><span><b>${label}</b>${note ? `<small>${note}</small>` : ''}</span><input type="checkbox" data-x="${name}" ${on ? 'checked' : ''}><i aria-hidden="true"></i></label>`;
+    const row = (label, ctl) => `<div class="set-row"><span>${label}</span><div>${ctl}</div></div>`;
+    const seg = (name, cur, opts) => `<div class="set-seg">${opts.map(([v, n]) => `<button type="button" data-x-seg="${name}" data-v="${v}" class="${String(v) === String(cur) ? 'is-active' : ''}">${n}</button>`).join('')}</div>`;
+    return `
+      <div class="modal-pane" data-mpane="general">
+        <h3 class="set-h">ทั่วไป</h3>
+        ${row('ขนาดการ์ดแหล่งภาพ', seg('cardSize', cardSize(), [['s', 'เล็ก'], ['m', 'กลาง'], ['l', 'ใหญ่']]))}
+        ${sw('keepAwake', settings.keepAwake !== false, 'ป้องกันจอดับระหว่างไลฟ์ / บันทึก')}
+        ${row('ขนาดแผงต่าง ๆ', '<button type="button" class="btn btn-sm" data-x-act="layout">คืนขนาดเริ่มต้น</button>')}
+        ${row('ปุ่มลัดคีย์บอร์ด', '<button type="button" class="btn btn-sm" data-x-act="help">ดูคู่มือและคีย์ลัด</button>')}
+        <p class="note">ภาษา: ไทย · ธีม: มืด (ออกแบบมาให้อ่านง่ายในห้องสตูดิโอ)</p>
+      </div>
+      <div class="modal-pane" data-mpane="audio">
+        <h3 class="set-h">เสียง</h3>
+        ${row('เป้าหมายความดัง (LUFS)', seg('lufs', lufs.target, Object.keys(LUFS_TARGETS).map(k => [k, `${k} · ${LUFS_TARGETS[k].split(' ')[0]}`])))}
+        ${sw('limiter', audio.masterStrip.limiter, 'ลิมิตเตอร์ที่ Master', 'กันเสียงแตกในไฟล์บันทึกและสตรีม')}
+        ${row('ลำโพง / หูฟังสำหรับฟังเสียง', `<select class="select" data-x="sink">${'setSinkId' in AudioContext.prototype ? '<option value="">ค่าเริ่มต้นของเครื่อง</option>' : '<option value="">เบราว์เซอร์นี้เลือกไม่ได้ (ใช้ค่าเริ่มต้นของเครื่อง)</option>'}</select>`)}
+        <p class="note">EQ / คอมเพรสเซอร์ / เกต / ดีเลย์ ตั้งแยกแต่ละช่องที่ปุ่ม FX ในมิกเซอร์</p>
+      </div>
+      <div class="modal-pane" data-mpane="system">
+        <h3 class="set-h">ระบบและอัปเดต</h3>
+        ${row('เวอร์ชัน', desktop ? `<span class="set-ver">WebMix Pro ${esc(info.version || '?')}${appUpdate.available ? ` <em>มี ${esc(appUpdate.available.version)}</em>` : ''}</span> <button type="button" class="btn btn-sm app-update-btn">${appUpdate.available ? 'อัปเดต' : 'ตรวจหาอัปเดต'}</button>` : '<span class="set-ver">เวอร์ชันเว็บ — อัปเดตเองทุกครั้งที่เปิดหน้าใหม่</span>')}
+        ${desktop ? sw('autoUpdate', settings.autoUpdate !== false, 'ตรวจอัปเดตอัตโนมัติ', 'ตอนเปิดแอปและทุก 6 ชั่วโมง') : ''}
+        ${row('ตัววาดภาพ', `<span>${renderer.active === 'gpu' ? `GPU (WebGL) · ${esc(gpu.rendererName || '')}` : 'CPU (Canvas 2D)'}</span>`)}
+        ${desktop ? row('ตัวเข้ารหัส', `<span>${esc(ENCODER_LABEL[info.encoder] || info.encoder || 'libx264')}</span>`) : ''}
+        ${row('ข้อมูลในเครื่องนี้', '<button type="button" class="btn btn-sm" data-x-act="export">ส่งออกโชว์เป็นไฟล์</button>')}
+      </div>`;
+  }
+  function bindSettingsExtra(modal) {
+    modal.addEventListener('click', e => {
+      const b = e.target.closest('[data-x-seg]');
+      if (b) {
+        const k = b.dataset.xSeg, v = b.dataset.v;
+        $$(`[data-x-seg="${k}"]`, modal).forEach(x => x.classList.toggle('is-active', x === b));
+        if (k === 'cardSize') setCardSize(v);
+        if (k === 'lufs') { lufs.target = +v; store.set('lufsTarget', v); lufs.render(); }
+        return;
+      }
+      const a = e.target.closest('[data-x-act]')?.dataset.xAct;
+      if (a === 'layout') { layoutSize.v = {}; layoutSize.save(); toast('คืนขนาดแผงเริ่มต้นแล้ว', 'success'); }
+      else if (a === 'help') openHelp();
+      else if (a === 'export') show.exportFile?.();
+    });
+    modal.addEventListener('change', e => {
+      const k = e.target.dataset.x;
+      if (!k) return;
+      if (k === 'keepAwake') { settings.keepAwake = e.target.checked; saveSettings(); updateOnAir(); }
+      else if (k === 'autoUpdate') { settings.autoUpdate = e.target.checked; saveSettings(); }
+      else if (k === 'limiter') { audio.ensure(); audio.setLimiter(e.target.checked); renderMixer(); }
+      else if (k === 'sink') { store.set('monitorSink', e.target.value); applySink(); }
+    });
+    // รายชื่อลำโพง / หูฟัง
+    const sel = $('[data-x=sink]', modal);
+    if (sel && 'setSinkId' in AudioContext.prototype && navigator.mediaDevices?.enumerateDevices) {
+      navigator.mediaDevices.enumerateDevices().then(list => {
+        const cur = store.get('monitorSink', '');
+        for (const d of list.filter(d => d.kind === 'audiooutput' && d.deviceId && d.deviceId !== 'default')) sel.insertAdjacentHTML('beforeend', `<option value="${esc(d.deviceId)}" ${d.deviceId === cur ? 'selected' : ''}>${esc(d.label || 'ลำโพง')}</option>`);
+      }).catch(() => {});
+    }
+  }
+  function applySink() {
+    const id = store.get('monitorSink', '');
+    if (audio.ctx && audio.ctx.setSinkId) audio.ctx.setSinkId(id).catch(() => { store.set('monitorSink', ''); toast('เปลี่ยนลำโพงไม่ได้ — ใช้ค่าเริ่มต้นของเครื่อง', 'warn'); });
   }
 
   function openSettings(tab = 'output') {
@@ -8716,7 +8883,7 @@ onmessage = async e => {
       title: 'ตั้งค่า',
       wide: true,
       body: `
-        <div class="modal-tabs"><button type="button" data-mtab="output">เอาต์พุต</button><button type="button" data-mtab="stream">การสตรีม</button><button type="button" data-mtab="control">ควบคุม</button></div>
+        <div class="modal-tabs set-tabs" role="tablist"><button type="button" data-mtab="general">ทั่วไป</button><button type="button" data-mtab="output">วิดีโอและเอาต์พุต</button><button type="button" data-mtab="stream">สตรีมและปลายทาง</button><button type="button" data-mtab="audio">เสียง</button><button type="button" data-mtab="control">ควบคุม MIDI</button><button type="button" data-mtab="system">ระบบและอัปเดต</button></div>
         <div class="modal-pane" data-mpane="output">
           ${live ? '<p class="note warn">กำลังบันทึกหรือสตรีมอยู่ — เปลี่ยนความละเอียดและเฟรมเรตได้หลังหยุดก่อน</p>' : ''}
           <div class="field"><span>คุณภาพการไลฟ์และบันทึก</span>${qualityHtml(qualityOf(settings.resolution, settings.fps, settings.videoKbps)?.id)}</div>
@@ -8768,8 +8935,19 @@ onmessage = async e => {
         </div>`,
       actions: [{ label: 'ยกเลิก' }, { label: 'บันทึก', primary: true, value: 'save' }],
       onOpen(modal) {
-        $('.modal-body', modal).insertAdjacentHTML('beforeend', `<div class="modal-pane" data-mpane="control">${midiPaneHtml()}</div>`);
+        $('.modal-body', modal).insertAdjacentHTML('beforeend', `<div class="modal-pane" data-mpane="control">${midiPaneHtml()}</div>${settingsExtraHtml()}`);
         bindMidiPane(modal);
+        bindSettingsExtra(modal);
+        // พื้นฐาน / ขั้นสูง: ขั้นสูงกางตัวเลือกที่พับไว้ทุกหมวด
+        modal.classList.add('set-modal');
+        $('.modal-title', modal).insertAdjacentHTML('afterend', `<div class="set-level" role="group" aria-label="ระดับการตั้งค่า"><button type="button" data-lv="basic">พื้นฐาน</button><button type="button" data-lv="adv">ขั้นสูง</button></div>`);
+        const level = lv => {
+          store.set('settingsLevel', lv);
+          $$('[data-lv]', modal).forEach(b => b.classList.toggle('is-active', b.dataset.lv === lv));
+          if (lv === 'adv') $$('details.adv', modal).forEach(d => { d.open = true; });
+        };
+        $('.set-level', modal).addEventListener('click', e => { const b = e.target.closest('[data-lv]'); if (b) level(b.dataset.lv); });
+        level(store.get('settingsLevel', 'basic'));
         const showTab = name => {
           $$('[data-mtab]', modal).forEach(b => b.classList.toggle('is-active', b.dataset.mtab === name));
           $$('[data-mpane]', modal).forEach(p => p.classList.toggle('is-active', p.dataset.mpane === name));
@@ -9134,18 +9312,60 @@ onmessage = async e => {
   /* --------------------------------------------------------------- help */
   // ข้อความคู่มือและคีย์ลัดอยู่ใน assets/js/manual.js
 
-  function openHelp() {
+  // คู่มือและคีย์ลัด: สารบัญซ้าย · ค้นหา · คีย์ลัดเป็นกลุ่มพร้อมปุ่มแบบคีย์บอร์ด · พิมพ์ใบคีย์ลัด
+  const KEY_GROUPS = [['ตัดภาพ', /^(Space|Enter|1 – 9|Shift \+ 1 – 9|F)$/], ['กราฟิกและรีเพลย์', /^(T|P|K|Q W E R|Shift \+ Q W E R|I)$/], ['อื่น ๆ', /./]];
+  const kbdHtml = k => k.split(/\s*\+\s*/).map(part => part.split(/\s+(?=\S)/).length > 1 && !/–/.test(part) ? part.split(/\s+/).map(x => `<kbd>${esc(x)}</kbd>`).join('') : `<kbd>${esc(part)}</kbd>`).join('<span class="kb-plus">+</span>');
+  function openHelp(section) {
+    const groups = KEY_GROUPS.map(([g]) => [g, []]);
+    for (const sc of SHORTCUTS) groups[KEY_GROUPS.findIndex(([, re]) => re.test(sc[0]))][1].push(sc);
+    const secs = [['คีย์ลัด', null], ...MANUAL];
     dialog({
-      title: 'คู่มือการใช้งาน',
+      title: 'คู่มือและคีย์ลัด',
       wide: true,
-      body: `
-        <div class="help">
-          <h3>คีย์ลัด</h3>
-          <div class="kbd-grid">${SHORTCUTS.map(([k, d]) => `<div class="kbd-row"><span>${esc(d)}</span><kbd>${esc(k)}</kbd></div>`).join('')}</div>
+      body: `<div class="hp-wrap">
+        <nav class="hp-toc" aria-label="สารบัญ">${secs.map(([h], i) => `<button type="button" data-sec="${i}" class="${i === 0 ? 'is-on' : ''}">${esc(h)}</button>`).join('')}</nav>
+        <div class="hp-main">
+          <label class="hp-search">${icon('search')}<input type="search" placeholder="ค้นหา เช่น ตัดภาพ, ปิดเสียง, รีเพลย์" aria-label="ค้นหาในคู่มือ"></label>
+          <section class="hp-sec" data-sec="0"><h3>คีย์ลัด</h3><div class="hp-keys">${groups.filter(([, l]) => l.length).map(([g, l]) => `<div class="hp-card"><h4>${esc(g)}</h4>${l.map(([k, d]) => `<div class="hp-k" data-q="${esc((k + ' ' + d).toLowerCase())}"><span>${esc(d)}</span><span class="hp-kb">${kbdHtml(k)}</span></div>`).join('')}</div>`).join('')}</div></section>
+          ${MANUAL.map(([h, items], i) => `<section class="hp-sec" data-sec="${i + 1}"><h3>${esc(h)}</h3><ul>${items.map(t => `<li data-q="${esc((h + ' ' + t).toLowerCase())}">${esc(t)}</li>`).join('')}</ul></section>`).join('')}
+          <p class="note hp-none" hidden>ไม่พบคำที่ค้นหา</p>
         </div>
-        ${MANUAL.map(([h, items]) => `<div class="help"><h3>${esc(h)}</h3><ul>${items.map(i => `<li>${esc(i)}</li>`).join('')}</ul></div>`).join('')}`,
-      actions: [{ label: 'ดาวน์โหลดคู่มือ (Word)', value: 'word' }, { label: 'ปิด', primary: true }]
+      </div>`,
+      actions: [{ label: 'พิมพ์ใบคีย์ลัด', value: 'print' }, { label: 'ดาวน์โหลดคู่มือ (Word)', value: 'word' }, { label: 'ปิด', primary: true }],
+      onOpen(modal) {
+        modal.classList.add('hp-modal');
+        const main = $('.hp-main', modal);
+        const go = i => { const sec = $(`.hp-sec[data-sec="${i}"]`, modal); if (sec) main.scrollTo({ top: sec.offsetTop - main.offsetTop - 8, behavior: 'smooth' }); };
+        $('.hp-toc', modal).addEventListener('click', e => { const b = e.target.closest('[data-sec]'); if (!b) return; $$('.hp-toc button', modal).forEach(x => x.classList.toggle('is-on', x === b)); go(+b.dataset.sec); });
+        main.addEventListener('scroll', () => {
+          const top = main.scrollTop + main.offsetTop + 30;
+          let cur = 0;
+          for (const sec of $$('.hp-sec', modal)) if (sec.offsetTop <= top && !sec.hidden) cur = +sec.dataset.sec;
+          $$('.hp-toc button', modal).forEach(x => x.classList.toggle('is-on', +x.dataset.sec === cur));
+        });
+        $('.hp-search input', modal).addEventListener('input', e => {
+          const q = e.target.value.trim().toLowerCase();
+          let any = false;
+          for (const el of $$('[data-q]', modal)) { const hit = !q || el.dataset.q.includes(q); el.hidden = !hit; any = any || hit; }
+          for (const sec of $$('.hp-sec', modal)) sec.hidden = !!q && !$$('[data-q]', sec).some(x => !x.hidden);
+          for (const c of $$('.hp-card', modal)) c.hidden = !!q && !$$('[data-q]', c).some(x => !x.hidden);
+          $('.hp-none', modal).hidden = any;
+        });
+        const pb = [...$$('.modal-foot .btn', modal)].find(b => b.textContent === 'พิมพ์ใบคีย์ลัด');
+        const pc = pb.cloneNode(true); pb.replaceWith(pc);
+        pc.addEventListener('click', printShortcuts);
+        if (section != null) setTimeout(() => go(section), 50);
+      }
     }).then(r => { if (r?.value === 'word') exportManual(); });
+  }
+  function printShortcuts() {
+    const w = window.open('', '_blank', 'width=800,height=900');
+    if (!w) { toast('เบราว์เซอร์บล็อกหน้าต่างพิมพ์ — อนุญาตป๊อปอัปแล้วลองใหม่', 'warn'); return; }
+    w.document.write(`<!doctype html><html lang="th"><head><meta charset="utf-8"><title>คีย์ลัด WebMix Pro</title><style>body{font-family:sans-serif;padding:24px}h1{font-size:20px}table{border-collapse:collapse;width:100%}td{border:1px solid #bbb;padding:6px 10px;font-size:14px}td:first-child{font-family:monospace;font-weight:700;white-space:nowrap;width:30%}</style></head><body>
+      <h1>คีย์ลัด WebMix Pro</h1><table>${SHORTCUTS.map(([k, d]) => `<tr><td>${esc(k)}</td><td>${esc(d)}</td></tr>`).join('')}</table></body></html>`);
+    w.document.close();
+    w.focus();
+    setTimeout(() => w.print(), 300);
   }
 
   function exportManual() {
@@ -9930,7 +10150,7 @@ onmessage = async e => {
     $$('#seg-cardsize button').forEach(b => { b.classList.toggle('is-active', b.dataset.size === cardSize()); b.addEventListener('click', () => setCardSize(b.dataset.size)); });
 
     // สำหรับดีบัก/ทดสอบอัตโนมัติ
-    window.webmix = { chatFeed, chatAdd, chatShow, chatHide, playlist, dataSources, timerControl, multiview, renderer, gpu, setRenderer: v => { settings.renderer = v; renderer.resolve(); updateStatus(); }, show, ovl, setChannel, toggleInputOverlay, useRecFolder: dir => { recFolder = dir; }, inputs, state, settings, overlays, audio, rec, iso, stinger, replayCapture, slideGo, midi, checkAppUpdate, macros, runMacro, openCamControl, abr: { state: abr, decide: abrDecide, apply: abrApply, tick: abrTick }, streamer, wireless, cut, autoTransition, setPreview, tr, ftb, padFire, chanKey, remote: remoteCtl, lufs, layoutSize, renderInputs, renderAlerts };
+    window.webmix = { chatFeed, chatAdd, chatShow, chatHide, playlist, dataSources, timerControl, multiview, renderer, gpu, setRenderer: v => { settings.renderer = v; renderer.resolve(); updateStatus(); }, show, ovl, setChannel, toggleInputOverlay, useRecFolder: dir => { recFolder = dir; }, inputs, state, settings, overlays, audio, rec, iso, stinger, replayCapture, slideGo, midi, checkAppUpdate, macros, runMacro, openCamControl, abr: { state: abr, decide: abrDecide, apply: abrApply, tick: abrTick }, streamer, wireless, cut, autoTransition, setPreview, tr, ftb, padFire, chanKey, remote: remoteCtl, lufs, layoutSize, renderInputs, renderAlerts, openOutputWindow };
   }
 
   boot();

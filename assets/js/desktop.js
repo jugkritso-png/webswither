@@ -31,6 +31,9 @@
     // อัปเดตแอป (Windows / macOS / Linux AppImage): ตรวจ → { version, current, notes } หรือ null · ติดตั้งแล้วแอปเปิดใหม่เอง
     updateCheck: () => invoke('update_check'),
     updateInstall: () => invoke('update_install'),
+    // ดาวน์โหลดเก็บไว้ก่อน (onProgress({ done, total })) แล้วค่อยติดตั้งด้วย updateApply หรือปล่อยให้ติดตั้งตอนปิดแอป
+    updateDownload: onProgress => { const ch = new T.core.Channel(); ch.onmessage = m => onProgress && onProgress(m); return invoke('update_download', { onProgress: ch }); },
+    updateApply: () => invoke('update_apply'),
     // Android: บริการเบื้องหน้า (แจ้งเตือน "กำลังไลฟ์") ให้กล้อง ไมค์ และการสตรีมทำงานต่อตอนปิดจอ/สลับแอป
     setLive: (active, text) => invoke('set_live', { active: !!active, text: String(text || '') }).catch(() => {}),
 
