@@ -2254,3 +2254,28 @@ html.is-resizing iframe, html.is-resizing canvas { pointer-events: none; }
 .net-txt b { font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .net-txt small { color: var(--muted); font-size: 12px; }
 .net-chip { flex: none; font-style: normal; padding: 2px 8px; border-radius: 999px; background: #111a2b; color: #a9c3ff; font-size: 11px; font-weight: 600; }
+
+/* ---------- ลบพื้นหลังด้วย AI */
+.modal.ab-modal { width: min(1240px, calc(100vw - 24px)); max-width: none; }
+.ab-wrap { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: 14px; align-items: start; }
+.ab-left, .ab-right { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.ab-right .field, .ab-left .field { margin: 0; }
+.ab-two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.ab-two small { display: block; margin-bottom: 6px; color: var(--muted); font-size: 12px; }
+.ab-two canvas { display: block; width: 100%; aspect-ratio: 16 / 9; border-radius: 8px; background: #000; }
+.ab-card { display: flex; flex-direction: column; gap: 10px; padding: 14px; border-radius: 12px; background: #171b22; border: 1px solid #222935; }
+.ab-card h3 { margin: 0; font-size: 14px; }
+.ab-tiles { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
+.ab-tile { position: relative; display: flex; flex-direction: column; gap: 6px; padding: 8px; border-radius: 10px; border: 1px solid #2a313d; background: #0b0d12; cursor: pointer; font-size: 12px; }
+.ab-tile input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.ab-tile:has(input:checked) { border: 2px solid #f5a524; padding: 7px; }
+.ab-tile:has(input:focus-visible) { outline: 2px solid #7fa6ff; }
+.ab-sw { display: block; aspect-ratio: 16 / 9; border-radius: 6px; }
+.ab-blur { background: linear-gradient(135deg, #3b4a5e, #2a3442); filter: blur(.5px); }
+.ab-image { background: linear-gradient(135deg, #1d4ed8, #7c3aed); }
+.ab-green { background: #00b140; }
+.ab-remove { background: repeating-conic-gradient(#2a313d 0 25%, #171b22 0 50%) 0 0 / 14px 14px; }
+.ab-none { background: #23324a; }
+.ab-stat { font-size: 12px; color: #3dd68c; min-height: 16px; }
+.ab-modal .modal-foot .btn:nth-last-child(2) { margin-left: auto; }
+@media (max-width: 900px) { .ab-wrap { grid-template-columns: 1fr; } .ab-tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); } }

@@ -52,7 +52,7 @@ function fetchAssets() {
   ok('camera picture is not red to begin with', base.red < 0.2, JSON.stringify(base));
   const card = p.locator(`.card[data-id="${cam}"]`); await card.hover(); await card.locator('[data-card=rename]').click();
   await p.waitForSelector('.modal select[name=bgmode]');
-  ok('camera edit dialog has the AI background options', (await p.$$eval('.modal select[name=bgmode] option', o => o.map(x => x.value))).join() === 'none,blur,image,remove');
+  ok('camera edit dialog has the AI background options', (await p.$$eval('.modal select[name=bgmode] option', o => o.map(x => x.value))).join() === 'none,blur,image,green,remove');
   await p.selectOption('.modal select[name=bgmode]', 'image');
   ok('choosing “image” shows the picture list', await p.isVisible('.modal select[name=bgimg]'));
   await p.click('.modal-foot .btn-primary');
@@ -84,6 +84,19 @@ function fetchAssets() {
   await p.selectOption('.modal select[name=bgmode]', 'none'); await p.click('.modal-foot .btn-primary'); await p.waitForTimeout(800);
   const off = await stats();
   ok('“none” returns the normal camera picture and frees the model', off.red < 0.2 && off.black < 0.8 && await p.evaluate(() => !window.webmix.inputs.find(i => i.type === 'camera').bgState), JSON.stringify(off));
+  // หน้าต่าง AI เต็ม: สีเขียว · ขอบ / ความไว / ประสิทธิภาพ
+  await card.hover(); await card.locator('[data-card=rename]').click(); await p.waitForSelector('.modal .bg-more');
+  await p.click('.modal .bg-more'); await p.waitForSelector('.ab-modal');
+  ok('full AI dialog with before / after', await p.isVisible('.ab-before') && await p.isVisible('.ab-after') && (await p.$$('.ab-tile')).length === 5);
+  await p.check('.ab-modal [name=mode][value=green]');
+  await p.evaluate(() => { const set = (n, v) => { const el = document.querySelector(`.ab-modal [name=${n}]`); el.value = v; el.dispatchEvent(new Event('input', { bubbles: true })); }; set('feather', 6); set('sensUi', 80); });
+  await p.check('.ab-modal [name=quality][value=fast]');
+  await p.waitForFunction(() => window.webmix.inputs.find(i => i.type === 'camera').bgState?.ready, null, { timeout: 45000 }).catch(() => {});
+  await p.waitForTimeout(1200);
+  const g = await p.evaluate(() => { const c = document.querySelector('#pgm-canvas'); const x = c.getContext('2d'); const d = x.getImageData(0, 0, c.width, c.height).data; let n = 0, t = 0; for (let i = 0; i < d.length; i += 64) { t++; if (d[i + 1] > 140 && d[i] < 60 && d[i + 2] < 100) n++; } return n / t; });
+  ok('green background for keying elsewhere', g > 0.6, String(g));
+  await p.click('.ab-modal .modal-foot .btn-primary');
+  ok('edge / sensitivity / quality saved', await p.evaluate(() => { const b = window.webmix.inputs.find(i => i.type === 'camera').bg; return b.mode === 'green' && b.feather === 6 && Math.abs(b.sens - 0.17) < 0.01 && b.quality === 'fast'; }));
   await p.screenshot({ path: S + '/aibg.png' });
   ok('no page errors', errs.length === 0, JSON.stringify(errs));
   console.log(results.join('\n'));
