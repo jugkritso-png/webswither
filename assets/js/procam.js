@@ -218,8 +218,11 @@
     root.addEventListener('click', e => {
       if (e.target !== video && e.target !== assist && !e.target.closest('.pc-stage')) return;
       if (tool) { closePanel(); return; }
-      const x = (e.clientX - rect.x) / rect.w, y = (e.clientY - rect.y) / rect.h;
-      if (x < 0 || x > 1 || y < 0 || y > 1) return;
+      focusAt((e.clientX - rect.x) / rect.w, (e.clientY - rect.y) / rect.h);
+    });
+    // แตะเพื่อโฟกัส/วัดแสง (จากจอมือถือ หรือสตูดิโอสั่งมา)
+    function focusAt(x, y) {
+      if (!(x >= 0 && x <= 1 && y >= 0 && y <= 1)) return;
       Object.assign(focusBox.style, { left: x * 100 + '%', top: y * 100 + '%' });
       focusBox.hidden = false;
       focusBox.classList.remove('pulse'); void focusBox.offsetWidth; focusBox.classList.add('pulse');
@@ -230,7 +233,7 @@
       // วัดแสงตรงจุดที่แตะเฉพาะตอนแสงอัตโนมัติ — ตั้งแสงเองไว้แล้ว (หรือล็อก) จะไม่ถูกเปลี่ยนกลับเป็นอัตโนมัติ
       if (Array.isArray(c.exposureMode) && c.exposureMode.includes('continuous') && !locked && sets().exposureMode !== 'manual') patch.exposureMode = 'continuous';
       apply(patch, true);
-    });
+    }
 
     /* ---------- บันทึกในเครื่อง ---------- */
     const pickMime = () => ['video/mp4;codecs=avc1', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'].find(t => window.MediaRecorder && MediaRecorder.isTypeSupported(t)) || '';
@@ -482,6 +485,8 @@
         else if (msg.cmd === 'quality' && ctx.qualities().includes(v)) { await ctx.setQuality(v); afterTrackChange(); }
         else if (msg.cmd === 'lens' && lenses.some(l => l.id === v)) { await ctx.setLens(v); afterTrackChange(); }
         else if (msg.cmd === 'lock') await setLock(!!v);
+        else if (msg.cmd === 'poi' && v && typeof v === 'object') focusAt(+v.x, +v.y);
+        else if (msg.cmd === 'flip' && ctx.flip) { await ctx.flip(); afterTrackChange(); }
         else if (msg.cmd === 'state') sendStateSoon();
         else if (msg.cmd === 'msg' && typeof v === 'string') ctx.brief('สตูดิโอ: ' + v.slice(0, 120), 6000);
         refreshPanel();

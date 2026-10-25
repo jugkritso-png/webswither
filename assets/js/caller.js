@@ -105,7 +105,8 @@
         getFps: () => fps,
         async setQuality(label) { const i = QUALITIES.findIndex(q => q.label === label); if (i < 0 || QUALITIES[i] === quality) return; quality = QUALITIES[(i + QUALITIES.length - 1) % QUALITIES.length]; await cycleQuality(); },
         async setFps(v) { fps = v; store.set('caller-fps', v); const t = stream?.getVideoTracks()[0]; try { await t.applyConstraints({ frameRate: { ideal: v } }); } catch (e) { await reopenVideo(); } },
-        async setLens(id) { lensId = id; await reopenVideo(); }
+        async setLens(id) { lensId = id; await reopenVideo(); },
+        flip: () => flip()
       });
       if (typeof Peer === 'undefined') {
         setStatus('ออฟไลน์', 'bad');

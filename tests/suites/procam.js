@@ -95,6 +95,13 @@ const until = async (fn, ms = 15000) => { const end = Date.now() + ms; while (Da
   ok('stopping saves a file on the phone', /^WebMix-Cam-\d{8}-\d{6}\.(webm|mp4)$/.test(d.suggestedFilename()), d.suggestedFilename());
   await host.click('.cam-ctl .cam-lock');
   ok('studio locks AE/AWB/AF', await until(() => ph.evaluate(() => window.__applied.some(a => a.exposureMode === 'manual' && a.whiteBalanceMode === 'manual' && a.focusMode === 'manual')), 4000) && await until(async () => (await ph.textContent('[data-pc=lock] b')) === 'ON', 3000));
+  ok('studio shows the live picture', await until(() => host.evaluate(() => document.querySelector('.cc-video video').videoWidth > 0), 4000));
+  { const vb = await host.locator('.cc-video video').boundingBox(); await host.mouse.click(vb.x + vb.width * 0.3, vb.y + vb.height * 0.6); }
+  ok('tapping the studio picture focuses the phone there', await until(() => ph.evaluate(() => window.__applied.some(a => a.pointsOfInterest && Math.abs(a.pointsOfInterest[0].x - 0.3) < 0.05)), 4000));
+  await host.click('.cc-tabs [data-tab=color]');
+  await host.evaluate(() => { const r = document.querySelector('.cc-color [data-cc=s]'); r.value = 0.5; r.dispatchEvent(new Event('input', { bubbles: true })); });
+  ok('colour tab adjusts the source', await host.evaluate(i => window.webmix.inputs.find(x => x.id === i).color?.s === 0.5, id));
+  await host.click('.cc-color .cc-reset'); await host.click('.cc-tabs [data-tab=cam]');
   await host.screenshot({ path: process.env.WORK + '/procam-studio.png' });
   await host.click('.modal-foot .btn-primary');
   await ph.tap('[data-pc=exp]'); await ph.waitForTimeout(300);

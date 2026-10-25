@@ -5361,12 +5361,8 @@
     };
     const body = () => {
       const c = inp.cam, k = c.caps || {}, st = c.set || {}, man = m => m === 'manual';
-      sig = [st.exposureMode, st.whiteBalanceMode, st.focusMode, (c.lenses || []).length, !!c.rec, c.locked].join('|');
+      sig = [st.exposureMode, st.whiteBalanceMode, st.focusMode, (c.lenses || []).length].join('|');
       const parts = [];
-      parts.push(`<p class="note cam-status">${esc(status())}</p>`);
-      parts.push(`<div class="cam-row"><button type="button" class="btn ${c.rec ? 'btn-danger' : ''} cam-rec">${c.rec ? '■ หยุดบันทึกในมือถือ' : '● บันทึกในมือถือ (ไฟล์สำรองคุณภาพสูง)'}</button>
-        <button type="button" class="btn cam-lock ${c.locked ? 'is-on' : ''}">${c.locked ? 'ปลดล็อก AE/AWB/AF' : 'ล็อก AE/AWB/AF'}</button>
-        ${k.torch ? `<button type="button" class="btn cam-torch ${st.torch ? 'is-on' : ''}">ไฟฉาย ${st.torch ? 'ON' : 'OFF'}</button>` : ''}</div>`);
       if (R(k.iso) || R(k.exposureTime) || R(k.exposureCompensation)) {
         parts.push(`<div class="help"><h3>แสง (Exposure)</h3></div>`);
         if ((k.exposureMode || []).includes('manual')) parts.push(segs('exposureMode', [['continuous', 'AUTO'], ['manual', 'MANUAL']], man(st.exposureMode) ? 'manual' : 'continuous'));
@@ -5392,21 +5388,86 @@
       parts.push(`<div class="field"><span>ข้อความถึงช่างกล้อง (ขึ้นบนจอมือถือ)</span><div class="link-row"><input class="input cam-msg" maxlength="120" placeholder="เช่น ซูมเข้าหน้าผู้พูด"><button type="button" class="btn cam-msg-send">ส่ง</button></div></div>`);
       return parts.join('');
     };
+    // ปุ่มใต้ภาพ: สลับกล้อง · ไฟฉาย · ล็อกแสง · บันทึกในมือถือ
+    const btns = () => {
+      const c = inp.cam, st = c.set || {}, k = c.caps || {};
+      return `<button type="button" class="btn cam-flip">${icon('flip')}สลับกล้องหน้า/หลัง</button>
+        ${k.torch ? `<button type="button" class="btn cam-torch ${st.torch ? 'is-on' : ''}">ไฟฉาย ${st.torch ? 'เปิด' : 'ปิด'}</button>` : ''}
+        <button type="button" class="btn cam-lock ${c.locked ? 'is-on' : ''}">${c.locked ? 'ปลดล็อกแสง (AE-L)' : 'ล็อกแสง (AE-L)'}</button>
+        <button type="button" class="btn ${c.rec ? 'btn-danger' : ''} cam-rec">${c.rec ? '■ หยุดบันทึกในมือถือ' : '● บันทึกในมือถือ'}</button>`;
+    };
+    const cc = { ...NEUTRAL_COLOR, ...(inp.color || {}) };
+    const ccFmt = { b: v => `${v >= 1 ? '+' : ''}${Math.round((v - 1) * 100)}%`, c: v => `${v >= 1 ? '+' : ''}${Math.round((v - 1) * 100)}%`, s: v => `${v >= 1 ? '+' : ''}${Math.round((v - 1) * 100)}%`, t: v => (v > 0 ? 'อุ่น +' : v < 0 ? 'เย็น ' : '') + Math.round(v * 100) };
+    const ccRow = (k, label, min, max, step) => `<label class="field cc-row"><span>${label} <b class="mono" data-cc-val="${k}">${ccFmt[k](cc[k])}</b></span><input class="range" type="range" data-cc="${k}" min="${min}" max="${max}" step="${step}" value="${cc[k]}"></label>`;
+    let paintTop = () => {};
     dialog({
-      title: `ควบคุมกล้อง — ${inp.name}`,
-      body: `<div class="cam-ctl">${body()}</div>`,
+      title: inp.name,
+      wide: true,
+      body: `<div class="cam-ctl cc-wrap">
+        <p class="cc-head"><span class="cc-pgm" hidden>PROGRAM</span><span class="note cam-status"></span></p>
+        <div class="cc-grid">
+          <div class="cc-left">
+            <div class="cc-video"><video muted autoplay playsinline></video><i class="cc-focus" hidden></i>
+              <span class="cc-tap">แตะภาพ = โฟกัส/วัดแสงตรงนั้น</span><span class="cc-recb" hidden></span></div>
+            <div class="cc-btns"></div>
+          </div>
+          <aside class="cc-side">
+            <div class="seg cc-tabs" role="tablist"><button type="button" data-tab="cam" class="is-active">กล้อง</button><button type="button" data-tab="color">สี</button></div>
+            <div class="cc-cam">${body()}</div>
+            <div class="cc-color" hidden>${ccRow('b', 'ความสว่าง', 0.3, 2, 0.01)}${ccRow('c', 'คอนทราสต์', 0.3, 2, 0.01)}${ccRow('s', 'ความอิ่มสี', 0, 2.5, 0.01)}${ccRow('t', 'อุณหภูมิสี', -1, 1, 0.01)}
+              <button type="button" class="btn btn-sm cc-reset">รีเซ็ตสี</button><p class="note">ปรับสีที่สตูดิโอ (ไม่เปลี่ยนไฟล์ที่บันทึกในมือถือ)</p></div>
+          </aside>
+        </div></div>`,
       actions: [{ label: 'ปิด', primary: true }],
       onOpen(modal) {
-        const box = $('.cam-ctl', modal);
+        modal.classList.add('cc-modal');
+        const box = $('.cam-ctl', modal), camBox = $('.cc-cam', modal), v = $('.cc-video video', modal);
+        v.srcObject = inp.el?.srcObject || null; v.play().catch(() => {});
+        let btnSig = '';
+        paintTop = () => {
+          const c = inp.cam;
+          $('.cam-status', box).textContent = status();
+          $('.cc-pgm', box).hidden = !isOnAir(inp.id);
+          const rb = $('.cc-recb', box);
+          rb.hidden = !c.rec;
+          if (c.rec) rb.textContent = `● บันทึกในมือถือ ${c.rec.since ? fmtDuration(Date.now() - c.rec.since) : ''}`;
+          const bs = [!!c.rec, c.locked, (c.set || {}).torch, (c.caps || {}).torch].join('|');
+          if (bs !== btnSig) { btnSig = bs; $('.cc-btns', box).innerHTML = btns(); }
+        };
+        paintTop();
+        const tick = setInterval(() => { if (!box.isConnected) { clearInterval(tick); return; } paintTop(); }, 1000);
+        // แตะภาพ = ส่งจุดโฟกัส/วัดแสงไปที่มือถือ
+        v.addEventListener('click', e => {
+          const r = v.getBoundingClientRect(), vw = v.videoWidth || 16, vh = v.videoHeight || 9, k = Math.min(r.width / vw, r.height / vh);
+          const x = (e.clientX - r.left - (r.width - vw * k) / 2) / (vw * k), y = (e.clientY - r.top - (r.height - vh * k) / 2) / (vh * k);
+          if (x < 0 || x > 1 || y < 0 || y > 1) return;
+          cmd('poi', { x: +x.toFixed(3), y: +y.toFixed(3) });
+          const fb = $('.cc-focus', box);
+          Object.assign(fb.style, { left: `${e.clientX - r.left}px`, top: `${e.clientY - r.top}px` });
+          fb.hidden = false; fb.classList.remove('pulse'); void fb.offsetWidth; fb.classList.add('pulse');
+          setTimeout(() => { fb.hidden = true; }, 1400);
+        });
+        $('.cc-tabs', box).addEventListener('click', e => {
+          const t = e.target.closest('[data-tab]');
+          if (!t) return;
+          $$('.cc-tabs button', box).forEach(b => b.classList.toggle('is-active', b === t));
+          camBox.hidden = t.dataset.tab !== 'cam'; $('.cc-color', box).hidden = t.dataset.tab !== 'color';
+        });
+        $('.cc-color', box).addEventListener('input', e => {
+          const k = e.target.dataset.cc;
+          if (!k) return;
+          cc[k] = +e.target.value; $(`[data-cc-val="${k}"]`, box).textContent = ccFmt[k](cc[k]);
+          inp.color = sanitizeColor(cc);
+        });
+        $('.cc-reset', box).addEventListener('click', () => { Object.assign(cc, NEUTRAL_COLOR); $$('[data-cc]', box).forEach(r => { r.value = cc[r.dataset.cc]; $(`[data-cc-val="${r.dataset.cc}"]`, box).textContent = ccFmt[r.dataset.cc](cc[r.dataset.cc]); }); inp.color = null; });
         camCtl = {
           inp,
           refresh() {
             if (!box.isConnected) return;
             const st = inp.cam.set || {};
-            const nextSig = [st.exposureMode, st.whiteBalanceMode, st.focusMode, (inp.cam.lenses || []).length, !!inp.cam.rec, inp.cam.locked].join('|');
-            if (nextSig !== sig && !dragging) { box.innerHTML = body(); return; }
-            const s1 = $('.cam-status', box);
-            if (s1) s1.textContent = status();
+            const nextSig = [st.exposureMode, st.whiteBalanceMode, st.focusMode, (inp.cam.lenses || []).length].join('|');
+            paintTop();
+            if (nextSig !== sig && !dragging) { camBox.innerHTML = body(); return; }
             if (!dragging) for (const el of $$('[data-ck]', box)) { const v = st[el.dataset.ck]; if (v != null) { el.value = v; const l = $(`[data-cv="${el.dataset.ck}"]`, box); if (l) l.textContent = fmt[el.dataset.ck](v); } }
             for (const sg of $$('[data-cs]', box)) {
               const cur = { quality: st.quality, fps: st.fps, lens: st.lens }[sg.dataset.cs];
@@ -5426,6 +5487,7 @@
         });
         box.addEventListener('click', e => {
           if (e.target.closest('.cam-rec')) { cmd('rec', !inp.cam.rec); return; }
+          if (e.target.closest('.cam-flip')) { cmd('flip'); return; }
           if (e.target.closest('.cam-lock')) { cmd('lock', !inp.cam.locked); return; }
           if (e.target.closest('.cam-torch')) { send({ torch: !(inp.cam.set || {}).torch }); return; }
           if (e.target.closest('.cam-msg-send')) { const i = $('.cam-msg', box); if (i.value.trim()) { cmd('msg', i.value.trim()); toast('ส่งข้อความถึงช่างกล้องแล้ว', 'success', 2000); i.value = ''; } return; }
