@@ -10261,6 +10261,7 @@ onmessage = async e => {
     },
 
     async startNew() {
+      store.set('showLibId', '');
       const ok = await confirmDialog('เริ่มโชว์ใหม่',
         `${this.busyWarning() || 'แหล่งภาพ มิกเซอร์ และกราฟิกทั้งหมดจะถูกล้างเป็นค่าเริ่มต้น'} (ค่าเอาต์พุตและปลายทางการสตรีมยังอยู่เหมือนเดิม)`, 'เริ่มใหม่');
       if (!ok) return;
@@ -10273,27 +10274,89 @@ onmessage = async e => {
     }
   };
 
+  // คลังโชว์ในเครื่อง: เก็บหลายรายการ (ข้อมูลโชว์ + ภาพย่อ) ใน localStorage · ไฟล์วิดีโอ/รูปของทุกโชว์ในคลังไม่ถูกลบตอนเปิดหน้า
+  const library = {
+    list: () => (Array.isArray(store.get('library', [])) ? store.get('library', []) : []).filter(x => x && typeof x.id === 'string').slice(0, 24),
+    data: id => store.get('lib:' + id, null),
+    drop(id) { try { localStorage.removeItem('webmix:lib:' + id); } catch (e) {} },
+    thumb() {
+      try {
+        const c = document.createElement('canvas'); c.width = 192; c.height = Math.round(192 * H / W);
+        c.getContext('2d').drawImage(pgmCanvas, 0, 0, c.width, c.height);
+        return c.toDataURL('image/jpeg', 0.6);
+      } catch (e) { return ''; }
+    },
+    save(asNew) {
+      const list = this.list();
+      let id = !asNew && store.get('showLibId', '');
+      if (!id || !list.some(x => x.id === id)) id = uid();
+      const data = show.serialize(false);
+      const meta = { id, name: show.name || 'โชว์', savedAt: Date.now(), n: data.inputs.length, ch: (data.audio?.sources || []).length + Object.keys(data.audio?.inputs || {}).length, mac: (data.macros || []).length, thumb: this.thumb() };
+      store.set('lib:' + id, data);
+      if (!this.data(id)) return null;   // พื้นที่ในเครื่องเต็ม
+      const next = [meta, ...list.filter(x => x.id !== id)];
+      while (next.length > 24) this.drop(next.pop().id);
+      store.set('library', next);
+      store.set('showLibId', id);
+      return meta;
+    },
+    remove(id) { this.drop(id); store.set('library', this.list().filter(x => x.id !== id)); if (store.get('showLibId', '') === id) store.set('showLibId', ''); },
+    // ทุกสตริงในข้อมูลโชว์ของคลัง (รหัสแหล่งภาพ / ไฟล์ในเพลย์ลิสต์ / เพลง) — ใช้กันไม่ให้ไฟล์ถูกลบ
+    keys() {
+      const out = new Set();
+      const walk = v => { if (typeof v === 'string') { if (v.length < 80) out.add(v); } else if (v && typeof v === 'object') for (const x of Object.values(v)) walk(x); };
+      for (const x of this.list()) walk(this.data(x.id));
+      return out;
+    }
+  };
+  const agoText = t => { const m = Math.round((Date.now() - t) / 60000); return m < 1 ? 'เมื่อสักครู่' : m < 60 ? `${m} นาทีก่อน` : m < 1440 ? `${Math.round(m / 60)} ชั่วโมงก่อน` : `${Math.round(m / 1440)} วันก่อน`; };
+
   function openShowDialog() {
     show.autosave();
     const ago = show.savedAt ? new Date(show.savedAt).toLocaleTimeString('th-TH', { hour12: false }) : '—';
+    let sel = '';
+    const chs = audio.channels.length;
     dialog({
       title: 'โชว์',
+      wide: true,
       body: `
-        <label class="field"><span>ชื่อโชว์</span><input name="showname" class="input" maxlength="60" value="${esc(show.name)}"></label>
-        <p class="note">บันทึกอัตโนมัติในเบราว์เซอร์นี้แล้ว (ล่าสุด ${ago}) — รีเฟรชหรือปิดหน้าแล้วเปิดใหม่ แหล่งภาพ มิกเซอร์ และกราฟิกจะกลับมาครบ
-          กล้อง/ไฟล์ที่ต้องเชื่อมใหม่จะมีปุ่ม <b>🔗</b> บนการ์ด</p>
-        <div class="show-actions">
-          <button type="button" class="btn" data-show="export">${icon('download')}บันทึกเป็นไฟล์</button>
-          <button type="button" class="btn" data-show="import">${icon('folder')}เปิดไฟล์โชว์</button>
-          <button type="button" class="btn btn-danger" data-show="new">${icon('plus')}เริ่มโชว์ใหม่</button>
-        </div>
-        <p class="note">ไฟล์โชว์ (.webmix.json) เก็บการตั้งค่าทั้งหมด แต่ไม่รวมตัวไฟล์วิดีโอ/รูป — เปิดบนเครื่องอื่นแล้วให้กด 🔗 เพื่อเลือกไฟล์
-          ${settings.rememberKey ? 'และ<b>มี Stream Key/รหัส SRT อยู่ในไฟล์</b> — เก็บไฟล์ไว้ให้ปลอดภัย' : 'และไม่มี Stream Key/รหัส SRT อยู่ในไฟล์'}</p>`,
+        <p class="note sh-sub">โชว์ = แหล่งภาพ เสียง กราฟิก Macro และการตั้งค่าทั้งหมดของรายการหนึ่ง</p>
+        <section class="sh-cur">
+          <div class="sh-cur-l"><small>เปิดอยู่</small><label class="sh-name"><input name="showname" class="input" maxlength="60" value="${esc(show.name)}" aria-label="ชื่อโชว์"></label>
+            <span class="sh-meta">บันทึกอัตโนมัติ ${ago} · ${inputs.length} แหล่งภาพ · ${chs} ช่องเสียง · ${macros.length} Macro</span></div>
+          <div class="sh-cur-r"><button type="button" class="btn btn-primary" data-show="lib-save">บันทึกลงคลัง</button><button type="button" class="btn" data-show="lib-saveas">บันทึกเป็นชื่อใหม่</button></div>
+        </section>
+        <div class="sh-h"><b>โชว์ที่บันทึกไว้</b><small>ในเครื่องนี้</small><span class="ml-auto"></span>
+          <button type="button" class="btn btn-sm" data-show="import">${icon('folder')}นำเข้าไฟล์ .webmix</button>
+          <button type="button" class="btn btn-sm" data-show="new">${icon('plus')}เริ่มโชว์ใหม่</button></div>
+        <div class="sh-grid"></div>
+        <div class="sh-sel" hidden><span>เลือก: <b class="sh-sel-name"></b></span><span class="ml-auto"></span>
+          <button type="button" class="btn btn-sm btn-ghost" data-show="lib-del">ลบ</button>
+          <button type="button" class="btn btn-sm" data-show="lib-export">ส่งออกไฟล์ (ไม่รวมรหัสสตรีม)</button>
+          <button type="button" class="btn btn-sm btn-primary" data-show="lib-open">เปิดโชว์นี้</button></div>
+        <div class="show-actions sh-file"><button type="button" class="btn" data-show="export">${icon('download')}บันทึกโชว์นี้เป็นไฟล์</button></div>
+        <p class="note">ไฟล์โชว์ (.webmix.json) ใช้ย้ายเครื่อง — ไม่รวมตัวไฟล์วิดีโอ/รูป (เปิดบนเครื่องอื่นแล้วกด 🔗 บนการ์ดเพื่อเลือกไฟล์)
+          ${settings.rememberKey ? 'และ<b>มี Stream Key/รหัส SRT อยู่ในไฟล์</b>' : 'และไม่มี Stream Key/รหัส SRT อยู่ในไฟล์'}</p>`,
       actions: [{ label: 'ปิด', primary: true, value: 'close' }],
-      onOpen(modal) {
+      onOpen(modal, close) {
+        modal.classList.add('sh-modal');
         const nameEl = $('[name="showname"]', modal);
         nameEl.addEventListener('input', () => { show.name = nameEl.value; });
-        modal.addEventListener('click', e => {
+        const cur = store.get('showLibId', '');
+        const paint = () => {
+          const list = library.list();
+          $('.sh-grid', modal).innerHTML = list.length ? list.map(x => `<button type="button" class="sh-card ${x.id === sel ? 'is-sel' : ''}" data-lib="${esc(x.id)}">
+              <span class="sh-thumb">${x.thumb ? `<img src="${esc(x.thumb)}" alt="">` : ''}${x.id === cur ? '<em>เปิดอยู่</em>' : ''}</span>
+              <b>${esc(x.name)}</b><small>แก้ไข${agoText(x.savedAt)} · ${x.n} แหล่งภาพ</small></button>`).join('')
+            : '<p class="note">ยังไม่มีโชว์ในคลัง — กด “บันทึกลงคลัง” เพื่อเก็บโชว์นี้ไว้เปิดทีหลัง</p>';
+          const it = list.find(x => x.id === sel);
+          $('.sh-sel', modal).hidden = !it;
+          if (it) $('.sh-sel-name', modal).textContent = it.name;
+        };
+        paint();
+        modal.addEventListener('click', async e => {
+          const card = e.target.closest('[data-lib]');
+          if (card) { sel = card.dataset.lib; paint(); return; }
           const b = e.target.closest('[data-show]');
           if (!b) return;
           show.name = nameEl.value;
@@ -10306,6 +10369,28 @@ onmessage = async e => {
             el.onchange = () => { const f = el.files[0]; el.remove(); if (f) show.importFile(f); };
             el.click();
           } else if (act === 'new') show.startNew();
+          else if (act === 'lib-save' || act === 'lib-saveas') {
+            if (act === 'lib-saveas') { show.name = (nameEl.value.trim() || 'โชว์') + ' (สำเนา)'; nameEl.value = show.name; }
+            const m = library.save(act === 'lib-saveas');
+            if (!m) { toast('พื้นที่เก็บในเบราว์เซอร์เต็ม — ลบโชว์เก่าในคลังหรือส่งออกเป็นไฟล์แทน', 'error'); return; }
+            sel = m.id; paint();
+            toast(`บันทึก “${m.name}” ลงคลังแล้ว`, 'success');
+          } else if (act === 'lib-del') {
+            const it = library.list().find(x => x.id === sel);
+            if (it && await confirmDialog(`ลบ “${it.name}” จากคลัง`, 'ลบเฉพาะในคลังของเครื่องนี้ (โชว์ที่เปิดอยู่ไม่เปลี่ยน)', 'ลบ')) { library.remove(sel); sel = ''; paint(); }
+          } else if (act === 'lib-export') {
+            const it = library.list().find(x => x.id === sel), data = library.data(sel);
+            if (!it || !data) return;
+            const safe = it.name.replace(/[\\/:*?"<>|]+/g, '').trim() || 'WebMix';
+            downloadBlob(new Blob([JSON.stringify({ ...data, savedAt: new Date(it.savedAt).toISOString() }, null, 2)], { type: 'application/json' }), `${safe}.webmix.json`);
+          } else if (act === 'lib-open') {
+            const it = library.list().find(x => x.id === sel), data = library.data(sel);
+            if (!it || !data) { toast('ข้อมูลโชว์นี้หายไปจากเครื่อง', 'error'); return; }
+            if (!(await confirmDialog(`เปิดโชว์ “${it.name}”`, show.busyWarning() || 'โชว์ที่เปิดอยู่จะถูกแทนที่ — บันทึกลงคลังก่อนถ้ายังต้องการเก็บไว้', 'เปิดโชว์'))) return;
+            store.set('showLibId', it.id);
+            close();
+            show.apply({ ...data, name: it.name });
+          }
         });
       }
     });
@@ -10378,7 +10463,7 @@ onmessage = async e => {
     show.autosave(true);
     setInterval(() => show.autosave(), 1500);
     addEventListener('pagehide', () => show.autosave());
-    mediaStore.prune(new Set(['stinger', ...inputs.filter(i => i.type === 'media' || i.type === 'image' || i.type === 'slides').map(i => i.id), ...playlist.keys(), ...audioSourceKeys()]));
+    mediaStore.prune(new Set(['stinger', ...inputs.filter(i => i.type === 'media' || i.type === 'image' || i.type === 'slides').map(i => i.id), ...playlist.keys(), ...audioSourceKeys(), ...library.keys()]));
 
     bindChatPane();
     $('#sfx-bar').addEventListener('click', e => {
