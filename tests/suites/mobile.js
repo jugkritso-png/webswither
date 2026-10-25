@@ -117,9 +117,17 @@ const results = []; const ok = (n, c, x = '') => results.push(`${c ? 'PASS' : 'F
       return { fit: document.documentElement.scrollWidth === innerWidth, mini: h('.card .mini'), ovl: h('.card-ovl button'), seg: h('#seg-transition button'), cut: h('[data-action=cut]'), tab: h('.tab'),
         kbd: [...document.querySelectorAll('kbd')].some(k => k.getClientRects().length), mtabs: getComputedStyle(document.querySelector('#m-tabs')).display };
     });
-    ok(`${dev}: fits the screen, touch-size controls`, r.fit && r.mini >= 36 && r.ovl >= 28 && r.seg >= 40 && r.cut >= 56 && r.tab >= 48 && !r.kbd && r.mtabs === 'none', JSON.stringify(r));
+    ok(`${dev}: fits the screen, touch-size controls, tablet menu`, r.fit && r.mini >= 36 && r.seg >= 40 && r.cut >= 56 && !r.kbd && r.mtabs === 'flex', JSON.stringify(r));
     await t.tap('.card >> nth=1'); await t.tap('[data-action=cut]');
     ok(`${dev}: tap card + CUT switches program`, (await t.evaluate(() => window.webmix.inputs.find(i => i.id === window.webmix.state.programId).name)) === 'COLOR BARS');
+    // เมนูแท็บเล็ต: เสียง = มิกเซอร์เต็มพื้นที่ · กราฟิก = การ์ดแตะขึ้นจอ · กลับมาหน้าสวิตช์
+    await t.tap('#m-tabs [data-mview=audio]');
+    const va = await t.evaluate(() => ({ mix: document.querySelector('.audio-panel').getBoundingClientRect().height, src: document.querySelector('.inputs-panel').getClientRects().length, fit: document.documentElement.scrollWidth === innerWidth }));
+    ok(`${dev}: audio page shows the mixer`, va.mix > 250 && va.src === 0 && va.fit, JSON.stringify(va));
+    await t.tap('#m-tabs [data-mview=graphics]');
+    ok(`${dev}: graphics page shows one-tap cards`, await t.isVisible('#m-gfx') && !(await t.isVisible('.inputs-panel')));
+    await t.tap('#m-tabs [data-mview=switch]');
+    ok(`${dev}: back to the switcher`, await t.isVisible('.inputs-panel') && await t.isVisible('[data-action=cut]'));
     if (dev === 'iPad Pro 11') {
       const man = await t.evaluate(async () => { const l = document.querySelector('link[rel=manifest]'); const j = await (await fetch(l.href)).json(); const icon = document.querySelector('link[rel=apple-touch-icon]'); const ir = await fetch(icon.href); return { name: j.name, display: j.display, icons: j.icons.length, apple: ir.ok }; });
       ok('home-screen manifest + icon', man.name === 'WebMix Pro' && man.display === 'standalone' && man.icons >= 2 && man.apple, JSON.stringify(man));

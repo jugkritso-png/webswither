@@ -2359,3 +2359,83 @@ html[data-orient=v] .card-num, html[data-orient=v] .card-tally { z-index: 2; }
 html[data-orient=v] .monitor { background: #000; }
 @media (max-width: 760px) { .orient-seg { display: none; } }
 html[data-orient=v] .safe-area { inset: 5% auto auto 50%; height: 90%; aspect-ratio: 9 / 16; transform: translateX(-50%); }
+
+/* ======================================================================
+   แท็บเล็ต (iPad / Android tablet · นิ้วสัมผัส · กว้าง 761–1400): ตามแบบหน้า 15–16 · 21–23 · 62–64
+   เมนูหลัก สวิตช์ / เสียง / กราฟิก / ไลฟ์ — แนวนอนเป็นแถบซ้าย · แนวตั้งเป็นแถบล่าง
+   ====================================================================== */
+@media (hover: none) and (pointer: coarse) and (min-width: 761px) and (max-width: 1400px) and (min-height: 501px) {
+  :root { --mon-vh: 200vh; }
+  .split, #split-stage { display: none !important; }
+  .m-tabs { display: flex; position: fixed; z-index: 41; background: #0b0d12; }
+  .m-tabs button { border: 0; background: none; color: var(--muted); display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 4px; font: 600 12px var(--font); cursor: pointer; }
+  .m-tabs button .i { width: 24px; height: 24px; }
+  .m-tabs button[aria-current=page] { color: #7fa6ff; }
+  .topbar .brand-tag, .tc-clock { display: none; }
+  .topbar-actions [data-action=snapshot], .topbar-actions [data-action=output-window], .topbar-actions [data-action=show],
+  .topbar-actions [data-action=multiview], .topbar-actions [data-action=help] { display: none; }
+  .studio { display: grid; gap: 8px; }
+  .stage, .workspace { display: contents; }
+  .topbar { grid-area: top; }
+  .statusbar { grid-area: st; }
+  .monitor-panel .monitor { width: 100%; }
+  .transport { width: 100%; }
+  .inputs-panel, .overlays-panel, .audio-panel, .deck { min-height: 0; }
+  .deck { overflow-y: auto; }
+  /* สวิตช์ */
+  html[data-mview=switch] .overlays-panel, html[data-mview=switch] .audio-panel { display: none; }
+  html[data-mview=switch] .stage .pvw { grid-area: pvw; }
+  html[data-mview=switch] .stage .pgm { grid-area: pgm; }
+  html[data-mview=switch] .deck { grid-area: deck; }
+  html[data-mview=switch] .inputs-panel { grid-area: src; overflow-y: auto; }
+  html[data-mview=switch] .tbar { display: none; }
+  /* เสียง: มิกเซอร์เต็มพื้นที่ + Program เล็ก */
+  html[data-mview=audio] .stage .pvw, html[data-mview=audio] .deck, html[data-mview=audio] .inputs-panel, html[data-mview=audio] .overlays-panel { display: none; }
+  html[data-mview=audio] .stage .pgm { grid-area: pgm; }
+  html[data-mview=audio] .audio-panel { grid-area: aud; overflow: auto; }
+  /* กราฟิก: Program + Overlay / Title / คอมเมนต์ */
+  html[data-mview=graphics] .stage .pvw, html[data-mview=graphics] .deck, html[data-mview=graphics] .inputs-panel, html[data-mview=graphics] .audio-panel { display: none; }
+  html[data-mview=graphics] .stage .pgm { grid-area: pgm; }
+  html[data-mview=graphics] .overlays-panel { grid-area: ovl; overflow: auto; }
+}
+/* แท็บเล็ตแนวนอน: แถบซ้าย · Preview | Program | ปุ่มตัดภาพ · แหล่งภาพด้านล่าง */
+@media (hover: none) and (pointer: coarse) and (min-width: 761px) and (max-width: 1400px) and (min-height: 501px) and (orientation: landscape) {
+  :root { --t-rail: calc(80px + env(safe-area-inset-left)); }
+  .m-tabs { flex-direction: column; justify-content: center; gap: 4px; top: 0; bottom: 0; left: 0; width: var(--t-rail); padding: 4px 0 4px env(safe-area-inset-left); border-right: 1px solid var(--line); }
+  .m-tabs button { height: 70px; }
+  .studio { height: 100dvh; min-height: 0; padding: 8px calc(8px + env(safe-area-inset-right)) 8px calc(var(--t-rail) + 8px); overflow: hidden; }
+  html[data-mview=switch] .studio { grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr) 260px; grid-template-rows: auto auto minmax(0, 1fr) auto;
+    grid-template-areas: "top top top" "pvw pgm deck" "src src deck" "st st st"; }
+  html[data-mview=audio] .studio { grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); grid-template-rows: auto minmax(0, 1fr) auto; grid-template-areas: "top top" "pgm aud" "st st"; align-items: start; }
+  html[data-mview=audio] .audio-panel { height: 100%; }
+  html[data-mview=graphics] .studio { grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto; grid-template-areas: "top top" "pgm ovl" "st st"; align-items: start; }
+  html[data-mview=graphics] .overlays-panel { height: 100%; }
+  .m-alerts:not([hidden]) { right: 18px; }
+}
+/* แท็บเล็ตแนวตั้ง: Program เต็มกว้าง · Preview คู่ปุ่มตัดภาพ · แหล่งภาพ · แถบเมนูล่าง */
+@media (hover: none) and (pointer: coarse) and (min-width: 761px) and (max-width: 1400px) and (min-height: 501px) and (orientation: portrait) {
+  .m-tabs { flex-direction: row; left: 0; right: 0; bottom: 0; height: calc(70px + env(safe-area-inset-bottom)); padding: 0 8px env(safe-area-inset-bottom); border-top: 1px solid var(--line); }
+  .m-tabs button { flex: 1; }
+  .studio { height: auto; min-height: 100dvh; padding-bottom: calc(80px + env(safe-area-inset-bottom)); }
+  .statusbar { display: none; }
+  html[data-mview=switch] .studio { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-areas: "top top" "pgm pgm" "pvw deck" "src src"; }
+  html[data-mview=switch] .deck-body { display: flex; flex-direction: column; gap: 10px; }
+  html[data-mview=switch] .deck-buttons { flex-direction: row; }
+  html[data-mview=switch] .deck-buttons .key { min-height: 64px; flex: 1; }
+  html[data-mview=audio] .studio { grid-template-columns: minmax(0, 1fr); grid-template-areas: "top" "pgm" "aud"; }
+  html[data-mview=graphics] .studio { grid-template-columns: minmax(0, 1fr); grid-template-areas: "top" "pgm" "ovl"; }
+  .m-alerts:not([hidden]) { top: auto; bottom: calc(86px + env(safe-area-inset-bottom)); }
+}
+@media (hover: none) and (pointer: coarse) and (min-width: 761px) and (max-width: 1400px) and (min-height: 501px) {
+  html[data-mview=switch] .card-ovl { display: none; }
+  .card-foot { gap: 6px; }
+  .card-foot .card-sub { display: none; }
+  .card-foot .foot-actions { display: flex; gap: 4px; flex: none; }
+  .card-foot .foot-actions .mini { width: 36px; height: 36px; }
+  .inputs-grid { grid-template-columns: repeat(auto-fill, minmax(min(200px, 100%), 1fr)); }
+}
+@media (hover: none) and (pointer: coarse) and (min-width: 761px) and (max-width: 1400px) and (min-height: 501px) {
+  html[data-mview=graphics] .m-gfx { display: block; padding: 14px; border-bottom: 1px solid var(--line); }
+  html[data-mview=graphics] .m-gfx-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+}
