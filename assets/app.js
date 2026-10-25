@@ -4330,6 +4330,55 @@
   const colorSelect = (name, cur) => `<select name="${name}" class="select">${TITLE_COLORS.map(c => `<option value="${c}" ${c === cur ? 'selected' : ''}>${c}</option>`).join('')}</select>`;
   const pickColor = (v, d) => TITLE_COLORS.includes(v) ? v : d;
 
+  // หน้าต่างกราฟิกข้อมูล (สกอร์ / นาฬิกา / ตัววิ่ง) แบบเดียวกัน: แท็บสลับชนิด · ตัวอย่างสดบนภาพ Program · ปุ่มควบคุมสด · แสดงบน Program
+  const GFX_TABS = [['score', 'สกอร์บอร์ด'], ['timer', 'นาฬิกา / นับถอยหลัง'], ['ticker', 'ตัววิ่ง']];
+  function dataGfxDialog(inp, { title, body, live = '', bind }) {
+    const ovlOf = () => ovl.findIndex(c => c.inputId === inp.id && c.on);
+    return dialog({
+      title, wide: true,
+      body: `<nav class="dg-tabs" role="tablist">${GFX_TABS.map(([k, n]) => `<button type="button" role="tab" class="dg-tab ${k === inp.type ? 'is-on' : ''}" aria-selected="${k === inp.type}" data-gfx-tab="${k}">${n}${k !== inp.type ? `<small>${inputs.filter(i => i.type === k).length || '+'}</small>` : ''}</button>`).join('')}</nav>
+        <div class="dg-wrap">
+          <div class="dg-left">
+            <div class="dg-prev"><canvas width="960" height="540" aria-label="ตัวอย่างบนภาพ Program"></canvas></div>
+            ${live}
+          </div>
+          <div class="dg-right">${body}</div>
+        </div>`,
+      actions: [{ label: ovlOf() >= 0 ? 'ซ่อนจาก Program' : 'แสดงบน Program', value: 'pgm', danger: true }, { label: 'ยกเลิก' }, { label: 'บันทึก', primary: true, value: 'save' }],
+      onOpen(modal, close) {
+        modal.classList.add('dg-modal');
+        const c = $('.dg-prev canvas', modal), x = c.getContext('2d');
+        const paint = () => {
+          if (!modal.isConnected) return;
+          x.fillStyle = '#23324a'; x.fillRect(0, 0, 960, 540);
+          try { const src = $('#pgm-canvas'); if (src) x.drawImage(src, 0, 0, 960, 540); } catch (e) {}
+          if (!ovl.some(o => o.on && o.inputId === inp.id)) drawGraphic(x, inp, 960, 540);
+          requestAnimationFrame(paint);
+        };
+        paint();
+        $('.dg-tabs', modal).addEventListener('click', e => {
+          const k = e.target.closest('[data-gfx-tab]')?.dataset.gfxTab;
+          if (!k || k === inp.type) return;
+          close();
+          const other = inputs.find(i => i.type === k);
+          setTimeout(() => other ? renameInput(other) : ({ score: addScoreInput, timer: addTimerInput, ticker: addTickerInput })[k](), 0);
+        });
+        const btn = [...$$('.modal-foot .btn', modal)].find(b => b.textContent === 'แสดงบน Program' || b.textContent === 'ซ่อนจาก Program');
+        const clone = btn.cloneNode(true);
+        btn.replaceWith(clone);
+        clone.addEventListener('click', () => {
+          const on = ovlOf();
+          if (on >= 0) { setChannel(on, false); clone.textContent = 'แสดงบน Program'; return; }
+          const free = ovl.findIndex(o => !o.on && (!o.inputId || o.inputId === inp.id));
+          audio.ensure();
+          toggleInputOverlay(inp.id, free >= 0 ? free : 0);
+          clone.textContent = 'ซ่อนจาก Program';
+        });
+        bind && bind(modal, $('form', modal).elements);
+      }
+    });
+  }
+
   function addTimerInput() {
     const n = inputs.filter(i => i.type === 'timer').length + 1;
     const inp = addInput({ type: 'timer', name: `TIMER ${n}`, timer: { mode: 'down', duration: 300, target: '19:00', label: 'เริ่มรายการใน', style: 'center', color: '#f5a524', base: 0, running: false, since: 0 } });
@@ -4337,8 +4386,16 @@
   }
   async function openTimerDialog(inp) {
     const t = inp.timer;
-    const result = await dialog({
+    const result = await dataGfxDialog(inp, {
       title: 'นาฬิกานับถอยหลัง / จับเวลา',
+      live: `<section class="dg-card dg-clock"><div class="dg-big mono" data-clock>--:--</div>
+        <div class="dg-btns"><button type="button" class="btn btn-primary" data-t="toggle">เริ่ม / หยุด</button><button type="button" class="btn" data-t="reset">รีเซ็ต</button></div></section>`,
+      bind(modal) {
+        const big = $('[data-clock]', modal), go = $('[data-t=toggle]', modal);
+        const tick = () => { if (!modal.isConnected) return; const r = timerText(t); big.textContent = r.text; big.classList.toggle('is-over', !!r.over); go.textContent = t.running ? 'หยุด' : 'เริ่ม'; setTimeout(tick, 200); };
+        tick();
+        modal.addEventListener('click', e => { const a = e.target.closest('[data-t]')?.dataset.t; if (a) { timerControl(inp, a); renderInputs(); } });
+      },
       body: `
         <label class="field"><span>ชื่อแหล่งภาพ</span><input name="name" class="input" maxlength="40" value="${esc(inp.name)}"></label>
         <label class="field"><span>โหมด</span><select name="mode" class="select">${Object.entries(TIMER_MODES).map(([k, v]) => `<option value="${k}" ${k === t.mode ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
@@ -4372,8 +4429,31 @@
   }
   async function openScoreDialog(inp) {
     const sc = inp.score;
-    const result = await dialog({
+    const team = (k, name, color) => `<div class="dg-team"><div class="dg-team-h"><i style="background:${color}"></i><b>${esc(name)}</b></div>
+      <div class="dg-score"><button type="button" class="btn" data-sc="${k}-" aria-label="ลดคะแนน ${esc(name)}">−</button><span class="mono" data-sc-v="${k}">${+sc['score' + k] || 0}</span><button type="button" class="btn btn-primary" data-sc="${k}+" aria-label="เพิ่มคะแนน ${esc(name)}">+</button></div></div>`;
+    const result = await dataGfxDialog(inp, {
       title: 'ป้ายคะแนน',
+      live: `<section class="dg-card"><div class="dg-teams">${team('A', sc.teamA, sc.colorA)}${team('B', sc.teamB, sc.colorB)}</div>
+        ${sc.clock.mode !== 'none' ? `<div class="dg-btns"><span class="mono dg-mini" data-sclock></span><button type="button" class="btn" data-t="toggle">เริ่ม / หยุดเวลา</button><button type="button" class="btn" data-t="reset">รีเซ็ตเวลา</button></div>` : ''}</section>`,
+      bind(modal, f) {
+        // ปุ่ม +/− เปลี่ยนคะแนนบนจอทันที และอัปเดตช่องในฟอร์มด้วย (กดบันทึกแล้วไม่ย้อนค่า)
+        modal.addEventListener('click', e => {
+          const b = e.target.closest('[data-sc]');
+          if (b) {
+            const k = 'score' + b.dataset.sc[0];
+            sc[k] = Math.max(0, (+sc[k] || 0) + (b.dataset.sc[1] === '+' ? 1 : -1));
+            f[k].value = sc[k];
+            $(`[data-sc-v="${b.dataset.sc[0]}"]`, modal).textContent = sc[k];
+            return;
+          }
+          const a = e.target.closest('[data-t]')?.dataset.t;
+          if (a) { timerControl(inp, a); renderInputs(); }
+        });
+        modal.addEventListener('input', e => { if (e.target.name === 'scoreA' || e.target.name === 'scoreB') { sc[e.target.name] = Math.max(0, +e.target.value || 0); $(`[data-sc-v="${e.target.name.slice(-1)}"]`, modal).textContent = sc[e.target.name]; } });
+        const clk = $('[data-sclock]', modal);
+        const tick = () => { if (!modal.isConnected || !clk) return; clk.textContent = scoreClockText(inp); setTimeout(tick, 250); };
+        tick();
+      },
       body: `
         <label class="field"><span>ชื่อแหล่งภาพ</span><input name="name" class="input" maxlength="40" value="${esc(inp.name)}"></label>
         <div class="field-row">
@@ -4782,8 +4862,19 @@
   }
   async function openTickerDialog(inp) {
     const tk = inp.ticker;
-    const result = await dialog({
+    const orig = { ...tk, items: tk.items.slice() };
+    const result = await dataGfxDialog(inp, {
       title: 'ตัววิ่งข่าว (Ticker)',
+      live: `<section class="dg-card"><div class="dg-h"><b>ข้อความที่วิ่งอยู่</b><span class="dg-sub">${tk.items.length} เรื่อง</span></div>
+        <ol class="dg-items">${tk.items.slice(0, 8).map(t => `<li>${esc(t)}</li>`).join('')}</ol></section>`,
+      bind(modal, f) {
+        // แก้ข้อความ / ความเร็ว / สี แล้วเห็นผลในตัวอย่างทันที (กดยกเลิก = คืนค่าเดิม)
+        modal.addEventListener('input', () => {
+          Object.assign(tk, { label: f.label.value.trim().slice(0, 24), speed: [60, 90, 130, 180].includes(+f.speed.value) ? +f.speed.value : tk.speed, color: pickColor(f.color.value, tk.color),
+            items: f.items.value.split('\n').map(x => x.trim()).filter(Boolean).slice(0, 100) });
+        });
+        modal.addEventListener('change', () => modal.dispatchEvent(new Event('input')));
+      },
       body: `
         <label class="field"><span>ชื่อแหล่งภาพ</span><input name="name" class="input" maxlength="40" value="${esc(inp.name)}"></label>
         <div class="field-row">
@@ -4795,7 +4886,7 @@
         ${dataFields(inp, 'คอลัมน์ A ของทุกแถว = ข้อความที่วิ่ง (แทนข้อความด้านบน)')}`,
       actions: [{ label: 'ยกเลิก' }, { label: 'บันทึก', primary: true, value: 'save' }]
     });
-    if (result?.value !== 'save') return;
+    if (result?.value !== 'save') { Object.assign(tk, orig); return; }
     const f = result.form;
     inp.name = f.name.value.trim() || inp.name;
     Object.assign(tk, { label: f.label.value.trim().slice(0, 24), speed: [60, 90, 130, 180].includes(+f.speed.value) ? +f.speed.value : 90, color: pickColor(f.color.value, tk.color),
