@@ -2727,3 +2727,12 @@ html[data-orient=v] .safe-area { inset: 5% auto auto 50%; height: 90%; aspect-ra
 .guest-top { flex-wrap: wrap; row-gap: 4px; }
 .guest-top b { min-width: 0; max-width: 50%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .caller.guest-mode .guest-cap { top: 64px; }
+
+/* ---- กล้องมือถือ (design 35): ป้าย Tally · ชื่อกล้อง/สตูดิโอ · ข้อความผู้กำกับ */
+.cam-tally { padding: 6px 12px; border-radius: 999px; font-size: 13px; font-weight: 800; letter-spacing: 1px; background: rgba(0,0,0,.6); color: #c9d1db; flex: none; }
+.cam-tally.is-pvw { background: #18794E; color: #fff; } .cam-tally.is-pgm { background: #C8323A; color: #fff; }
+.caller.guest-mode .cam-tally { display: none; }
+.caller:not(.guest-mode) .caller-top .brand-mark { display: none; }
+.caller:not(.guest-mode) .caller-title { padding: 5px 10px; border-radius: 999px; background: rgba(0,0,0,.55); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.caller:not(.guest-mode) .guest-bubble { top: 110px; background: rgba(20,83,45,.92); border-color: #2EA36B; }
+.guest-bubble b { color: #9FE3BF; margin-right: 4px; }

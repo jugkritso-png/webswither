@@ -84,7 +84,8 @@ const until = async (fn, ms = 15000) => { const end = Date.now() + ms; while (Da
   await host.click('.cam-ctl [data-cs=fps] [data-v="25"]');
   ok('studio sets 25 fps on the phone', await until(async () => /25/.test(await ph.textContent('[data-pc=fps] b')), 5000));
   await host.fill('.cam-ctl .cam-msg', 'ซูมเข้าหน้าผู้พูด'); await host.click('.cam-ctl .cam-msg-send');
-  ok('message shows on the phone', await until(async () => /สตูดิโอ: ซูมเข้าหน้าผู้พูด/.test(await ph.textContent('#caller-msg')), 4000));
+  ok('message shows on the phone', await until(async () => /ผู้กำกับ: ซูมเข้าหน้าผู้พูด/.test(await ph.textContent('#guest-bubble')) && await ph.isVisible('#guest-bubble'), 4000));
+  ok('phone shows its studio name and tally pill', /MOBILE|กล้อง/i.test(await ph.textContent('.caller-title')) && /STANDBY|PREVIEW|ON AIR/.test(await ph.textContent('#cam-tally')), await ph.textContent('.caller-title'));
   await host.click('.cam-ctl .cam-rec');
   ok('studio starts recording on the phone', await until(() => ph.isVisible('.pc-rec'), 4000) && await until(() => host.evaluate(i => !!window.webmix.inputs.find(x => x.id === i).cam.rec, id), 4000));
   ok('card shows the phone is recording', /● REC/.test(await host.textContent(`.card[data-id="${id}"] .card-sub`)));

@@ -488,7 +488,7 @@
         else if (msg.cmd === 'poi' && v && typeof v === 'object') focusAt(+v.x, +v.y);
         else if (msg.cmd === 'flip' && ctx.flip) { await ctx.flip(); afterTrackChange(); }
         else if (msg.cmd === 'state') sendStateSoon();
-        else if (msg.cmd === 'msg' && typeof v === 'string') ctx.brief('สตูดิโอ: ' + v.slice(0, 120), 6000);
+        else if (msg.cmd === 'msg' && typeof v === 'string') ctx.teamMsg(v);
         refreshPanel();
       }
     }

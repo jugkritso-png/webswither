@@ -6587,7 +6587,7 @@
       if (!conn.open) return;
       const inp = inputs.find(i => i.peerId === conn.peer);
       const tally = !inp ? 'off' : isOnAir(inp.id) ? 'pgm' : inp.id === state.previewId ? 'pvw' : 'off';
-      try { conn.send({ type: 'tally', tally }); if (inp && inp.type === 'guest' && inp.guestView) conn.send({ type: 'view', v: inp.guestView }); } catch (e) {}
+      try { conn.send({ type: 'tally', tally }); if (inp && inp.type === 'guest' && inp.guestView) conn.send({ type: 'view', v: inp.guestView }); if (inp && inp.type === 'wireless') conn.send({ type: 'hello', name: inp.name, show: show.name || '' }); } catch (e) {}
     },
     sendTally() { for (const conn of this.conns.values()) this.sendTallyTo(conn); },
     // กล้องมือถือแบบโปร: สถานะกล้อง (ความสามารถ/ค่าปัจจุบัน/แบต/บันทึก) และคำสั่งควบคุมจากสตูดิโอ

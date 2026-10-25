@@ -29,6 +29,8 @@
       root.classList.toggle('tally-pgm', t === 'pgm');
       root.classList.toggle('tally-pvw', t === 'pvw');
       $('#caller-tally').textContent = t === 'pgm' ? 'ON AIR' : 'PREVIEW';
+      const ct = $('#cam-tally');
+      if (ct) { ct.textContent = t === 'pgm' ? 'ON AIR' : t === 'pvw' ? 'PREVIEW' : 'STANDBY'; ct.className = 'cam-tally' + (t === 'pgm' ? ' is-pgm' : t === 'pvw' ? ' is-pvw' : ''); }
       const gs = $('#gt-state');
       if (gs) { gs.textContent = t === 'pgm' ? 'ออกอากาศอยู่' : t === 'pvw' ? 'ทีมงานกำลังดูภาพคุณ' : 'รอทีมงาน'; gs.className = 'gt-state' + (t === 'pgm' ? ' is-pgm' : t === 'pvw' ? ' is-pvw' : ''); }
     };
@@ -85,7 +87,7 @@
     let pro = null;
     // ข้อความจากทีมงาน (แขก): ค้างไว้ 12 วินาที
     let bubbleTimer = null;
-    const teamMsg = text => { const el = $('#guest-bubble'); el.textContent = 'ทีมงาน: ' + text.slice(0, 160); el.hidden = false; clearTimeout(bubbleTimer); bubbleTimer = setTimeout(() => { el.hidden = true; }, 12000); };
+    const teamMsg = text => { const el = $('#guest-bubble'); el.innerHTML = ''; const b = document.createElement('b'); b.textContent = guestSlot ? 'ทีมงาน: ' : 'ผู้กำกับ: '; el.append(b, text.slice(0, 160)); el.hidden = false; clearTimeout(bubbleTimer); bubbleTimer = setTimeout(() => { el.hidden = true; }, 12000); };
     // คุณภาพสัญญาณ (แขก): บิตเรตที่ส่งออกจริง + สถานะการเชื่อมต่อ
     let lastOut = null;
     async function paintNet() {
@@ -134,6 +136,7 @@
         async setQuality(label) { const i = QUALITIES.findIndex(q => q.label === label); if (i < 0 || QUALITIES[i] === quality) return; quality = QUALITIES[(i + QUALITIES.length - 1) % QUALITIES.length]; await cycleQuality(); },
         async setFps(v) { fps = v; store.set('caller-fps', v); const t = stream?.getVideoTracks()[0]; try { await t.applyConstraints({ frameRate: { ideal: v } }); } catch (e) { await reopenVideo(); } },
         async setLens(id) { lensId = id; await reopenVideo(); },
+        teamMsg: text => teamMsg(text),
         flip: () => flip()
       });
       if (typeof Peer === 'undefined') {
@@ -189,6 +192,7 @@
         if (!msg || typeof msg !== 'object') return;
         if (pro && (msg.type === 'cam-set' || msg.type === 'cam-cmd')) pro.onStudioMsg(msg);
         if (msg.type === 'tally') setTally(msg.tally);
+        if (!guestSlot && msg.type === 'hello' && msg.name) $('.caller-title').textContent = `${String(msg.name).slice(0, 32)}${msg.show ? ' · สตูดิโอ ' + String(msg.show).slice(0, 40) : ''}`;
         if (guestSlot && msg.type === 'msg' && typeof msg.text === 'string') teamMsg(msg.text);
         if (guestSlot && msg.type === 'view') root.classList.toggle('view-self', msg.v === 'self');
         if (msg.type === 'removed') stop(guestSlot ? 'สตูดิโอจบการเชื่อมต่อแล้ว ขอบคุณที่ร่วมรายการ' : 'สตูดิโอนำกล้องนี้ออกจากรายการแล้ว');
