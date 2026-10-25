@@ -1327,6 +1327,7 @@
           <canvas width="${tw}" height="${th}"></canvas>
           <span class="card-num">${i + 1}</span>
           <span class="card-tally"></span>
+          <span class="card-vu" hidden aria-hidden="true"><i><b></b></i><i><b></b></i><em></em></span>
           ${inp.status !== 'live' ? `<span class="card-nosig">${icon('link')}${inp.type === 'wireless' || inp.type === 'guest' ? 'รอเชื่อมต่อ' : 'ไม่มีสัญญาณ'}</span>` : ''}
           <div class="card-actions">
             ${inp.type === 'playlist' && inp.list.items.length ? `
@@ -1359,13 +1360,14 @@
             ${touch ? '' : editBtns}
           </div>
         </div>
-        <div class="card-foot">${icon(meta.icon)}<span class="card-name">${esc(inp.name)}</span><span class="card-sub">${esc(cardSub(inp))}</span>${touch ? `<span class="foot-actions">${editBtns}</span>` : ''}</div>
+        <div class="card-foot">${icon(meta.icon)}<span class="card-name">${esc(inp.name)}</span><span class="card-sub">${esc(cardSub(inp))}</span><span class="card-afv" hidden>AFV</span><button type="button" class="card-mute" data-card="mute" hidden title="ปิด / เปิดเสียงแหล่งนี้"><svg class="i"><use href="#i-vol"/></svg><span></span></button>${touch ? `<span class="foot-actions">${editBtns}</span>` : ''}</div>
         <div class="card-ovl">${ovl.map((c, k) => `<button type="button" data-card-ovl="${k}" title="ซ้อนเข้า Overlay ${c.n}">${c.n}</button>`).join('')}<button type="button" class="ovl-pos ${inp.layout ? 'is-set' : ''}" data-card="layout" title="ตำแหน่ง / ขนาด / ครอป / คีย์ฉาก">⧉</button></div>`;
       grid.appendChild(card);
       const ctx = card.querySelector('canvas').getContext('2d');
       thumbs.set(inp.id, ctx);
       drawSource(ctx, inp, tw, th);
     });
+    cardVu.sync();
     updateTally();
   }
 
@@ -1381,7 +1383,8 @@
     const actionBtn = e.target.closest('[data-card]');
     if (actionBtn) {
       const act = actionBtn.dataset.card;
-      if (act === 'remove') removeInput(inp.id);
+      if (act === 'mute') cardVu.toggleMute(inp.id);
+      else if (act === 'remove') removeInput(inp.id);
       else if (act === 'rename') renameInput(inp);
       else if (act === 'relink') relinkInput(inp);
       else if (act === 'layout') openLayoutDialog(inp);
@@ -4872,8 +4875,14 @@
       duck.connect(afv);
       afv.connect(analyser);
       afv.connect(this.master);
+      // มิเตอร์ L/R บนการ์ดแหล่งภาพ — เสียงโมโนกระจายเข้าทั้งสองข้าง
+      const st = ctx.createGain(), split = ctx.createChannelSplitter(2), anL = ctx.createAnalyser(), anR = ctx.createAnalyser();
+      st.channelCount = 2; st.channelCountMode = 'explicit'; st.channelInterpretation = 'speakers';
+      anL.fftSize = anR.fftSize = 512;
+      afv.connect(st); st.connect(split); split.connect(anL, 0); split.connect(anR, 1);
       const ch = {
-        id: uid(), node, input: delay, delay, low, mid, high, comp, fader, duckGain: duck, afvGain: afv, analyser,
+        id: uid(), node, input: delay, delay, low, mid, high, comp, fader, duckGain: duck, afvGain: afv, analyser, split: st, anL, anR,
+        lr: { l: -90, r: -90, peak: -90, peakAt: 0, clipAt: 0, lastAt: 0 },
         db: 0, muted: false, afv: false, level: -90, peak: -90, peakAt: 0,
         fx: { ...FX_DEFAULT },
         ...opts
@@ -4975,7 +4984,7 @@
       return this.addChannel(node, { name, kind: 'mic', stream, dispose, ...extra });
     },
     remove(ch) {
-      try { ch.node.disconnect(); ch.afvGain.disconnect(); } catch (e) {}
+      try { ch.node.disconnect(); ch.afvGain.disconnect(); ch.split.disconnect(); } catch (e) {}
       if (ch.dispose) ch.dispose();
       this.channels.splice(this.channels.indexOf(ch), 1);
       // ไมค์ที่แยกช่อง 1/2 ใช้อุปกรณ์เดียวกัน — ปิดอุปกรณ์เมื่อไม่มีช่องไหนใช้แล้ว
@@ -5077,6 +5086,7 @@
       if (document.hidden) return;
       for (const ch of this.channels) this.measure(ch.analyser, ch, now);
       this.measure(this.analyser, this.masterStrip, now);
+      cardVu.tick(now);
       // ไฟ LIM / COMP สว่างเมื่อกำลังลดระดับเสียงอยู่
       const lim = this.masterStrip.ui?.lim;
       if (lim) lim.classList.toggle('is-active', this.masterStrip.limiter && this.limiter.reduction < -0.5);
@@ -5085,6 +5095,66 @@
         ch.ui.fxBtn.classList.toggle('is-duck', !!ch.ducked);
       }
       for (const ch of this.channels) if (ch.src) stripSourceTick(ch);
+    }
+  };
+
+  // มิเตอร์เสียงข้างการ์ดแหล่งภาพ: แถบ L/R + ขีดพีค + ปุ่มปิดเสียง/ค่า dB + ป้าย AFV (เฉพาะแหล่งที่มีเสียง)
+  const cardVu = {
+    chanOf: id => id && audio.channels.find(c => c.inputId === id),
+    sync(only) {
+      for (const card of $$('#inputs-grid .card')) {
+        const id = card.dataset.id;
+        if (only && id !== only) continue;
+        const ch = this.chanOf(id), vu = card.querySelector('.card-vu');
+        if (!vu) continue;
+        const btn = card.querySelector('.card-mute');
+        vu.hidden = btn.hidden = !ch;
+        card.querySelector('.card-afv').hidden = !ch || !ch.afv || ch.muted;
+        card.classList.toggle('has-audio', !!ch);
+        if (!ch) continue;
+        vu.classList.toggle('is-muted', ch.muted);
+        btn.classList.toggle('is-muted', ch.muted);
+        btn.querySelector('use').setAttribute('href', ch.muted ? '#i-vol-off' : '#i-vol');
+        btn.querySelector('span').textContent = ch.muted ? 'MUTE' : (ch.db === -Infinity ? '-∞' : fmtDb(ch.db));
+      }
+    },
+    toggleMute(id) {
+      const ch = this.chanOf(id);
+      if (!ch) return;
+      audio.ensure();
+      ch.muted = !ch.muted;
+      audio.applyGain(ch);
+      renderMixer();
+    },
+    level(an, buf) {
+      an.getFloatTimeDomainData(buf);
+      let p = 0;
+      for (let i = 0; i < buf.length; i++) { const a = Math.abs(buf[i]); if (a > p) p = a; }
+      return p > 0 ? 20 * Math.log10(p) : -90;
+    },
+    tick(now) {
+      const buf = this.buf || (this.buf = new Float32Array(512));
+      for (const ch of audio.channels) {
+        if (!ch.inputId || !ch.anL) continue;
+        const card = ch.cardEl?.isConnected ? ch.cardEl : (ch.cardEl = $(`#inputs-grid .card[data-id="${ch.inputId}"]`));
+        if (!card) continue;
+        const v = ch.lr, dt = v.lastAt ? (now - v.lastAt) / 1000 : 0;
+        v.lastAt = now;
+        const l = this.level(ch.anL, buf), r = this.level(ch.anR, buf), top = Math.max(l, r);
+        v.l = l > v.l ? l : Math.max(l, v.l - 26 * dt);
+        v.r = r > v.r ? r : Math.max(r, v.r - 26 * dt);
+        if (top >= v.peak || now - v.peakAt > 1500) { v.peak = top; v.peakAt = now; }
+        if (top > -1) v.clipAt = now;
+        const ui = ch.cardUi?.vu?.isConnected ? ch.cardUi : (ch.cardUi = { vu: card.querySelector('.card-vu'), bars: card.querySelectorAll('.card-vu b'), pk: card.querySelector('.card-vu em'), btn: card.querySelector('.card-mute') });
+        if (!ui.vu) continue;
+        ui.bars[0].style.height = `${(1 - meterPct(v.l)) * 100}%`;
+        ui.bars[1].style.height = `${(1 - meterPct(v.r)) * 100}%`;
+        ui.pk.style.bottom = `${meterPct(v.peak) * 100}%`;
+        ui.pk.style.opacity = v.peak > -59 ? '1' : '0';
+        const clip = now - v.clipAt < 2000 && !ch.muted;
+        ui.vu.classList.toggle('is-clip', clip);
+        ui.btn?.classList.toggle('is-clip', clip);
+      }
     }
   };
 
@@ -5099,6 +5169,7 @@
       hint.textContent = 'ยังไม่มีช่องเสียง — กด “เพิ่มแหล่งเสียง” (ไมค์ เพลง เสียงเอฟเฟกต์ เสียงจากคอม) หรือเพิ่มกล้อง/ไฟล์วิดีโอที่มีเสียง';
       mixer.appendChild(hint);
     }
+    cardVu.sync();
   }
 
   function buildStrip(ch, isMaster) {
@@ -5129,6 +5200,7 @@
         ch.db = posToDb(v / 100);
         dbEl.textContent = `${fmtDb(ch.db)} dB`;
         isMaster ? audio.applyMaster() : audio.applyGain(ch);
+        if (!isMaster) cardVu.sync(ch.inputId);
       }
     });
     bindStripButtons(el, ch, isMaster);
@@ -5142,6 +5214,7 @@
       ch.muted = !ch.muted;
       e.currentTarget.classList.toggle('is-on', ch.muted);
       isMaster ? audio.applyMaster() : audio.applyGain(ch);
+      cardVu.sync();
     });
     el.querySelector('.lim')?.addEventListener('click', e => {
       audio.ensure();
@@ -5154,6 +5227,7 @@
       ch.afv = !ch.afv;
       e.currentTarget.classList.toggle('is-on', ch.afv);
       audio.applyAfv();
+      cardVu.sync();
     });
     el.querySelector('.rm')?.addEventListener('click', async () => {
       if (await confirmDialog(`ลบช่องเสียง “${ch.name}”`, 'แหล่งเสียงนี้จะถูกปิดและนำออกจากมิกเซอร์', 'ลบ')) audio.remove(ch);

@@ -1935,3 +1935,30 @@ html.is-resizing iframe, html.is-resizing canvas { pointer-events: none; }
     .seg button { height: 22px; }
   }
 }
+
+/* ---------- แถบเสียงข้างการ์ดแหล่งภาพ (L/R · พีค · CLIP · ปิดเสียง · AFV) */
+.card-vu { position: absolute; top: 36px; bottom: 8px; right: 6px; width: 13px; box-sizing: border-box; display: flex; gap: 2px; padding: 2px;
+  border-radius: 4px; background: rgba(7, 9, 12, .78); box-shadow: 0 0 0 1px rgba(255, 255, 255, .08); pointer-events: none; }
+.card-vu[hidden] { display: none; }
+.card-vu i { position: relative; flex: 1; border-radius: 2px; overflow: hidden; background: linear-gradient(0deg, #2ea36b 0 85%, #e3b341 85% 95%, #e5484d 95%); }
+.card-vu b { position: absolute; left: 0; right: 0; top: 0; height: 100%; background: #1b212b; }
+.card-vu em { position: absolute; left: 2px; right: 2px; height: 2px; margin-bottom: 1px; background: #e8ecf1; opacity: 0; }
+.card-vu.is-clip { box-shadow: 0 0 0 1px #e5484d, 0 0 8px rgba(229, 72, 77, .6); }
+.card-vu.is-clip em { background: #ff6369; }
+.card-vu.is-muted { opacity: .45; }
+.card-vu.is-muted em { display: none; }
+.card.has-audio .card-actions { right: 26px; }
+.card-afv { flex: none; padding: 0 4px; border-radius: 3px; border: 1px solid #f0b44c; background: #7a4a0b; color: #fff; font: 700 9px/14px var(--mono); }
+.card-afv[hidden], .card-mute[hidden] { display: none; }
+.card-mute { flex: none; display: inline-flex; align-items: center; gap: 3px; height: 20px; padding: 0 5px; border-radius: 4px; cursor: pointer;
+  border: 1px solid #2f3644; background: #0b0d12; color: #9aa4b2; font: 600 10px var(--mono); }
+.card-mute .i { width: 12px !important; height: 12px !important; color: currentColor !important; }
+.card-mute:hover { border-color: #4a5366; color: var(--text); }
+.card-mute.is-clip { border-color: #7f1d1d; background: #3a1518; color: #ff8a8e; }
+.card-mute.is-muted { border-color: #f87171; background: #a82525; color: #fff; }
+/* จอสัมผัส: แถบกว้างขึ้นและปุ่มกดง่ายขึ้น */
+@media (pointer: coarse) {
+  .card-vu { width: 15px; right: 7px; }
+  .card.has-audio .card-actions { right: 28px; }
+  .card-mute { height: 30px; padding: 0 8px; font-size: 11px; }
+}
