@@ -106,6 +106,18 @@ WEBMIX_SELFTEST=1 ./target/release/webmix-desktop          # ทดสอบต�
 - Input ใหม่ **Title กราฟิกข้อความ** พื้นโปร่งใส 4 แบบ: ป้ายชื่อล่าง, แถบหัวข้อบน, ป้าย LIVE, ข้อความกลางจอ — แก้ข้อความแล้วบนจอเปลี่ยนทันที
 - Tally / AFV นับ Overlay ว่าออกอากาศ · การผูก Input, เอฟเฟกต์ และตำแหน่งบันทึกในโชว์ (เปิดหน้าใหม่แล้วไม่มีอะไรขึ้นจอเอง)
 
+## CG Studio (ส่วนเสริมออกแบบกราฟิก)
+
+เปิดจาก **เพิ่มแหล่งภาพ → CG Studio** — WebMix เพิ่ม Input กราฟิกและเปิดหน้าออกแบบแยกต่างหาก (`cg-studio.html`) ให้โดยอัตโนมัติ หน้านี้เชื่อมกับ Input ผ่าน protocol แบบ versioned บน `BroadcastChannel` บน origin เดียวกัน จึงส่งการแก้ไขไป WebMix ได้ทันทีโดยไม่ต้องตั้งเซิร์ฟเวอร์เพิ่ม
+
+- ออกแบบแบบหลาย Scene ด้วย Elements Tree, เพิ่ม Text / Shape / Image / Ticker, ลากวางและปรับขนาดบน Canvas, จัดลำดับ/ซ่อน/ล็อก/ทำซ้ำ Layers และ Undo/Redo
+- Inspector ปรับตำแหน่ง, ขนาด, ฟอนต์, สี, ความโค้ง และความเร็วตัววิ่ง; มี safe-area guides และ template เริ่มต้น 6 แบบที่แก้ต่อได้
+- ตั้ง Transition IN/OUT แล้วส่งไป Preview, Take หรือ Clear ผ่าน Overlay 1–8; การเปลี่ยน Scene ใน Editor ไม่สลับ Scene บน Program จนกด Take
+- เอกสาร CG schema v2 และ Input อยู่ใน WebMix Show; เปิด Show เก่าได้ด้วย migration จาก template schema v1
+- บันทึก preset ในเครื่องและส่งออก/นำเข้าไฟล์ `.webmix-cg.json`; รูปในเอกสารฝังไปกับ CG (PNG/JPEG/WebP ไม่เกิน 1 MB ต่อรูป และ 1.5 MB รวมหลังเข้ารหัสต่อ CG) เพื่อให้ไฟล์ CG ย้ายเครื่องได้
+- จำกัดขนาด Show ที่เก็บใน browser ตาม quota ของ localStorage; ถ้าเกินระบบปฏิเสธการแก้ CG ล่าสุดและแสดงข้อความให้ลดขนาด/จำนวนภาพ
+- หากเปิดหน้า CG Studio โดยตรง จะใช้โหมดออกแบบและนำเข้า/ส่งออกไฟล์ได้; การซิงก์สดต้องเปิดจาก Input CG Studio ใน WebMix และอยู่บน origin เดียวกัน
+
 ## ระบบวาดภาพด้วยการ์ดจอ (GPU)
 
 Program/Preview วาดด้วย WebGL บนการ์ดจอ: วิดีโอส่งเป็น texture ตรง ๆ ส่วนคีย์ฉากเขียว ครอป และความทึบ

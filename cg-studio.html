@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#090b0f">
+  <title>WebMix CG Studio</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="assets/cg-studio.css">
+  <script src="assets/js/cg.js" defer></script>
+  <script src="assets/js/cg-studio.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="./"><span class="brand-mark">W</span><span>WEBMIX <b>CG STUDIO</b></span></a>
+    <label class="doc-name"><span>PROJECT</span><input id="doc-name" value="กราฟิกใหม่" maxlength="80" aria-label="ชื่อโปรเจกต์ CG"></label>
+    <div class="connection"><i id="connection-dot"></i><span id="connection-text">โหมดออกแบบ</span><small id="save-state">บันทึกในเครื่อง</small></div>
+    <div class="top-actions">
+      <button id="undo" class="icon-button" title="เลิกทำ" disabled>↶</button>
+      <button id="redo" class="icon-button" title="ทำซ้ำ" disabled>↷</button>
+      <button id="save-project" class="button quiet">บันทึก</button>
+      <button id="export-project" class="button quiet">ส่งออก</button>
+      <button id="import-project" class="button quiet">นำเข้า</button>
+      <input id="import-file" type="file" accept=".json,application/json" hidden>
+      <select id="library" class="library" aria-label="เปิดแบบที่บันทึก"><option value="">แบบที่บันทึก</option></select>
+    </div>
+  </header>
+  <main class="app-shell">
+    <aside class="left-panel">
+      <div class="panel-tabs"><button class="tab is-active" data-left-tab="layers">ELEMENTS</button><button class="tab" data-left-tab="templates">TEMPLATES</button></div>
+      <section id="layers-panel" class="left-section">
+        <div class="section-label"><span>SCENES</span><button id="add-scene" class="tiny-button" title="เพิ่ม Scene">＋</button></div>
+        <div id="scene-list" class="scene-list"></div>
+        <div class="section-label element-heading"><span>ELEMENTS</span><button id="add-text" class="tiny-button" title="เพิ่มข้อความ">＋</button></div>
+        <div id="element-tree" class="element-tree"></div>
+        <div class="block-label">ADD BUILDING BLOCK</div>
+        <div class="block-grid">
+          <button data-add="text"><b>T</b><span>Text</span></button>
+          <button data-add="shape"><b>▭</b><span>Shape</span></button>
+          <button data-add="image"><b>▧</b><span>Image</span></button>
+          <button data-add="ticker"><b>≋</b><span>Ticker</span></button>
+        </div>
+        <input id="image-file" type="file" accept="image/png,image/jpeg,image/webp" hidden>
+      </section>
+      <section id="templates-panel" class="left-section" hidden>
+        <div class="section-label"><span>STARTER TEMPLATES</span></div>
+        <div class="template-list">
+          <button data-template="lower-third"><i class="template-swatch lower"></i><span>Lower Third</span></button>
+          <button data-template="top-banner"><i class="template-swatch banner"></i><span>Top Banner</span></button>
+          <button data-template="live-bug"><i class="template-swatch live"></i><span>LIVE Bug</span></button>
+          <button data-template="ticker"><i class="template-swatch ticker"></i><span>Ticker</span></button>
+          <button data-template="score-card"><i class="template-swatch score"></i><span>Scoreboard</span></button>
+          <button data-template="full-screen"><i class="template-swatch full"></i><span>Full Screen</span></button>
+        </div>
+        <p class="panel-hint">เลือกเทมเพลตเพื่อแทนที่ elements ใน Scene ปัจจุบัน จากนั้นแก้ไขแต่ละชิ้นได้อย่างอิสระ</p>
+      </section>
+    </aside>
+
+    <section class="center-panel">
+      <div class="canvas-toolbar">
+        <div class="tool-group"><button class="tool is-active" title="เลือก / ย้าย">↖</button><span class="toolbar-divider"></span><span class="canvas-dimension">1920 × 1080</span></div>
+        <div class="tool-group"><label class="guide-toggle"><input id="safe-guides" type="checkbox" checked> Safe area</label><button id="zoom-out" class="icon-button" title="ย่อ">−</button><span id="zoom-label">Fit</span><button id="zoom-in" class="icon-button" title="ขยาย">＋</button></div>
+      </div>
+      <div class="canvas-stage-wrap"><div id="canvas-stage" class="canvas-stage"><canvas id="preview" width="1920" height="1080"></canvas><div id="selection-box" class="selection-box" hidden><span class="handle nw"></span><span class="handle ne"></span><span class="handle sw"></span><span class="handle se"></span></div><div id="safe-overlay" class="safe-overlay"><span>SAFE TITLE 80%</span></div></div></div>
+      <div class="canvas-footer"><span>TRANSPARENT OUTPUT · 16:9</span><span>ลากวัตถุเพื่อจัดตำแหน่ง · ปรับขนาดจากมุมกรอบ</span><span id="canvas-zoom">100%</span></div>
+      <div class="bottom-dock">
+        <section class="scenes-dock"><div class="dock-head"><b>SCENES</b><button id="add-scene-bottom" class="tiny-button" title="เพิ่ม Scene">＋</button></div><div id="scene-cards" class="scene-cards"></div></section>
+        <section class="timeline-dock"><div class="dock-head"><b>PLAYOUT TRANSITIONS</b><span>IN · HOLD · OUT</span></div><div class="timeline-controls"><label>IN<select id="transition-in"><option value="fade">Fade</option><option value="cut">Cut</option><option value="wipe">Wipe</option><option value="zoom">Zoom</option><option value="slide-left">Slide Left</option><option value="slide-right">Slide Right</option><option value="slide-up">Slide Up</option><option value="slide-down">Slide Down</option></select></label><div class="hold-track"><span>HOLD</span><i></i></div><label>OUT<select id="transition-out"><option value="fade">Fade</option><option value="cut">Cut</option><option value="wipe">Wipe</option><option value="zoom">Zoom</option><option value="slide-left">Slide Left</option><option value="slide-right">Slide Right</option><option value="slide-up">Slide Up</option><option value="slide-down">Slide Down</option></select></label><label class="duration-field">DURATION<input id="transition-duration" type="number" min="150" max="3000" step="50" value="500"> ms</label></div></section>
+      </div>
+      <section class="playout-row"><div class="output-status"><i></i><span id="overlay-label">Overlay 1</span><select id="overlay-slot" aria-label="เลือกช่อง Overlay"><option value="0">Overlay 1</option><option value="1">Overlay 2</option><option value="2">Overlay 3</option><option value="3">Overlay 4</option><option value="4">Overlay 5</option><option value="5">Overlay 6</option><option value="6">Overlay 7</option><option value="7">Overlay 8</option></select><small>WEBMIX OUTPUT</small></div><div class="playout-actions"><button id="preview-webmix" class="button quiet" disabled>Preview ใน WebMix</button><button id="take" class="button live" disabled>Take</button><button id="clear" class="button quiet" disabled>Clear</button></div></section>
+      <div id="toast" role="status" aria-live="polite"></div>
+    </section>
+
+    <aside class="inspector-panel"><div class="inspector-head"><div><span class="eyebrow">PROPERTIES</span><h2 id="inspector-title">Document</h2></div><button id="delete-element" class="tiny-button danger" title="ลบ Element" hidden>⌫</button></div>
+      <div id="document-inspector" class="inspector-content">
+        <label class="field"><span>ชื่อ Package</span><input id="inspector-doc-name" maxlength="80"></label>
+        <div class="inspector-note">เลือก element ในรายการหรือบน canvas เพื่อแก้ไขตำแหน่งและรูปแบบ</div>
+        <div class="divider"></div><b class="group-title">OUTPUT</b><div class="readout">1920 × 1080 <span>16:9</span></div>
+      </div>
+      <div id="element-inspector" class="inspector-content" hidden>
+        <label class="field"><span>ชื่อ Element</span><input id="element-name" maxlength="80"></label>
+        <div class="field-group"><b class="group-title">TRANSFORM</b><div class="number-grid"><label class="field"><span>X</span><input id="pos-x" type="number"></label><label class="field"><span>Y</span><input id="pos-y" type="number"></label><label class="field"><span>W</span><input id="pos-w" type="number" min="1"></label><label class="field"><span>H</span><input id="pos-h" type="number" min="1"></label><label class="field"><span>Rotate (°)</span><input id="pos-rotation" type="number" min="-360" max="360"></label></div></div>
+        <div id="text-properties" class="field-group" hidden><b class="group-title">CONTENT & TYPOGRAPHY</b><label class="field"><span>ข้อความ</span><textarea id="text-content" rows="3" maxlength="1000"></textarea></label><div class="number-grid"><label class="field"><span>Font Size</span><input id="font-size" type="number" min="8" max="240"></label><label class="field"><span>Weight</span><select id="font-weight"><option value="400">Regular</option><option value="500">Medium</option><option value="600">Semi Bold</option><option value="700">Bold</option><option value="800">Extra Bold</option></select></label></div><label class="field"><span>Font Family</span><select id="font-family"><option>IBM Plex Sans Thai</option><option>Inter</option><option>Arial</option><option>system-ui</option></select></label><div class="number-grid"><label class="field"><span>สีข้อความ</span><input id="text-color" type="color"></label><label class="field"><span>Alignment</span><select id="text-align"><option value="left">Left</option><option value="center">Center</option><option value="right">Right</option></select></label></div><label id="ticker-speed-field" class="field" hidden><span>Ticker Speed (px/s)</span><input id="ticker-speed" type="number" min="20" max="300" value="80"></label></div>
+        <div id="shape-properties" class="field-group" hidden><b class="group-title">APPEARANCE</b><label class="field"><span>Fill</span><input id="shape-fill" type="color"></label><label class="field"><span>Corner Radius</span><input id="shape-radius" type="number" min="0" max="300"></label></div>
+        <div id="image-properties" class="field-group" hidden><b class="group-title">IMAGE</b><label class="field"><span>Fit</span><select id="image-fit"><option value="cover">Cover</option><option value="contain">Contain</option></select></label><p class="panel-hint">ไฟล์ภาพฝังอยู่ในเอกสาร CG เพื่อย้ายงานได้ (PNG, JPEG หรือ WebP ไม่เกิน 1 MB ต่อภาพ)</p></div>
+        <div class="field-group"><b class="group-title">LAYER</b><label class="check-field"><input id="element-visible" type="checkbox"> แสดงผล</label><label class="check-field"><input id="element-locked" type="checkbox"> ล็อกตำแหน่ง</label><div class="layer-actions"><button id="layer-down" class="button quiet">ลงล่าง</button><button id="layer-up" class="button quiet">ขึ้นบน</button><button id="duplicate-element" class="button quiet">ทำซ้ำ</button></div></div>
+      </div>
+    </aside>
+  </main>
+</body>
+</html>
