@@ -818,7 +818,7 @@
       case 'visualizer':
         return { e: genTexture('g:' + inp.id, frameNo, GW, GH, (c, w, h) => drawViz(c, inp, w, h)), full: true, under: transparent ? null : [0, 0, 0, 1] };
       case 'captions':
-        return { e: genTexture('g:' + inp.id, `${captionText(inp)}|${JSON.stringify(inp.cap)}`, W, H, (c, w, h) => drawGraphic(c, inp, w, h)), full: true, under: transparent ? null : [0, 0, 0, 1] };
+        return { e: genTexture('g:' + inp.id, `${captionText(inp)}|${captionTr(inp)}|${JSON.stringify(inp.cap)}`, W, H, (c, w, h) => drawGraphic(c, inp, w, h)), full: true, under: transparent ? null : [0, 0, 0, 1] };
       case 'chat': {
         const a = chatAnim();
         return { e: genTexture('g:' + inp.id, `${chatFeed.shown?.id}|${a.toFixed(3)}|${inp.chat.style}`, W, H, (c, w, h) => drawGraphic(c, inp, w, h)), full: true, under: transparent ? null : [0, 0, 0, 1] };
@@ -2411,10 +2411,52 @@
   const CAP_LANGS = { 'th-TH': 'ไทย', 'en-US': 'English (US)', 'en-GB': 'English (UK)', 'zh-CN': '中文', 'ja-JP': '日本語', 'ko-KR': '한국어', 'lo-LA': 'ລາວ', 'my-MM': 'မြန်မာ', 'vi-VN': 'Tiếng Việt' };
   const CAP_SIZES = { s: ['เล็ก', 28], m: ['กลาง', 36], l: ['ใหญ่', 46] };
   const CAP_POS = { bottom: 'ล่างจอ', top: 'บนจอ' };
+  // แปลภาษา (แบบ 69): ตัวแปลภาษาในตัวของ Chrome (Translator API — แปลในเครื่อง) · ไม่มีตัวแปล = แสดงเฉพาะต้นฉบับ
+  const CAP_TR = { '': 'ไม่แปล', en: 'English', th: 'ไทย', zh: '中文', ja: '日本語', ko: '한국어', vi: 'Tiếng Việt', fr: 'Français', de: 'Deutsch', es: 'Español' };
+  const CAP_SHOW = { both: 'ต้นฉบับ + คำแปล', tr: 'คำแปลอย่างเดียว', orig: 'ต้นฉบับอย่างเดียว' };
   function sanitizeCap(c) {
     c = c || {};
-    return { lang: CAP_LANGS[c.lang] ? c.lang : 'th-TH', source: typeof c.source === 'string' && c.source ? c.source.slice(0, 80) : 'mic', size: CAP_SIZES[c.size] ? c.size : 'm',
-      pos: CAP_POS[c.pos] ? c.pos : 'bottom', lines: clamp(+c.lines || 2, 1, 3), clearSec: clamp(+c.clearSec || 5, 2, 30) };
+    const lang = CAP_LANGS[c.lang] ? c.lang : 'th-TH';
+    const tr = CAP_TR[c.tr] && c.tr !== lang.split('-')[0] ? c.tr : '';
+    return { lang, source: typeof c.source === 'string' && c.source ? c.source.slice(0, 80) : 'mic', size: CAP_SIZES[c.size] ? c.size : 'm',
+      pos: CAP_POS[c.pos] ? c.pos : 'bottom', lines: clamp(+c.lines || 2, 1, 3), clearSec: clamp(+c.clearSec || 5, 2, 30), tr, show: CAP_SHOW[c.show] ? c.show : 'both' };
+  }
+  // ตัวแปลต่อคู่ภาษา: state = checking | none (ไม่มี API) | unavailable | downloadable | downloading | available | error
+  const capTr = {};
+  function capTrEntry(lang, tr) {
+    const src = String(lang || '').split('-')[0];
+    if (!tr || tr === src) return null;
+    return capTr[src + '>' + tr] || (capTr[src + '>' + tr] = { src, dst: tr, state: 'checking', progress: 0 });
+  }
+  // activate = มาจากการกดของผู้ใช้ (Chrome ต้องการเพื่อดาวน์โหลดภาษาครั้งแรก)
+  function capTranslator(lang, tr, activate) {
+    const e = capTrEntry(lang, tr);
+    if (!e) return Promise.resolve(null);
+    if (e.t) return Promise.resolve(e.t);
+    const T = window.Translator;
+    if (!T?.availability || !T.create) { e.state = 'none'; return Promise.resolve(null); }
+    if (e.p) return e.p;
+    e.p = (async () => {
+      // บางเบราว์เซอร์มี API แต่ไม่ตอบ (เช่น headless) — รอไม่เกิน 5 วินาทีแล้วถือว่าใช้ไม่ได้
+      try { e.state = await Promise.race([T.availability({ sourceLanguage: e.src, targetLanguage: e.dst }), new Promise(r => setTimeout(() => r('unavailable'), 5000))]); } catch (err) { e.state = 'unavailable'; }
+      if (e.state === 'unavailable' || e.state !== 'available' && !activate) return null;
+      if (e.state !== 'available') e.state = 'downloading';
+      e.t = await T.create({ sourceLanguage: e.src, targetLanguage: e.dst, monitor(m) { m.addEventListener('downloadprogress', ev => { e.progress = ev.loaded || 0; }); } });
+      e.state = 'available';
+      return e.t;
+    })().catch(err => { e.state = 'error'; e.err = err?.message || String(err); return null; }).finally(() => { e.p = null; });
+    return e.p;
+  }
+  const capTrState = c => capTrEntry(c.lang, c.tr)?.state || '';
+  function capTranslate(inp, entry) {
+    const c = inp.cap;
+    capTranslator(c.lang, c.tr).then(t => t && t.translate(entry.text)).then(out => {
+      const r = inp.capRun;
+      if (!out || !r || inp.cap.tr !== c.tr) return;
+      entry.tr = String(out).trim(); entry.trLang = c.tr;
+      r.trLines.push(entry.tr); if (r.trLines.length > 20) r.trLines.shift();
+      r.lastAt = performance.now();
+    }).catch(() => {});
   }
   function addCaptionsInput() {
     const n = inputs.filter(i => i.type === 'captions').length + 1;
@@ -2440,8 +2482,10 @@
       return;
     }
     const r = inp.capRun || (inp.capRun = { lines: [], interim: '', lastAt: 0, log: [] });
+    if (!r.trLines) r.trLines = [];
     if (r.on) return;
     r.on = true; r.error = ''; r.fails = 0;
+    if (inp.cap.tr) capTranslator(inp.cap.lang, inp.cap.tr, true);
     const go = () => {
       if (!r.on || inp.removed) return;
       const rec = new SpeechRec();
@@ -2451,7 +2495,11 @@
         for (let i = e.resultIndex; i < e.results.length; i++) {
           const t = String(e.results[i][0].transcript || '').trim();
           if (!t) continue;
-          if (e.results[i].isFinal) { r.lines.push(t); r.log.push({ text: t, at: Date.now() }); if (r.lines.length > 20) r.lines.shift(); }
+          if (e.results[i].isFinal) {
+            const entry = { text: t, at: Date.now() };
+            r.lines.push(t); r.log.push(entry); if (r.lines.length > 20) r.lines.shift();
+            if (inp.cap.tr) capTranslate(inp, entry);
+          }
           else interim += (interim ? ' ' : '') + t;
         }
         r.interim = interim;
@@ -2488,34 +2536,51 @@
     if (performance.now() - r.lastAt > inp.cap.clearSec * 1000) return '';
     return [...r.lines.slice(-3), r.interim].filter(Boolean).join(' ');
   }
+  // คำแปลที่ขึ้นจอ (ช้ากว่าต้นฉบับเล็กน้อย) — ว่างเมื่อไม่แปล/ตัวแปลใช้ไม่ได้
+  function captionTr(inp) {
+    const r = inp.capRun, c = inp.cap;
+    if (!c.tr || c.show === 'orig' || !r?.trLines?.length) return '';
+    if (performance.now() - r.lastAt > c.clearSec * 1000) return '';
+    return r.trLines.slice(-2).join(' ');
+  }
   function drawCaptions(ctx, w, h, inp) {
-    const text = captionText(inp);
-    if (!text) return;
-    const c = inp.cap, s = h / 720, size = CAP_SIZES[c.size][1] * s, lineH = size * 1.32;
+    const orig = captionText(inp), tr = captionTr(inp), c = inp.cap;
+    // คำแปลอย่างเดียว: ระหว่างรอคำแปลแรก/ตัวแปลใช้ไม่ได้ แสดงต้นฉบับแทน
+    const trWorks = c.tr && ['available', 'downloading'].includes(capTrState(c));
+    const main = c.show === 'tr' && trWorks ? tr : tr || orig;
+    if (!main) return;
+    const sub = tr && c.show === 'both' ? orig : '';
+    const s = h / 720, size = CAP_SIZES[c.size][1] * s, lineH = size * 1.32, subSize = size * 0.72, subH = subSize * 1.35;
     ctx.save();
-    ctx.font = `600 ${size}px ${FONT}`;
     const maxW = w * 0.84;
-    // ตัดบรรทัดทั้งหมด แล้วแสดงเฉพาะบรรทัดท้าย ๆ (ข้อความใหม่อยู่ล่างสุด)
-    const all = chatLib.wrapLines(ctx, text, maxW - 40 * s, 50);
-    const lines = all.slice(-c.lines);
-    const boxW = Math.min(maxW, Math.max(...lines.map(l => ctx.measureText(l).width)) + 40 * s), boxH = lines.length * lineH + 20 * s;
+    // ตัดบรรทัดทั้งหมด แล้วแสดงเฉพาะบรรทัดท้าย ๆ (ข้อความใหม่อยู่ล่างสุด) · ต้นฉบับ (ตัวเล็ก สีเทา) อยู่เหนือคำแปล
+    ctx.font = `500 ${subSize}px ${FONT}`;
+    const subLines = sub ? chatLib.wrapLines(ctx, sub, maxW - 40 * s, 50).slice(-1) : [];
+    const subW = subLines.length ? ctx.measureText(subLines[0]).width : 0;
+    ctx.font = `600 ${size}px ${FONT}`;
+    const lines = chatLib.wrapLines(ctx, main, maxW - 40 * s, 50).slice(-c.lines);
+    const boxW = Math.min(maxW, Math.max(subW, ...lines.map(l => ctx.measureText(l).width)) + 40 * s), boxH = lines.length * lineH + subLines.length * subH + 20 * s;
     const x = (w - boxW) / 2, y = c.pos === 'top' ? h * 0.06 : h * 0.93 - boxH;
     ctx.fillStyle = 'rgba(0,0,0,.78)';
     ctx.beginPath();
     if (ctx.roundRect) ctx.roundRect(x, y, boxW, boxH, 8 * s); else ctx.rect(x, y, boxW, boxH);
     ctx.fill();
-    ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    lines.forEach((l, i) => ctx.fillText(l, w / 2, y + 10 * s + lineH * (i + 0.5)));
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    let ty = y + 10 * s;
+    if (subLines.length) { ctx.font = `500 ${subSize}px ${FONT}`; ctx.fillStyle = '#c9d1db'; ctx.fillText(subLines[0], w / 2, ty + subH / 2); ty += subH; ctx.font = `600 ${size}px ${FONT}`; }
+    ctx.fillStyle = '#fff';
+    lines.forEach((l, i) => ctx.fillText(l, w / 2, ty + lineH * (i + 0.5)));
     ctx.restore();
   }
   // ไฟล์คำบรรยาย .srt (เวลาเทียบกับประโยคแรก) สำหรับใส่ในคลิปที่บันทึกไว้
-  function captionSrt(log) {
+  function captionSrt(log, field = 'text') {
+    log = field === 'text' ? log : log.filter(e => e[field]);
     if (!log.length) return '';
     const t0 = log[0].at - 2500;
     const ts = ms => { ms = Math.max(0, ms); const hh = Math.floor(ms / 3600000), mm = Math.floor(ms / 60000) % 60, ss = Math.floor(ms / 1000) % 60; return `${pad2(hh)}:${pad2(mm)}:${pad2(ss)},${String(ms % 1000).padStart(3, '0')}`; };
     return log.map((e, i) => {
       const start = (i ? log[i - 1].at : t0 + 500) - t0, end = Math.min(e.at - t0 + 2000, log[i + 1] ? log[i + 1].at - t0 : Infinity);
-      return `${i + 1}\n${ts(start)} --> ${ts(Math.max(end, start + 800))}\n${e.text}\n`;
+      return `${i + 1}\n${ts(start)} --> ${ts(Math.max(end, start + 800))}\n${e[field]}\n`;
     }).join('\n');
   }
   // ปุ่ม “แสดงบน Program / ซ่อนจาก Program” ในหน้าต่างแก้ไข — ใช้ช่อง Overlay ว่าง ไม่ปิดหน้าต่าง
@@ -2562,6 +2627,11 @@
                 <option value="mic">ไมค์หลักของเครื่อง</option><option value="master" ${c.source === 'master' ? 'selected' : ''}>Master (เสียงรวมที่ออกอากาศ)</option>
                 ${chans.map(([k, n]) => `<option value="${esc(k)}" ${k === c.source ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select></label>
             </div></section>
+          <section class="cp-card"><div class="cp-h"><h3>แปลภาษา</h3></div>
+            <label class="field"><span>แปลเป็น</span><select name="tr" class="select">${Object.entries(CAP_TR).map(([k, l]) => `<option value="${k}" ${k === c.tr ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+            <div class="cp-seg cp-show" role="radiogroup" aria-label="แสดงบนจอ">${Object.entries(CAP_SHOW).map(([k, l]) => `<label><input type="radio" name="show" value="${k}" ${k === c.show ? 'checked' : ''}><span>${l}</span></label>`).join('')}</div>
+            <div class="cp-tr" aria-live="polite"></div>
+            <p class="note">คำแปลขึ้นช้ากว่าต้นฉบับราว 1 วินาที · เบราว์เซอร์ที่ไม่มีตัวแปลในตัว (Safari, Firefox, แอป Linux) แสดงเฉพาะต้นฉบับ</p></section>
           <section class="cp-card"><div class="cp-h"><h3>การแสดงผล</h3></div>
             <div class="cp-seg" role="radiogroup" aria-label="จำนวนบรรทัด">${[1, 2, 3].map(n => `<label><input type="radio" name="lines" value="${n}" ${n === c.lines ? 'checked' : ''}><span>${n} บรรทัด</span></label>`).join('')}</div>
             <div class="cp-two">
@@ -2570,7 +2640,7 @@
             </div>
             <label class="field"><span>หายไปเมื่อเงียบ</span><select name="clearSec" class="select">${[3, 5, 8, 15].map(n => `<option value="${n}" ${n === c.clearSec ? 'selected' : ''}>${n} วินาที</option>`).join('')}</select></label></section>
           <section class="cp-card"><div class="cp-h"><h3>ไฟล์คำบรรยาย</h3><span class="cp-count"></span></div>
-            <div class="cp-btns"><button type="button" class="btn btn-sm cap-srt">ดาวน์โหลด .srt</button><button type="button" class="btn btn-sm cap-txt">ดาวน์โหลด .txt</button><button type="button" class="btn btn-sm cap-clear">ล้าง</button></div>
+            <div class="cp-btns"><button type="button" class="btn btn-sm cap-srt">ดาวน์โหลด .srt</button><button type="button" class="btn btn-sm cap-srt-tr" hidden>ดาวน์โหลด .srt (คำแปล)</button><button type="button" class="btn btn-sm cap-txt">ดาวน์โหลด .txt</button><button type="button" class="btn btn-sm cap-clear">ล้าง</button></div>
             <p class="note">เก็บทุกประโยคที่ฟังได้ เอาไปใส่คลิปที่บันทึกไว้ได้ · ต้องต่ออินเทอร์เน็ต · ความแม่นยำขึ้นกับไมค์และเสียงรบกวน</p></section>
         </div>
       </div>`,
@@ -2578,9 +2648,34 @@
       onOpen(modal) {
         modal.classList.add('cp-modal');
         const f = $('form', modal).elements;
-        const live = () => sanitizeCap({ lang: f.lang.value, source: f.source.value, size: f.size.value, pos: f.pos.value, lines: f.lines.value, clearSec: f.clearSec.value });
+        const live = () => sanitizeCap({ lang: f.lang.value, source: f.source.value, size: f.size.value, pos: f.pos.value, lines: f.lines.value, clearSec: f.clearSec.value, tr: f.tr.value, show: f.show.value });
         // เปลี่ยนรูปแบบแล้วเห็นผลทันที (ยกเลิก = คืนค่า)
-        modal.addEventListener('change', e => { if (['size', 'pos', 'lines', 'clearSec'].includes(e.target.name)) Object.assign(inp.cap, { size: live().size, pos: live().pos, lines: live().lines, clearSec: live().clearSec }); });
+        modal.addEventListener('change', e => {
+          if (['size', 'pos', 'lines', 'clearSec', 'show'].includes(e.target.name)) Object.assign(inp.cap, { size: live().size, pos: live().pos, lines: live().lines, clearSec: live().clearSec, show: live().show });
+          if (e.target.name === 'tr' || e.target.name === 'lang') {
+            if (e.target.name === 'tr') { inp.cap.tr = live().tr; if (inp.capRun) inp.capRun.trLines = []; }
+            capTranslator(f.lang.value, f.tr.value, false).then(() => { sig = ''; });
+            sig = '';
+          }
+        });
+        // สถานะตัวแปล: พร้อม / ต้องดาวน์โหลด / กำลังดาวน์โหลด / ไม่มีในเบราว์เซอร์นี้
+        const trStatus = () => {
+          const l = live(), e = capTrEntry(l.lang, l.tr), name = CAP_TR[l.tr];
+          if (!l.tr) return ['off', 'ไม่แปล — แสดงเฉพาะต้นฉบับ', ''];
+          if (!e || e.state === 'checking') return ['wait', 'กำลังตรวจตัวแปลภาษาในเครื่อง…', ''];
+          return {
+            none: ['bad', 'เบราว์เซอร์นี้ไม่มีตัวแปลภาษาในตัว — แสดงเฉพาะต้นฉบับ (ใช้ Chrome รุ่นใหม่บนคอมพิวเตอร์)', ''],
+            unavailable: ['bad', `แปล ${CAP_LANGS[l.lang]} → ${name} ในเครื่องนี้ไม่ได้ — แสดงเฉพาะต้นฉบับ`, ''],
+            error: ['bad', `เปิดตัวแปลไม่ได้: ${e.err || ''} — แสดงเฉพาะต้นฉบับ`, ''],
+            downloadable: ['wait', `ต้องดาวน์โหลดภาษา ${name} ครั้งแรก (ทำครั้งเดียว)`, '<button type="button" class="btn btn-sm" data-cap="dl">ดาวน์โหลดภาษา</button>'],
+            downloading: ['wait', `กำลังดาวน์โหลดภาษา ${name}… ${Math.round(e.progress * 100)}%`, ''],
+            available: ['ok', `แปลในเครื่องนี้ · ใช้ตัวแปลภาษาในตัวของ Chrome · ไม่ส่งข้อความออกนอกเครื่อง · ภาษา ${name} พร้อมใช้`, '']
+          }[e.state] || ['wait', '', ''];
+        };
+        modal.addEventListener('click', e => {
+          if (e.target.closest('[data-cap=dl]')) { const l = live(); capTranslator(l.lang, l.tr, true).then(() => { sig = ''; }); setTimeout(() => { sig = ''; }, 50); }
+        });
+        capTranslator(c.lang, c.tr, false).then(() => { sig = ''; });
         const pc = $('.cp-prev canvas', modal).getContext('2d');
         let sig = '';
         const tick = () => {
@@ -2589,22 +2684,26 @@
           try { const src = $('#pgm-canvas'); if (src) pc.drawImage(src, 0, 0, 960, 540); } catch (e) {}
           if (!onOverlay(inp.id) && inp.id !== state.programId) {
             const demo = !inp.capRun?.lines?.length && !inp.capRun?.interim;
-            drawCaptions(pc, 960, 540, demo ? { ...inp, capRun: { lines: ['ตัวอย่างคำบรรยายสดบนจอ', 'แสดงตามขนาดและตำแหน่งที่เลือก'], interim: '', lastAt: performance.now() } } : inp);
+            drawCaptions(pc, 960, 540, demo ? { ...inp, capRun: { lines: ['ตัวอย่างคำบรรยายสดบนจอ', 'แสดงตามขนาดและตำแหน่งที่เลือก'], trLines: inp.cap.tr ? ['Sample live captions on screen, in the size and position you chose'] : [], interim: '', lastAt: performance.now() } } : inp);
           }
           const L = log(), run = inp.capRun?.on;
-          const now = `${L.length}|${run}|${inp.capRun?.interim || ''}`;
+          const ts = trStatus();
+          const now = `${L.length}|${L.filter(e => e.tr).length}|${run}|${inp.capRun?.interim || ''}|${ts[1]}`;
           if (now !== sig) {
             sig = now;
+            $('.cp-tr', modal).innerHTML = `<span class="cp-tr-ic is-${ts[0]}" aria-hidden="true">${ts[0] === 'ok' ? 'OK' : ts[0] === 'bad' ? '!' : ts[0] === 'off' ? '–' : '…'}</span><span class="cp-tr-t">${esc(ts[1])}</span>${ts[2]}`;
+            $('.cap-srt-tr', modal).hidden = !L.some(e => e.tr);
             $('.cp-state', modal).innerHTML = run ? '<span class="cp-on">กำลังฟัง</span>' : '<span class="cp-off">หยุดอยู่</span>';
             $('.cp-count', modal).textContent = L.length ? `${L.length} ประโยค` : '';
             const t = t0();
-            $('.cp-log', modal).innerHTML = (L.slice(-6).map(e => `<div><span class="mono">${fmtDuration(e.at - t)}</span> ${esc(e.text)}</div>`).join('')
+            $('.cp-log', modal).innerHTML = (L.slice(-6).map(e => `<div><span class="mono">${fmtDuration(e.at - t)}</span> ${esc(e.text)}${e.tr ? `<span class="cp-tr-line">${esc(e.tr)}</span>` : ''}</div>`).join('')
               + (inp.capRun?.interim ? `<div class="cp-interim">${esc(inp.capRun.interim)}…</div>` : '')) || '<p class="note">กด “เริ่มฟัง” แล้วพูดเพื่อทดลอง</p>';
           }
           setTimeout(tick, 150);
         };
         tick();
         $('.cap-srt', modal).addEventListener('click', () => { if (!log().length) return toast('ยังไม่มีข้อความ', 'warn'); downloadBlob(new Blob([captionSrt(log())], { type: 'text/plain' }), `webmix-captions-${stamp()}.srt`); });
+        $('.cap-srt-tr', modal).addEventListener('click', () => downloadBlob(new Blob([captionSrt(log(), 'tr')], { type: 'text/plain' }), `webmix-captions-${log().find(e => e.tr)?.trLang || 'tr'}-${stamp()}.srt`));
         $('.cap-txt', modal).addEventListener('click', () => { if (!log().length) return toast('ยังไม่มีข้อความ', 'warn'); downloadBlob(new Blob([log().map(e => `[${new Date(e.at).toLocaleTimeString('th-TH')}] ${e.text}`).join('\n')], { type: 'text/plain' }), `webmix-captions-${stamp()}.txt`); });
         $('.cap-clear', modal).addEventListener('click', () => { log().length = 0; sig = ''; });
         bindOnAirButton(modal, inp);
@@ -2621,7 +2720,8 @@
     if (r?.value !== 'save') { inp.cap = before; return; }
     const f = r.form;
     inp.name = String(f.name.value || '').trim().slice(0, 40) || inp.name;
-    inp.cap = sanitizeCap({ lang: f.lang.value, source: f.source.value, size: f.size.value, pos: f.pos.value, lines: f.lines.value, clearSec: f.clearSec.value });
+    inp.cap = sanitizeCap({ lang: f.lang.value, source: f.source.value, size: f.size.value, pos: f.pos.value, lines: f.lines.value, clearSec: f.clearSec.value, tr: f.tr.value, show: f.show.value });
+    if (inp.cap.tr && inp.capRun?.on) capTranslator(inp.cap.lang, inp.cap.tr, true);
     // ภาษา/ช่องเสียงเปลี่ยน → เริ่มฟังใหม่ด้วยค่าใหม่
     const restart = inp.capRun?.on && (before.lang !== inp.cap.lang || before.source !== inp.cap.source);
     if (restart) captionStop(inp);
@@ -2631,7 +2731,7 @@
 
   /* ------------------------------------------------------ viewer comments */
   // คอมเมนต์จาก YouTube / Twitch / พิมพ์เอง เข้ารายการในแท็บ "คอมเมนต์" — กดคอมเมนต์เพื่อขึ้นจอผ่านแหล่งภาพ COMMENTS
-  const chatFeed = { list: [], conns: {}, status: { youtube: ['off', ''], twitch: ['off', ''] }, shown: null, at: 0, hideAt: 0, autoHide: +store.get('chat-autohide', 0) || 0 };
+  const chatFeed = { list: [], conns: {}, status: { youtube: ['off', ''], twitch: ['off', ''], facebook: ['off', ''] }, shown: null, at: 0, hideAt: 0, autoHide: +store.get('chat-autohide', 0) || 0 };
   chatFeed.clean = !!store.get('chat-clean', true);
   const CHAT_AUTOHIDE = [0, 8, 10, 15, 30];
   // กรองคำหยาบ (ไทย / อังกฤษ) — แทนด้วย *** ก่อนเข้ารายการ จึงไม่มีทางขึ้นจอ
@@ -2690,9 +2790,7 @@
     renderChatConn();
   }
   function chatConnect(cfg) {
-    for (const c of Object.values(chatFeed.conns)) c.stop();
-    chatFeed.conns = {};
-    chatFeed.status = { youtube: ['off', ''], twitch: ['off', ''] };
+    for (const k of ['youtube', 'twitch']) { chatFeed.conns[k]?.stop(); delete chatFeed.conns[k]; chatFeed.status[k] = ['off', '']; }
     const on = platform => ({ message: chatAdd, status: (st, text) => chatStatus(platform, st, text) });
     if (cfg.yt) chatFeed.conns.youtube = chatLib.connectYouTube({ video: cfg.yt, key: cfg.key }, on('youtube'));
     if (cfg.tw) chatFeed.conns.twitch = chatLib.connectTwitch(cfg.tw, on('twitch'));
@@ -2734,7 +2832,10 @@
         <div class="help"><h3>Twitch</h3></div>
         <label class="field"><span>ชื่อช่อง Twitch (ไม่ต้องมี key)</span><input name="tw" class="input mono" placeholder="channelname" value="${esc(src.tw || '')}"></label>
         <label class="field"><span>ซ่อนคอมเมนต์บนจอเองหลัง</span><select name="autohide" class="select">${CHAT_AUTOHIDE.map(v => `<option value="${v}" ${v === chatFeed.autoHide ? 'selected' : ''}>${v ? `${v} วินาที` : 'ไม่ซ่อนเอง (กดซ่อน)'}</option>`).join('')}</select></label>
-        <p class="note">Facebook / TikTok / LINE: ยังดึงอัตโนมัติไม่ได้ (ต้องใช้สิทธิ์ของเพจ) — คัดลอกคอมเมนต์มาวางในช่อง “พิมพ์เอง” ใต้รายการคอมเมนต์</p>`,
+        <div class="help"><h3>Facebook (เพจ)</h3></div>
+        <p class="note">${fbStatusText()} <button type="button" class="btn btn-sm" data-fbopen>เชื่อม Facebook…</button></p>
+        <p class="note">TikTok / LINE: ยังดึงอัตโนมัติไม่ได้ — คัดลอกคอมเมนต์มาวางในช่อง “พิมพ์เอง” ใต้รายการคอมเมนต์</p>`,
+      onOpen(modal, close) { $('[data-fbopen]', modal).addEventListener('click', () => { close(); openFacebookDialog(); }); },
       actions: [{ label: 'ยกเลิก' }, { label: 'ตัดการเชื่อมต่อ', value: 'off' }, { label: 'เชื่อมต่อ', primary: true, value: 'ok' }]
     });
     if (!r?.value) return;
@@ -2747,6 +2848,183 @@
     store.set('chat-ytkey', cfg.key);
     chatConnect(cfg);
   }
+  // คอมเมนต์ Facebook (แบบ 67): เข้าสู่ระบบด้วย Facebook JS SDK (App ID ของผู้ใช้เอง) → เลือกเพจ → ดึงคอมเมนต์ไลฟ์ของเพจ
+  // โทเคนอยู่ในหน่วยความจำเท่านั้น ไม่บันทึกลงเครื่อง/ไฟล์โชว์ · เก็บแค่ App ID และเพจที่เลือกไว้
+  const FB_SCOPE = 'pages_show_list,pages_read_engagement,pages_read_user_content';
+  const fb = { user: null, pages: [], pageId: store.get('fb-page', '') || '', mode: 'auto', video: '', sdk: null };
+  const fbStatusText = () => {
+    const [st, text] = chatFeed.status.facebook;
+    const pg = fb.pages.find(p => p.id === fb.pageId);
+    return st === 'off' ? 'ยังไม่ได้เชื่อม — อ่านคอมเมนต์จากไลฟ์ของเพจที่คุณเป็นแอดมิน/บรรณาธิการ'
+      : `${pg ? esc(pg.name) + ' · ' : ''}${esc(text)}`;
+  };
+  function fbLoadSdk(appId) {
+    if (fb.sdk && fb.sdk.appId === appId) return fb.sdk.p;
+    const p = new Promise((resolve, reject) => {
+      const init = () => { try { window.FB.init({ appId, version: 'v21.0', xfbml: false, cookie: false }); resolve(window.FB); } catch (e) { reject(e); } };
+      if (window.FB) { init(); return; }
+      window.fbAsyncInit = init;
+      const sc = document.createElement('script');
+      sc.src = 'https://connect.facebook.net/en_US/sdk.js'; sc.async = true; sc.crossOrigin = 'anonymous';
+      sc.onerror = () => reject(new Error('โหลดระบบเข้าสู่ระบบของ Facebook ไม่ได้ — ตรวจอินเทอร์เน็ต หรือส่วนขยายที่บล็อก Facebook'));
+      document.head.appendChild(sc);
+    });
+    fb.sdk = { appId, p };
+    p.catch(() => { fb.sdk = null; });
+    return p;
+  }
+  async function fbGraph(path, token, q = {}) {
+    const r = await fetch(`${chatLib.FB_GRAPH}${path}?${new URLSearchParams({ ...q, access_token: token })}`);
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok || body.error) throw new Error(body.error?.message ? `Facebook: ${body.error.message}` : `Facebook ตอบกลับ ${r.status}`);
+    return body;
+  }
+  async function fbLogin(appId) {
+    const FB = await fbLoadSdk(appId);
+    const res = await new Promise(resolve => FB.login(resolve, { scope: FB_SCOPE, return_scopes: true }));
+    if (!res?.authResponse?.accessToken) throw new Error('ยังไม่ได้อนุญาต — ต้องเข้าสู่ระบบและอนุญาตสิทธิ์อ่านคอมเมนต์ของเพจ');
+    await fbUseUserToken(res.authResponse.accessToken);
+  }
+  // ใช้กับโทเคนผู้ใช้ (จากการเข้าสู่ระบบ) หรือโทเคนเพจที่วางเอง (กรณีแอปเดสก์ท็อปเปิดหน้าต่าง Facebook ไม่ได้)
+  async function fbUseUserToken(token) {
+    const me = await fbGraph('me', token, { fields: 'id,name' });
+    let pages = [];
+    try {
+      const r = await fbGraph('me/accounts', token, { fields: 'id,name,access_token,tasks,followers_count', limit: 50 });
+      pages = (r.data || []).map(p => ({ id: p.id, name: p.name, token: p.access_token,
+        meta: [(p.tasks || []).includes('MANAGE') ? 'แอดมิน' : (p.tasks || []).length ? 'บรรณาธิการ' : '', p.followers_count ? `${p.followers_count.toLocaleString()} ผู้ติดตาม` : ''].filter(Boolean).join(' · ') }));
+    } catch (e) { pages = []; }
+    // โทเคนของเพจเอง: /me คือเพจ
+    if (!pages.length) pages = [{ id: me.id, name: me.name, token, meta: 'โทเคนของเพจ' }];
+    fb.user = { name: me.name, token };
+    fb.pages = pages;
+    if (!pages.some(p => p.id === fb.pageId)) fb.pageId = pages[0].id;
+    await Promise.all(pages.map(p => fbGraph(`${p.id}/live_videos`, p.token, { broadcast_status: '["LIVE"]', fields: 'id,live_views', limit: 1 })
+      .then(r => { p.live = r.data?.[0] || null; }).catch(() => { p.live = null; })));
+  }
+  function fbConnect() {
+    chatFeed.conns.facebook?.stop();
+    const pg = fb.pages.find(p => p.id === fb.pageId);
+    if (!pg) return;
+    store.set('fb-page', pg.id);
+    chatFeed.conns.facebook = chatLib.connectFacebook({ token: pg.token, page: pg.id, video: fb.mode === 'link' ? fb.video : '' },
+      { message: chatAdd, status: (st, text) => chatStatus('facebook', st, text) });
+  }
+  function fbDisconnect(forget) {
+    chatFeed.conns.facebook?.stop();
+    delete chatFeed.conns.facebook;
+    chatStatus('facebook', 'off', '');
+    if (forget) { fb.user = null; fb.pages = []; try { window.FB?.logout?.(() => {}); } catch (e) {} }
+  }
+  async function openFacebookDialog() {
+    const STEPS = ['เข้าสู่ระบบ Facebook', 'เลือกเพจ', 'ดึงคอมเมนต์'];
+    await dialog({
+      title: 'เชื่อมคอมเมนต์ Facebook', wide: true,
+      body: `<div class="fb-grid">
+        <div class="fb-main">
+          <ol class="fb-steps" aria-label="ขั้นตอน"></ol>
+          <section class="fb-acct" aria-label="บัญชี"><span class="fb-av" aria-hidden="true"></span><span class="fb-acct-t"><b></b><small></small></span><button type="button" class="btn" data-fb="login"></button></section>
+          <details class="fb-adv" ${store.get('fb-appid', '') ? '' : 'open'}><summary>ตั้งค่าแอป Facebook</summary>
+            <label class="field"><span>Facebook App ID (สร้างฟรีที่ developers.facebook.com → My Apps → Create App)</span><input name="appid" class="input mono" inputmode="numeric" autocomplete="off" placeholder="เช่น 1234567890123456" value="${esc(store.get('fb-appid', '') || '')}"></label>
+            <p class="note">App ID ไม่ใช่รหัสลับ · เพิ่มโดเมนของหน้านี้ (${esc(location.host || 'localhost')}) ใน Facebook Login → Allowed Domains · ใช้แอปเดสก์ท็อปแล้วหน้าต่าง Facebook ไม่ขึ้น ให้วางโทเคนของเพจแทน (ใช้เฉพาะรอบนี้ ไม่บันทึก)</p>
+            <label class="field"><span>หรือวางโทเคนของเพจ</span><span class="fb-tok"><input name="ptoken" class="input mono" type="password" autocomplete="off" placeholder="EAAG…"><button type="button" class="btn" data-fb="token">ใช้โทเคนนี้</button></span></label>
+          </details>
+          <section class="fb-pages" aria-label="เลือกเพจ"><b class="fb-h">เพจที่ไลฟ์</b><div class="fb-plist"></div></section>
+          <section aria-label="ไลฟ์ที่ดึงคอมเมนต์"><b class="fb-h">ดึงคอมเมนต์จาก</b>
+            <div class="fb-mode" role="group" aria-label="แหล่งคอมเมนต์"><button type="button" data-mode="auto">ไลฟ์ที่กำลังออกอากาศของเพจนี้ (อัตโนมัติ)</button><button type="button" data-mode="link">วางลิงก์วิดีโอไลฟ์</button></div>
+            <input name="fbvideo" class="input mono fb-video" placeholder="https://www.facebook.com/…/videos/1234567890" value="${esc(fb.video)}" hidden>
+          </section>
+          <p class="fb-note">WebMix ขอสิทธิ์อ่านอย่างเดียว ไม่โพสต์หรือตอบแทนคุณ · Facebook ไม่ให้แอปอ่านคอมเมนต์ของไลฟ์จากโปรไฟล์ส่วนตัว ใช้ได้กับเพจเท่านั้น · ถอนสิทธิ์ได้ที่ ตั้งค่า Facebook → ธุรกิจที่เชื่อม</p>
+          <p class="fb-err" role="alert" hidden></p>
+        </div>
+        <aside class="fb-side" aria-label="ตัวอย่างคอมเมนต์">
+          <div class="fb-side-h"><b>คอมเมนต์ที่เข้ามา</b><span class="fb-poll"></span></div>
+          <div class="fb-list"></div>
+          <button type="button" class="btn btn-primary fb-go" data-fb="go">เริ่มดึงคอมเมนต์</button>
+        </aside>
+      </div>`,
+      actions: [{ label: 'ตัดการเชื่อม Facebook', value: 'off' }, { label: 'เสร็จ', primary: true, value: 'ok' }],
+      onOpen(modal, close) {
+        modal.classList.add('fb-modal');
+        const f = $('form', modal).elements, err = $('.fb-err', modal);
+        const foot = $('.modal-foot', modal);
+        const fn = document.createElement('span'); fn.className = 'fb-foot-note'; foot.insertBefore(fn, foot.lastElementChild);
+        // ตัดการเชื่อมไม่ปิดหน้าต่าง
+        const ob = foot.firstElementChild, off = ob.cloneNode(true); ob.replaceWith(off);
+        off.addEventListener('click', () => { fbDisconnect(true); paint(); });
+        let busy = '';
+        const showErr = m => { err.textContent = m || ''; err.hidden = !m; };
+        const paint = () => {
+          const [st, text] = chatFeed.status.facebook;
+          const on = st !== 'off', signed = !!fb.user;
+          const step = on ? 2 : signed ? 1 : 0;
+          $('.fb-steps', modal).innerHTML = STEPS.map((n, i) => `<li class="${i < step ? 'is-done' : i === step ? 'is-on' : ''}"><span>${i < step ? '✓' : i + 1}</span>${n}</li>`).join('');
+          $('.fb-av', modal).textContent = signed ? fb.user.name.slice(0, 1) : 'f';
+          $('.fb-acct-t b', modal).textContent = signed ? fb.user.name : 'ยังไม่ได้เข้าสู่ระบบ';
+          $('.fb-acct-t small', modal).textContent = busy === 'login' ? 'กำลังรอหน้าต่าง Facebook…' : signed ? 'เข้าสู่ระบบแล้ว · สิทธิ์อ่านคอมเมนต์ของเพจ' : 'เปิดหน้าต่าง Facebook ให้เข้าสู่ระบบและอนุญาต';
+          const lb = $('[data-fb=login]', modal);
+          lb.textContent = signed ? 'เปลี่ยนบัญชี' : 'เข้าสู่ระบบด้วย Facebook';
+          lb.className = `btn ${signed ? '' : 'btn-fb'}`; lb.disabled = !!busy;
+          $('.fb-plist', modal).innerHTML = signed ? fb.pages.map(p => `<label class="fb-page ${p.id === fb.pageId ? 'is-on' : ''}"><input type="radio" name="fbpage" value="${esc(p.id)}" ${p.id === fb.pageId ? 'checked' : ''}>
+              <span><b>${esc(p.name)}</b><small>${esc(p.meta || '')}</small></span>${p.live ? '<em>กำลังไลฟ์</em>' : ''}</label>`).join('')
+            : '<p class="note">เข้าสู่ระบบก่อน แล้วรายชื่อเพจที่คุณดูแลจะขึ้นที่นี่</p>';
+          $$('.fb-mode [data-mode]', modal).forEach(b => b.classList.toggle('is-on', b.dataset.mode === fb.mode));
+          $('.fb-video', modal).hidden = fb.mode !== 'link';
+          const ms = chatFeed.list.filter(m => m.platform === 'facebook').slice(-8).reverse();
+          $('.fb-list', modal).innerHTML = ms.map(m => `<div class="fb-c"><span class="fb-tag">FB</span><span><b>${esc(m.name)}</b><span>${esc(m.text)}</span></span><small>${esc(fbAgo(m.at))}</small></div>`).join('')
+            || `<p class="note">${on ? 'รอคอมเมนต์แรก…' : 'ยังไม่เชื่อม — คอมเมนต์จะขึ้นที่นี่และในแชท'}</p>`;
+          const poll = $('.fb-poll', modal);
+          poll.textContent = on ? (st === 'error' ? 'ผิดพลาด' : text) : 'ยังไม่เชื่อม';
+          poll.className = `fb-poll is-${st}`;
+          if (st === 'error') showErr(text);
+          const go = $('[data-fb=go]', modal);
+          go.hidden = !signed; go.textContent = on ? 'ดึงใหม่จากเพจที่เลือก' : 'เริ่มดึงคอมเมนต์';
+          off.disabled = !on && !signed;
+          fn.textContent = on ? 'คอมเมนต์ Facebook เข้าแชทพร้อมแพลตฟอร์มอื่นแล้ว' : 'ยังไม่ได้เชื่อม — คอมเมนต์ Facebook จะยังไม่เข้าแชท';
+        };
+        const run = async (what, job) => {
+          busy = what; showErr(''); paint();
+          try { await job(); } catch (e) { showErr(e.message || String(e)); }
+          busy = ''; if (modal.isConnected) paint();
+        };
+        modal.addEventListener('click', e => {
+          const a = e.target.closest('[data-fb]')?.dataset.fb;
+          const m = e.target.closest('[data-mode]')?.dataset.mode;
+          if (m) { fb.mode = m; paint(); if (m === 'link') f.fbvideo.focus(); return; }
+          if (a === 'login') {
+            const appId = f.appid.value.trim();
+            if (!/^\d{5,20}$/.test(appId)) { $('.fb-adv', modal).open = true; f.appid.focus(); showErr('ใส่ Facebook App ID ก่อน (ตัวเลข)'); return; }
+            store.set('fb-appid', appId);
+            if (fb.user) fbDisconnect(true);
+            run('login', () => fbLogin(appId));
+          } else if (a === 'token') {
+            const t = f.ptoken.value.trim();
+            if (!t) { f.ptoken.focus(); return; }
+            f.ptoken.value = '';
+            run('login', () => fbUseUserToken(t));
+          } else if (a === 'go') {
+            if (fb.mode === 'link') {
+              fb.video = f.fbvideo.value.trim();
+              if (!chatLib.facebookVideoId(fb.video)) { f.fbvideo.focus(); showErr('ลิงก์วิดีโอ Facebook ไม่ถูกต้อง — ใช้ลิงก์ที่มี /videos/ ตามด้วยตัวเลข'); return; }
+            }
+            showErr(''); fbConnect(); paint();
+          }
+        });
+        modal.addEventListener('change', e => {
+          if (e.target.name === 'fbpage') { fb.pageId = e.target.value; paint(); }
+        });
+        let sig = '';
+        const tick = () => {
+          if (!modal.isConnected) return;
+          const now = `${chatFeed.list.length}|${JSON.stringify(chatFeed.status.facebook)}`;
+          if (now !== sig) { sig = now; paint(); }
+          setTimeout(tick, 400);
+        };
+        tick();
+      }
+    });
+  }
+  const fbAgo = at => { const s = Math.max(0, Math.round((Date.now() - (at || Date.now())) / 1000)); return s < 60 ? `${s} วิ` : s < 3600 ? `${Math.floor(s / 60)} นาที` : `${Math.floor(s / 3600)} ชม.`; };
   function addChatInput(silent) {
     const n = inputs.filter(i => i.type === 'chat').length + 1;
     const inp = addInput({ type: 'chat', name: n > 1 ? `COMMENTS ${n}` : 'COMMENTS', chat: { style: 'lower' } });
@@ -2796,8 +3074,7 @@
         const list = $('.ct-list', modal), conns = $('.ct-conns', modal), f = $('form', modal).elements;
         const pv = $('.ct-prev canvas', modal), px = pv.getContext('2d');
         const paintConns = () => {
-          conns.innerHTML = ['youtube', 'twitch'].map(k => { const [st, text] = chatFeed.status[k] || ['off', '']; return `<div class="ct-conn is-${st}"><i style="background:${chatLib.PLATFORMS[k].color}"></i><b>${chatLib.PLATFORMS[k].label}</b><span title="${esc(text)}">${esc(st === 'error' ? text : LABEL[st])}</span></div>`; }).join('')
-            + '<div class="ct-conn is-off"><i style="background:#4f86f0"></i><b>Facebook</b><span>ดึงเองไม่ได้ — วางคอมเมนต์ในช่องด้านล่างรายการ</span></div>';
+          conns.innerHTML = ['youtube', 'twitch', 'facebook'].map(k => { const [st, text] = chatFeed.status[k] || ['off', '']; return `<div class="ct-conn is-${st}"><i style="background:${chatLib.PLATFORMS[k].color}"></i><b>${chatLib.PLATFORMS[k].label}</b><span title="${esc(text)}">${esc(st === 'error' ? text : LABEL[st])}</span>${k === 'facebook' ? `<button type="button" class="btn btn-sm" data-ct="fb">${st === 'off' ? 'เชื่อม' : 'จัดการ'}</button>` : ''}</div>`; }).join('');
         };
         const paintList = () => {
           const src = view.paused ? view.frozen : chatFeed.list;
@@ -2842,6 +3119,7 @@
           const act = e.target.closest('[data-ct]')?.dataset.ct;
           if (act === 'pause') { view.paused = !view.paused; view.frozen = view.paused ? chatFeed.list.slice() : null; paintList(); }
           else if (act === 'connect') openChatConnectDialog();
+          else if (act === 'fb') openFacebookDialog();
           else if (act === 'add') addManual();
         });
         // “ซ่อนคอมเมนต์จากจอ” ไม่ปิดหน้าต่าง
@@ -11186,7 +11464,7 @@ onmessage = async e => {
     $$('#seg-cardsize button').forEach(b => { b.classList.toggle('is-active', b.dataset.size === cardSize()); b.addEventListener('click', () => setCardSize(b.dataset.size)); });
 
     // สำหรับดีบัก/ทดสอบอัตโนมัติ
-    window.webmix = { chatFeed, chatAdd, chatShow, chatHide, playlist, dataSources, timerControl, multiview, renderer, gpu, setRenderer: v => { settings.renderer = v; renderer.resolve(); updateStatus(); }, show, ovl, setChannel, toggleInputOverlay, useRecFolder: dir => { recFolder = dir; }, inputs, state, settings, overlays, audio, rec, iso, stinger, replayCapture, slideGo, midi, checkAppUpdate, macros, runMacro, openCamControl, abr: { state: abr, decide: abrDecide, apply: abrApply, tick: abrTick }, openDeskSummary, openDeskPreflight, liveStats, openDryRun, setDryRunSeconds: n => { DRY_RUN_SEC = n; }, disk, diskTick, setDiskFree: b => { disk.fake = b; return diskTick(); }, streamer, wireless, cut, autoTransition, setPreview, tr, ftb, padFire, chanKey, remote: remoteCtl, lufs, layoutSize, renderInputs, renderAlerts, openOutputWindow, setOrient };
+    window.webmix = { chatFeed, chatAdd, chatShow, chatHide, playlist, dataSources, timerControl, multiview, renderer, gpu, setRenderer: v => { settings.renderer = v; renderer.resolve(); updateStatus(); }, show, ovl, setChannel, toggleInputOverlay, useRecFolder: dir => { recFolder = dir; }, inputs, state, settings, overlays, audio, rec, iso, stinger, replayCapture, slideGo, midi, checkAppUpdate, macros, runMacro, openCamControl, abr: { state: abr, decide: abrDecide, apply: abrApply, tick: abrTick }, openDeskSummary, openDeskPreflight, liveStats, openDryRun, openFacebookDialog, fb, setDryRunSeconds: n => { DRY_RUN_SEC = n; }, disk, diskTick, setDiskFree: b => { disk.fake = b; return diskTick(); }, streamer, wireless, cut, autoTransition, setPreview, tr, ftb, padFire, chanKey, remote: remoteCtl, lufs, layoutSize, renderInputs, renderAlerts, openOutputWindow, setOrient };
   }
 
   boot();

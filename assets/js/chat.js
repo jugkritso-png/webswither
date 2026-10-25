@@ -1,4 +1,4 @@
-/* WebMix — คอมเมนต์ผู้ชม: ดึงแชตสดจาก YouTube / Twitch และวาดการ์ดคอมเมนต์บนจอ */
+/* WebMix — คอมเมนต์ผู้ชม: ดึงแชตสดจาก YouTube / Twitch / Facebook (เพจ) และวาดการ์ดคอมเมนต์บนจอ */
 (function (WM) {
   'use strict';
   const { FONT, fitFont, easeOut } = WM;
@@ -6,6 +6,7 @@
   const PLATFORMS = {
     youtube: { label: 'YouTube', color: '#ff0033' },
     twitch: { label: 'Twitch', color: '#9146ff' },
+    facebook: { label: 'Facebook', color: '#4f86f0' },
     manual: { label: 'ผู้ชม', color: '#3b82f6' }
   };
   const CHAT_STYLES = { lower: 'การ์ดล่างซ้าย', center: 'คำถามเด่นกลางจอ', top: 'แถบบนจอ' };
@@ -118,6 +119,64 @@
 
   // ตัดบรรทัดตามคำ — ภาษาไทยไม่มีช่องว่าง จึงใช้ Intl.Segmenter แยกคำ (ถ้ามี)
   const seg = typeof Intl !== 'undefined' && Intl.Segmenter ? new Intl.Segmenter('th', { granularity: 'word' }) : null;
+  // Facebook Graph API ด้วยโทเคนของเพจ (ได้จากการเข้าสู่ระบบ Facebook ในหน้า WebMix — อ่านอย่างเดียว)
+  // video ว่าง = หาไลฟ์ที่กำลังออกอากาศของเพจเอง (ลองใหม่ทุก 20 วินาทีจนกว่าจะเริ่มไลฟ์) · ดึงคอมเมนต์ใหม่ทุก 3 วินาที
+  const FB_GRAPH = 'https://graph.facebook.com/v21.0/';
+  function facebookVideoId(s) {
+    s = String(s || '').trim();
+    if (/^\d{6,}$/.test(s)) return s;
+    const m = /(?:videos\/|v=|video_id=|\/live\/)(\d{6,})/.exec(s) || /fb\.watch\/\w+/.exec(s);
+    return m && m[1] ? m[1] : '';
+  }
+  function connectFacebook({ token, page, video }, on) {
+    let stopped = false;
+    const api = (path, q = {}) => fetch(`${FB_GRAPH}${path}?${new URLSearchParams({ ...q, access_token: token })}`).then(async r => {
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok || body.error) {
+        const er = body.error || {};
+        const e = new Error(er.code === 190 ? 'การเข้าสู่ระบบ Facebook หมดอายุ — เชื่อม Facebook ใหม่'
+          : er.code === 10 || er.code === 200 || /permission/i.test(er.message || '') ? 'ไม่มีสิทธิ์อ่านคอมเมนต์ของเพจนี้ — ต้องเป็นแอดมิน/บรรณาธิการของเพจ และอนุญาตสิทธิ์อ่านคอมเมนต์'
+          : er.code === 4 || er.code === 17 || er.code === 32 ? 'เรียก Facebook ถี่เกินกำหนด — จะลองใหม่อัตโนมัติ'
+          : er.message ? `Facebook: ${er.message}` : `Facebook ตอบกลับ ${r.status}`);
+        e.fatal = er.code === 190 || er.code === 10 || er.code === 200 || r.status === 400 && er.code !== 4 && er.code !== 17;
+        throw e;
+      }
+      return body;
+    });
+    (async () => {
+      if (!token) { on.status('error', 'ยังไม่ได้เข้าสู่ระบบ Facebook'); return; }
+      let id = facebookVideoId(video);
+      if (video && !id) { on.status('error', 'ลิงก์วิดีโอ Facebook ไม่ถูกต้อง'); return; }
+      while (!stopped && !id) {
+        on.status('connecting', 'กำลังหาไลฟ์ที่ออกอากาศของเพจ…');
+        try {
+          const r = await api(`${page}/live_videos`, { broadcast_status: '["LIVE"]', fields: 'id,title,status' });
+          id = r.data && r.data[0] && r.data[0].id || '';
+          if (!id) { on.status('connecting', 'เพจยังไม่ได้ไลฟ์ — จะลองใหม่ทุก 20 วินาที'); await sleep(20000); }
+        } catch (e) { on.status('error', e.message); if (e.fatal) return; await sleep(20000); }
+      }
+      let first = true, wait = 3000;
+      while (!stopped) {
+        try {
+          const r = await api(`${id}/comments`, { order: 'reverse_chronological', filter: 'stream', live_filter: 'no_filter', fields: 'id,from{name},message,created_time', limit: first ? 20 : 50 });
+          if (stopped) return;
+          for (const c of (r.data || []).slice().reverse()) {
+            if (!c.message) continue;
+            on.message({ id: 'fb-' + c.id, platform: 'facebook', name: c.from && c.from.name || 'ผู้ชม Facebook', text: c.message, at: Date.parse(c.created_time) || Date.now() });
+          }
+          first = false; wait = 3000;
+          on.status('live', 'เชื่อมต่อแล้ว · ดึงทุก 3 วินาที');
+        } catch (e) {
+          on.status('error', e.message);
+          if (e.fatal) return;
+          wait = 15000;
+        }
+        await sleep(wait);
+      }
+    })();
+    return { stop() { stopped = true; } };
+  }
+
   function wrapLines(ctx, text, maxW, maxLines) {
     const parts = seg ? Array.from(seg.segment(text), s => s.segment) : text.split(/(\s+)/);
     const lines = [];
@@ -206,5 +265,5 @@
     ctx.restore();
   }
 
-  WM.chat = { PLATFORMS, CHAT_STYLES, youtubeId, connectYouTube, connectTwitch, drawChat, wrapLines };
+  WM.chat = { PLATFORMS, CHAT_STYLES, youtubeId, facebookVideoId, connectYouTube, connectTwitch, connectFacebook, FB_GRAPH, drawChat, wrapLines };
 })(window.WebMix);
