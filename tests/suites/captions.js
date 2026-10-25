@@ -30,7 +30,7 @@ const results = []; const ok = (n, c, x = '') => results.push(`${c ? 'PASS' : 'F
 
   await p.click('[data-action=add-menu]'); await p.click('.menu button:has-text("คำบรรยายสด")');
   await p.waitForSelector('.modal select[name=lang]');
-  ok('dialog defaults to Thai, main mic, 2 lines', await p.inputValue('.modal select[name=lang]') === 'th-TH' && await p.inputValue('.modal select[name=source]') === 'mic' && await p.inputValue('.modal select[name=lines]') === '2');
+  ok('dialog defaults to Thai, main mic, 2 lines', await p.inputValue('.modal select[name=lang]') === 'th-TH' && await p.inputValue('.modal select[name=source]') === 'mic' && await p.getAttribute('.modal input[name=lines]:checked', 'value') === '2');
   await p.click('.modal-foot .btn-primary'); await p.waitForTimeout(300);
   const st = () => p.evaluate(() => { const i = window.webmix.inputs.find(x => x.type === 'captions'); const r = i.capRun || {}; return { on: !!r.on, lines: r.lines || [], interim: r.interim || '', n: window.__sr.length, lang: window.__sr.length ? window.__sr[window.__sr.length - 1].lang : '', track: !!(window.__sr.length && window.__sr[window.__sr.length - 1].track), err: r.error || '' }; });
   let s = await st();

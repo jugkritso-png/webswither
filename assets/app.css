@@ -2164,3 +2164,28 @@ html.is-resizing iframe, html.is-resizing canvas { pointer-events: none; }
 .ct-two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .ct-modal .modal-foot .btn:nth-last-child(2) { margin-left: auto; }
 @media (max-width: 900px) { .ct-wrap { grid-template-columns: 1fr; } .ct-manual { grid-template-columns: 1fr; } }
+
+/* ---------- คำบรรยายสด */
+.modal.cp-modal { width: min(1240px, calc(100vw - 24px)); max-width: none; }
+.cp-wrap { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: 14px; align-items: start; }
+.cp-left, .cp-right { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.cp-right .field { margin: 0; }
+.cp-prev canvas { display: block; width: 100%; aspect-ratio: 16 / 9; border-radius: 10px; background: #23324a; }
+.cp-card { display: flex; flex-direction: column; gap: 10px; padding: 14px; border-radius: 12px; background: #171b22; border: 1px solid #222935; }
+.cp-h { display: flex; align-items: center; gap: 8px; } .cp-h h3 { margin: 0; font-size: 14px; }
+.cp-h > span { margin-left: auto; font-size: 12px; color: var(--muted); }
+.cp-on { padding: 2px 8px; border-radius: 999px; background: #14532d; color: #bbf7d0; font-size: 11px; font-weight: 600; }
+.cp-off { padding: 2px 8px; border-radius: 999px; background: #1b2029; color: var(--muted); font-size: 11px; }
+.cp-log { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: #c9d1db; }
+.cp-log .mono { color: #6b7586; margin-right: 6px; }
+.cp-interim { color: var(--muted); font-style: italic; }
+.cp-two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.cp-seg { display: flex; gap: 6px; }
+.cp-seg label { flex: 1; cursor: pointer; }
+.cp-seg input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.cp-seg span { display: block; padding: 8px 0; text-align: center; border-radius: 8px; border: 1px solid #3a4250; background: #12161c; font-size: 13px; }
+.cp-seg input:checked + span { border-color: #f5a524; background: rgba(245, 165, 36, .15); color: #fff; font-weight: 600; }
+.cp-seg input:focus-visible + span { outline: 2px solid #7fa6ff; }
+.cp-btns { display: flex; gap: 6px; flex-wrap: wrap; }
+.cp-modal .modal-foot .btn:nth-last-child(2) { margin-left: auto; }
+@media (max-width: 900px) { .cp-wrap { grid-template-columns: 1fr; } }

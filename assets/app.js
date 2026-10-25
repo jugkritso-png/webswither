@@ -2341,36 +2341,104 @@
       return `${i + 1}\n${ts(start)} --> ${ts(Math.max(end, start + 800))}\n${e.text}\n`;
     }).join('\n');
   }
+  // ปุ่ม “แสดงบน Program / ซ่อนจาก Program” ในหน้าต่างแก้ไข — ใช้ช่อง Overlay ว่าง ไม่ปิดหน้าต่าง
+  const onAirLabel = inp => ovl.some(c => c.inputId === inp.id && c.on) ? 'ซ่อนจาก Program' : 'แสดงบน Program';
+  function bindOnAirButton(modal, inp) {
+    const btn = [...$$('.modal-foot .btn', modal)].find(b => b.textContent === 'แสดงบน Program' || b.textContent === 'ซ่อนจาก Program');
+    if (!btn) return;
+    const clone = btn.cloneNode(true);
+    btn.replaceWith(clone);
+    clone.addEventListener('click', () => {
+      const on = ovl.findIndex(c => c.inputId === inp.id && c.on);
+      if (on >= 0) setChannel(on, false);
+      else {
+        const free = ovl.findIndex(o => !o.on && (!o.inputId || o.inputId === inp.id));
+        audio.ensure();
+        toggleInputOverlay(inp.id, free >= 0 ? free : 0);
+      }
+      clone.textContent = onAirLabel(inp);
+    });
+  }
+
+  // คำบรรยายสด: ตัวอย่างบนภาพ Program · ข้อความล่าสุดพร้อมเวลา · ฟังจาก · การแสดงผล · ไฟล์ .srt / .txt
   async function openCaptionsDialog(inp, fresh) {
     const before = { ...inp.cap }, c = inp.cap;
     const chans = audioChanOptions();
-    const log = inp.capRun?.log || [];
+    const log = () => inp.capRun?.log || [];
+    const t0 = () => log()[0]?.at || Date.now();
+    const stamp = () => new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
     const r = await dialog({
-      title: 'คำบรรยายสด (Live Captions)',
-      body: `
-        ${SpeechRec ? '' : '<p class="note warn">เบราว์เซอร์/แอปนี้ไม่มีระบบแปลงเสียงเป็นข้อความ — เปิดหน้าเว็บ WebMix ใน Chrome, Edge หรือ Safari</p>'}
-        <label class="field"><span>ชื่อแหล่งภาพ</span><input name="name" class="input" maxlength="40" value="${esc(inp.name)}"></label>
-        <div class="field-row">
-          <label class="field"><span>ภาษาที่พูด</span><select name="lang" class="select">${Object.entries(CAP_LANGS).map(([k, l]) => `<option value="${k}" ${k === c.lang ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
-          <label class="field"><span>ฟังเสียงจาก</span><select name="source" class="select">
-            <option value="mic">ไมค์หลักของเครื่อง</option><option value="master" ${c.source === 'master' ? 'selected' : ''}>Master (เสียงรวมที่ออกอากาศ)</option>
-            ${chans.map(([k, n]) => `<option value="${esc(k)}" ${k === c.source ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select></label>
+      title: 'คำบรรยายสด',
+      wide: true,
+      body: `<div class="cp-wrap">
+        <div class="cp-left">
+          ${SpeechRec ? '' : '<p class="note warn">เบราว์เซอร์/แอปนี้ไม่มีระบบแปลงเสียงเป็นข้อความ — เปิดหน้าเว็บ WebMix ใน Chrome, Edge หรือ Safari</p>'}
+          <div class="cp-prev"><canvas width="960" height="540" aria-label="ตัวอย่างคำบรรยายบนภาพ Program"></canvas></div>
+          <section class="cp-card"><div class="cp-h"><h3>ข้อความล่าสุด</h3><span class="cp-state"></span></div><div class="cp-log"></div></section>
         </div>
-        <div class="field-row">
-          <label class="field"><span>ขนาดตัวอักษร</span><select name="size" class="select">${Object.entries(CAP_SIZES).map(([k, [l]]) => `<option value="${k}" ${k === c.size ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
-          <label class="field"><span>ตำแหน่ง</span><select name="pos" class="select">${Object.entries(CAP_POS).map(([k, l]) => `<option value="${k}" ${k === c.pos ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
-          <label class="field"><span>จำนวนบรรทัด</span><select name="lines" class="select">${[1, 2, 3].map(n => `<option value="${n}" ${n === c.lines ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
-          <label class="field"><span>หายไปเมื่อเงียบ</span><select name="clearSec" class="select">${[3, 5, 8, 15].map(n => `<option value="${n}" ${n === c.clearSec ? 'selected' : ''}>${n} วินาที</option>`).join('')}</select></label>
+        <div class="cp-right">
+          <section class="cp-card"><div class="cp-h"><h3>ฟังจาก</h3></div>
+            <label class="field"><span>ชื่อแหล่งภาพ</span><input name="name" class="input" maxlength="40" value="${esc(inp.name)}"></label>
+            <div class="cp-two">
+              <label class="field"><span>ภาษาที่พูด</span><select name="lang" class="select">${Object.entries(CAP_LANGS).map(([k, l]) => `<option value="${k}" ${k === c.lang ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+              <label class="field"><span>แหล่งเสียง</span><select name="source" class="select">
+                <option value="mic">ไมค์หลักของเครื่อง</option><option value="master" ${c.source === 'master' ? 'selected' : ''}>Master (เสียงรวมที่ออกอากาศ)</option>
+                ${chans.map(([k, n]) => `<option value="${esc(k)}" ${k === c.source ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select></label>
+            </div></section>
+          <section class="cp-card"><div class="cp-h"><h3>การแสดงผล</h3></div>
+            <div class="cp-seg" role="radiogroup" aria-label="จำนวนบรรทัด">${[1, 2, 3].map(n => `<label><input type="radio" name="lines" value="${n}" ${n === c.lines ? 'checked' : ''}><span>${n} บรรทัด</span></label>`).join('')}</div>
+            <div class="cp-two">
+              <label class="field"><span>ขนาดตัวอักษร</span><select name="size" class="select">${Object.entries(CAP_SIZES).map(([k, [l]]) => `<option value="${k}" ${k === c.size ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+              <label class="field"><span>ตำแหน่ง</span><select name="pos" class="select">${Object.entries(CAP_POS).map(([k, l]) => `<option value="${k}" ${k === c.pos ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+            </div>
+            <label class="field"><span>หายไปเมื่อเงียบ</span><select name="clearSec" class="select">${[3, 5, 8, 15].map(n => `<option value="${n}" ${n === c.clearSec ? 'selected' : ''}>${n} วินาที</option>`).join('')}</select></label></section>
+          <section class="cp-card"><div class="cp-h"><h3>ไฟล์คำบรรยาย</h3><span class="cp-count"></span></div>
+            <div class="cp-btns"><button type="button" class="btn btn-sm cap-srt">ดาวน์โหลด .srt</button><button type="button" class="btn btn-sm cap-txt">ดาวน์โหลด .txt</button><button type="button" class="btn btn-sm cap-clear">ล้าง</button></div>
+            <p class="note">เก็บทุกประโยคที่ฟังได้ เอาไปใส่คลิปที่บันทึกไว้ได้ · ต้องต่ออินเทอร์เน็ต · ความแม่นยำขึ้นกับไมค์และเสียงรบกวน</p></section>
         </div>
-        <p class="note">กด ▶ บนการ์ดเพื่อเริ่มฟัง · ใช้เต็มจอ หรือกด 1–8 ใต้การ์ดเพื่อซ้อนบน Program (พื้นโปร่งใส) · เสียงถูกส่งไปแปลงที่บริการของเบราว์เซอร์ (ต้องต่ออินเทอร์เน็ต) ·
-          ช่องเสียงในมิกเซอร์ใช้ได้กับ Chrome / Edge รุ่นใหม่ — รุ่นเก่าฟังจากไมค์หลักแทน · ความแม่นยำขึ้นกับไมค์และเสียงรบกวน ไม่ควรใช้แทนล่ามในงานทางการ</p>
-        ${log.length ? `<p class="note">บันทึกข้อความไว้ ${log.length} ประโยค — <button type="button" class="btn btn-sm cap-srt">ดาวน์โหลด .srt</button> <button type="button" class="btn btn-sm cap-txt">ดาวน์โหลด .txt</button> <button type="button" class="btn btn-sm cap-clear">ล้าง</button></p>` : ''}`,
-      actions: [{ label: 'ยกเลิก' }, { label: fresh ? 'บันทึกแล้วเริ่มฟัง' : 'บันทึก', primary: true, value: 'save' }],
+      </div>`,
+      actions: [{ label: inp.capRun?.on ? 'หยุดฟัง' : 'เริ่มฟัง', value: 'run' }, { label: onAirLabel(inp), value: 'pgm', danger: true }, { label: 'ยกเลิก' }, { label: fresh ? 'บันทึกแล้วเริ่มฟัง' : 'บันทึก', primary: true, value: 'save' }],
       onOpen(modal) {
-        const stamp = () => new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
-        $('.cap-srt', modal)?.addEventListener('click', () => downloadBlob(new Blob([captionSrt(log)], { type: 'text/plain' }), `webmix-captions-${stamp()}.srt`));
-        $('.cap-txt', modal)?.addEventListener('click', () => downloadBlob(new Blob([log.map(e => `[${new Date(e.at).toLocaleTimeString('th-TH')}] ${e.text}`).join('\n')], { type: 'text/plain' }), `webmix-captions-${stamp()}.txt`));
-        $('.cap-clear', modal)?.addEventListener('click', e => { log.length = 0; e.target.closest('p').remove(); });
+        modal.classList.add('cp-modal');
+        const f = $('form', modal).elements;
+        const live = () => sanitizeCap({ lang: f.lang.value, source: f.source.value, size: f.size.value, pos: f.pos.value, lines: f.lines.value, clearSec: f.clearSec.value });
+        // เปลี่ยนรูปแบบแล้วเห็นผลทันที (ยกเลิก = คืนค่า)
+        modal.addEventListener('change', e => { if (['size', 'pos', 'lines', 'clearSec'].includes(e.target.name)) Object.assign(inp.cap, { size: live().size, pos: live().pos, lines: live().lines, clearSec: live().clearSec }); });
+        const pc = $('.cp-prev canvas', modal).getContext('2d');
+        let sig = '';
+        const tick = () => {
+          if (!modal.isConnected) return;
+          pc.fillStyle = '#23324a'; pc.fillRect(0, 0, 960, 540);
+          try { const src = $('#pgm-canvas'); if (src) pc.drawImage(src, 0, 0, 960, 540); } catch (e) {}
+          if (!onOverlay(inp.id) && inp.id !== state.programId) {
+            const demo = !inp.capRun?.lines?.length && !inp.capRun?.interim;
+            drawCaptions(pc, 960, 540, demo ? { ...inp, capRun: { lines: ['ตัวอย่างคำบรรยายสดบนจอ', 'แสดงตามขนาดและตำแหน่งที่เลือก'], interim: '', lastAt: performance.now() } } : inp);
+          }
+          const L = log(), run = inp.capRun?.on;
+          const now = `${L.length}|${run}|${inp.capRun?.interim || ''}`;
+          if (now !== sig) {
+            sig = now;
+            $('.cp-state', modal).innerHTML = run ? '<span class="cp-on">กำลังฟัง</span>' : '<span class="cp-off">หยุดอยู่</span>';
+            $('.cp-count', modal).textContent = L.length ? `${L.length} ประโยค` : '';
+            const t = t0();
+            $('.cp-log', modal).innerHTML = (L.slice(-6).map(e => `<div><span class="mono">${fmtDuration(e.at - t)}</span> ${esc(e.text)}</div>`).join('')
+              + (inp.capRun?.interim ? `<div class="cp-interim">${esc(inp.capRun.interim)}…</div>` : '')) || '<p class="note">กด “เริ่มฟัง” แล้วพูดเพื่อทดลอง</p>';
+          }
+          setTimeout(tick, 150);
+        };
+        tick();
+        $('.cap-srt', modal).addEventListener('click', () => { if (!log().length) return toast('ยังไม่มีข้อความ', 'warn'); downloadBlob(new Blob([captionSrt(log())], { type: 'text/plain' }), `webmix-captions-${stamp()}.srt`); });
+        $('.cap-txt', modal).addEventListener('click', () => { if (!log().length) return toast('ยังไม่มีข้อความ', 'warn'); downloadBlob(new Blob([log().map(e => `[${new Date(e.at).toLocaleTimeString('th-TH')}] ${e.text}`).join('\n')], { type: 'text/plain' }), `webmix-captions-${stamp()}.txt`); });
+        $('.cap-clear', modal).addEventListener('click', () => { log().length = 0; sig = ''; });
+        bindOnAirButton(modal, inp);
+        const rb = [...$$('.modal-foot .btn', modal)].find(b => b.textContent === 'เริ่มฟัง' || b.textContent === 'หยุดฟัง');
+        const rc = rb.cloneNode(true); rb.replaceWith(rc);
+        rc.addEventListener('click', () => {
+          if (inp.capRun?.on) captionStop(inp);
+          else { Object.assign(inp.cap, live()); captionStart(inp); }
+          rc.textContent = inp.capRun?.on ? 'หยุดฟัง' : 'เริ่มฟัง';
+          renderInputs();
+        });
       }
     });
     if (r?.value !== 'save') { inp.cap = before; return; }
@@ -2380,7 +2448,7 @@
     // ภาษา/ช่องเสียงเปลี่ยน → เริ่มฟังใหม่ด้วยค่าใหม่
     const restart = inp.capRun?.on && (before.lang !== inp.cap.lang || before.source !== inp.cap.source);
     if (restart) captionStop(inp);
-    if (fresh || restart) captionStart(inp);
+    if ((fresh && !inp.capRun?.on) || restart) captionStart(inp);
     renderInputs(); refreshSourceSelects();
   }
 
