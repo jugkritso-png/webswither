@@ -6950,19 +6950,25 @@
       if (!REMOTE_ROLES[role]) role = 'switcher';
       const r = await dialog({
         title: 'รีโมต / ทีมงาน',
+        wide: true,
         body: `
           <p class="note">ทีมงานแต่ละตำแหน่งใช้แท็บเล็ต/มือถือ/คอมของตัวเอง: เลือกตำแหน่ง → สแกน QR → ใส่<b>รหัสจับคู่</b>ด้านล่าง · เครื่องนี้เป็นเครื่องหลัก (ประมวลผล + สตรีม) เปิดค้างไว้ · รีโมตเริ่ม/หยุดไลฟ์ไม่ได้</p>
-          <div class="rt-pin"><span>รหัสจับคู่</span><b class="mono" id="remote-pin">${this.pin().replace(/(\d{3})/, '$1 ')}</b></div>
-          <div class="rt-roles" role="tablist">${Object.entries(REMOTE_ROLES).map(([k, v]) => `<button type="button" data-role="${k}" class="${k === role ? 'is-on' : ''}"><b>${esc(v.label)}</b><small>${esc(v.desc)}</small></button>`).join('')}</div>
-          <div class="rt-qr-row"><div class="qr-box" id="remote-qr"></div>
-            <label class="field"><span>ลิงก์สำหรับตำแหน่ง <b id="remote-role-name"></b></span><input id="remote-link" class="input mono" readonly></label></div>
-          <h4 class="rt-h">ทีมงานที่จับคู่แล้ว</h4>
+          <div class="rt-pin"><span>รหัสจับคู่</span><b class="mono" id="remote-pin">${this.pin().replace(/(\d{3})/, '$1 ')}</b><small>ทีมงานใส่รหัสนี้ครั้งแรกครั้งเดียว</small></div>
+          <div class="rt-steps">
+            <section><h4 class="rt-h">1 · เลือกตำแหน่ง</h4>
+              <div class="rt-roles" role="tablist">${Object.entries(REMOTE_ROLES).map(([k, v]) => `<button type="button" data-role="${k}" class="${k === role ? 'is-on' : ''}"><b>${esc(v.label)}</b><small>${esc(v.desc)}</small></button>`).join('')}</div></section>
+            <section><h4 class="rt-h">2 · สแกน QR แล้วใส่รหัสจับคู่</h4>
+              <div class="rt-qr-row"><div class="qr-box" id="remote-qr"></div>
+                <label class="field"><span>ลิงก์สำหรับตำแหน่ง <b id="remote-role-name"></b> (ไม่มีรหัสลับในลิงก์)</span><input id="remote-link" class="input mono" readonly></label></div></section>
+          </div>
+          <h4 class="rt-h">ทีมงานที่จับคู่แล้ว <small id="remote-online"></small></h4>
           <div id="remote-team" class="rt-team"></div>
           <div class="rt-msgs" id="remote-msgs"></div>
           <div class="rt-send"><input id="remote-msg" class="input" maxlength="200" placeholder="ส่งข้อความถึงทุกตำแหน่ง เช่น “เตรียมตัด กล้อง 2”"><button type="button" class="btn" id="remote-msg-send">ส่ง</button></div>
           <label class="field rt-talkvol"><span>ทอล์กแบ็ก: ระดับเสียงทีมที่เครื่องนี้ (ไม่เข้า Program — ใช้หูฟังกันเสียงย้อนเข้าไมค์รายการ) · พูดกลับ: กดค้างปุ่ม 🎙 ด้านบน</span><input type="range" id="remote-talkvol" min="0" max="2" step="0.05" value="${+store.get('talkVol', 1)}"></label>`,
         actions: [{ label: 'เปลี่ยนรหัสจับคู่', value: 'repin' }, { label: 'คัดลอกลิงก์', value: 'copy' }, { label: 'ปิด', primary: true }],
         onOpen: modal => {
+          modal.classList.add('rt-modal');
           const showRole = k => {
             role = k; store.set('remoteRole', k);
             $$('.rt-roles button', modal).forEach(b => b.classList.toggle('is-on', b.dataset.role === k));
@@ -6977,6 +6983,7 @@
           this.renderList = () => {
             if (!modal.isConnected) { this.renderList = null; return; }
             const team = this.team();
+            $('#remote-online', modal).textContent = team.length ? `ออนไลน์ ${team.filter(m => this.online(m)).length} จาก ${team.length}` : '';
             $('#remote-team', modal).innerHTML = team.length ? team.map((m, i) => `<div class="rt-mem ${this.online(m) ? 'on' : ''}" data-i="${i}">
               <span class="rt-dot"></span><b>${esc(m.name)}</b>
               <select class="select" data-f="role" aria-label="ตำแหน่ง">${Object.entries(REMOTE_ROLES).map(([k, v]) => `<option value="${k}" ${k === m.role ? 'selected' : ''}>${esc(v.label)}</option>`).join('')}</select>

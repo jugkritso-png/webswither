@@ -2736,3 +2736,17 @@ html[data-orient=v] .safe-area { inset: 5% auto auto 50%; height: 90%; aspect-ra
 .caller:not(.guest-mode) .caller-title { padding: 5px 10px; border-radius: 999px; background: rgba(0,0,0,.55); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .caller:not(.guest-mode) .guest-bubble { top: 110px; background: rgba(20,83,45,.92); border-color: #2EA36B; }
 .guest-bubble b { color: #9FE3BF; margin-right: 4px; }
+
+/* ---- รีโมต / ทีมงาน (design 19) */
+.modal.rt-modal.wide { width: min(1100px, calc(100vw - 24px)); max-width: none; }
+.rt-pin small { color: var(--muted); font-size: 12px; margin-left: auto; }
+.rt-steps { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 18px; margin: 10px 0; }
+.rt-steps section { padding: 14px; border-radius: 12px; background: rgba(127,127,127,.05); border: 1px solid var(--line); min-width: 0; }
+.rt-steps .rt-h { margin-top: 0; }
+.rt-steps .rt-roles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.rt-steps .rt-qr-row { flex-direction: column; align-items: stretch; }
+.rt-steps .qr-box { align-self: center; }
+.rt-h small { color: var(--muted); font-weight: 400; margin-left: 8px; }
+@media (max-width: 820px) { .rt-steps { grid-template-columns: 1fr; } }
+.modal.rt-modal .rt-team { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 8px; }
+.modal.rt-modal .rt-mem { padding: 8px 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel-2); }
