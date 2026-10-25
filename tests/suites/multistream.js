@@ -62,7 +62,7 @@ async function setup(ctx) {
   ok('auto-disconnect after last stop', (await p.textContent('#btn-stream')).trim() === 'STREAM' && (await p.textContent('#tally-lamp')).includes('OFF AIR') && (await rowText(0)).includes('พร้อม'), (await p.textContent('#btn-stream')).trim());
   // start all (ticked #1 and #2) then stop all
   const l1 = listen(1935, 'k1', 'o1b'), l2 = listen(1936, 'k2', 'o2b'); await p.waitForTimeout(800);
-  await p.click('.dest-start-all'); await p.waitForTimeout(7000);
+  await p.click('.dest-start-all'); await p.click('.pf-desk [data-cd="0"]'); await p.click('.pf-desk [data-pf=go]'); await p.waitForTimeout(7000);
   ok('start all → ticked ones live', (await p.textContent('#btn-stream')).includes('ON AIR 2/2') && (await rowText(2)).includes('พร้อม'), (await p.textContent('#btn-stream')).trim());
   await p.click('.dest-stop-all'); await p.waitForSelector('.modal-text:has-text("ทุกปลายทาง")');
   await p.keyboard.press('Escape'); await p.waitForTimeout(200);

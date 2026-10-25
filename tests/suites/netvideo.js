@@ -28,7 +28,7 @@ const results = []; const ok = (n, c, x = '') => results.push(`${c ? 'PASS' : 'F
   await p.click('[data-action=stream]'); await p.waitForSelector('.dest-live-row');
   const rowText = async n => (await p.locator('.dest-live-row').nth(n).textContent()).replace(/\s+/g, ' ').trim();
   ok('live panel labels the LAN outputs', (await rowText(0)).includes('NDI WebMix Program') && (await rowText(1)).includes('OMT WebMix OMT'), `${await rowText(0)} | ${await rowText(1)}`);
-  await p.click('.dest-start-all'); await p.waitForTimeout(7000);
+  await p.click('.dest-start-all'); await p.click('.pf-desk [data-cd="0"]'); await p.click('.pf-desk [data-pf=go]'); await p.waitForTimeout(7000);
   const t0 = await rowText(0);
 
   if (!RUST) {

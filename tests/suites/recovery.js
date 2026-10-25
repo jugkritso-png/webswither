@@ -45,7 +45,7 @@ const dur = f => parseFloat((spawnSync('ffprobe', ['-v', 'error', '-show_entries
     s.destinations.splice(0, s.destinations.length, { id: 'r1', platform: 'custom', server: 'rtmp://127.0.0.1:1995/live', key: 'resume', passphrase: '', latency: 500, enabled: true, orient: 'h' });
     window.webmix.show.autosave(true); });
   await p.evaluate(() => { localStorage.setItem('webmix:settings', JSON.stringify(window.webmix.settings)); });
-  await p.click('#btn-stream'); await p.click('.dest-start-all');
+  await p.click('#btn-stream'); await p.click('.dest-start-all'); await p.click('.pf-desk [data-cd="0"]'); await p.click('.pf-desk [data-pf=go]');
   let live = false;
   for (let i = 0; i < 40 && !live; i++) { await p.waitForTimeout(500); live = await p.evaluate(() => window.webmix.streamer.dests.get('r1')?.state === 'live'); }
   ok('stream goes live', live);

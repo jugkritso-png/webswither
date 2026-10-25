@@ -42,7 +42,7 @@ const results = []; const ok = (n, c, x = '') => results.push(`${c ? 'PASS' : 'F
   await p.click('[data-action=stream]'); await p.waitForSelector('.dest-live-row');
   const rowText = async n => (await p.locator('.dest-live-row').nth(n).textContent()).replace(/\s+/g, ' ').trim();
   ok('panel shows SRT label + masked details', (await rowText(0)).includes('SRT 127.0.0.1') && (await rowText(0)).includes('200 ms') && !(await rowText(0)).includes('p@ss'), await rowText(0));
-  await p.click('.dest-start-all'); await p.waitForTimeout(9000);
+  await p.click('.dest-start-all'); await p.click('.pf-desk [data-cd="0"]'); await p.click('.pf-desk [data-pf=go]'); await p.waitForTimeout(9000);
   ok('SRT encrypted live', (await rowText(0)).includes('LIVE'), await rowText(0));
   ok('RTMP live alongside', (await rowText(1)).includes('LIVE'), await rowText(1));
   ok('wrong passphrase → error', /หลุด|กำลังเชื่อมต่อ/.test(await rowText(2)), await rowText(2));

@@ -18,7 +18,7 @@ const listen = (port, key, out) => spawn('ffmpeg', ['-loglevel', 'error', '-list
     destinations: [{ id: 'a', platform: 'custom', server: 'rtmp://127.0.0.1:1935/live', key: 'k1', enabled: true }] })); });
   await p.reload(); await p.waitForTimeout(1500);
   const btn = async () => (await p.textContent('#btn-stream')).trim();
-  await p.click('[data-action=stream]'); await p.click('.dest-start-all'); await p.keyboard.press('Escape');
+  await p.click('[data-action=stream]'); await p.click('.dest-start-all'); await p.click('.pf-desk [data-cd="0"]'); await p.click('.pf-desk [data-pf=go]'); await p.keyboard.press('Escape');
   await p.waitForTimeout(7000);
   ok('live before outage', (await btn()).includes('ON AIR 1/1'), await btn());
   const t0 = await p.textContent('#onair-timer');

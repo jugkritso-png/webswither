@@ -43,7 +43,7 @@ const results = []; const ok = (n, c, x = '') => results.push(`${c ? 'PASS' : 'F
   // สตรีม: ปลายทาง 16:9 ปกติ ได้ภาพแนวตั้งตามโหมด
   await p.evaluate(() => { const s = window.webmix.settings; s.gateway = 'ws://127.0.0.1:8089/?token=abc';
     s.destinations.splice(0, s.destinations.length, { id: 'v', platform: 'custom', server: 'rtmp://127.0.0.1:1995/live', key: 'v', passphrase: '', latency: 500, enabled: true, orient: 'h' }); });
-  await p.click('#btn-stream'); await p.click('.dest-start-all');
+  await p.click('#btn-stream'); await p.click('.dest-start-all'); await p.click('.pf-desk [data-cd="0"]'); await p.click('.pf-desk [data-pf=go]');
   let live = false;
   for (let i = 0; i < 40 && !live; i++) { await p.waitForTimeout(500); live = await p.evaluate(() => [...window.webmix.streamer.dests.values()].some(d => d.state === 'live')); }
   ok('streams live in 9:16', live);

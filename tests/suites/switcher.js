@@ -145,7 +145,7 @@ const px = (page, sel, x, y) => page.evaluate(([sel, x, y]) => { const c = docum
   await p.click('.modal-foot .btn-primary'); await p.waitForTimeout(200);
   await p.locator('.modal-backdrop').first().waitFor({ state: 'detached' }).catch(() => {});
   if (await p.locator('.modal-backdrop').count()) await p.keyboard.press('Escape');
-  await p.click('[data-action=stream]'); await p.click('.dest-start-all'); await p.keyboard.press('Escape'); await p.waitForTimeout(7000);
+  await p.click('[data-action=stream]'); await p.click('.dest-start-all'); await p.click('.pf-desk [data-cd="0"]'); await p.click('.pf-desk [data-pf=go]'); await p.keyboard.press('Escape'); await p.waitForTimeout(7000);
   ok('stream live', (await p.textContent('#btn-stream')).includes('ON AIR'), await p.textContent('#st-stream'));
   await p.click('[data-action=stream]'); await p.click('.dest-stop-all'); await p.locator('.modal-foot .btn-danger').last().click(); await p.keyboard.press('Escape'); await p.waitForTimeout(800);
   ok('stream stopped', (await p.textContent('#btn-stream')).includes('STREAM'));

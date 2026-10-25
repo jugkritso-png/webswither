@@ -22,7 +22,7 @@ const results = []; const ok = (n, c, x = '') => results.push(`${c ? 'PASS' : 'F
   await p.evaluate(() => { const s = window.webmix.settings; s.gateway = 'ws://127.0.0.1:8089/?token=abc';
     const d = (id, port, orient) => ({ id, platform: 'custom', server: `rtmp://127.0.0.1:${port}/live`, key: id, passphrase: '', latency: 500, enabled: true, orient });
     s.destinations.splice(0, s.destinations.length, d('h', 1991, 'h'), d('vc', 1992, 'vcrop'), d('vf', 1993, 'vfit')); });
-  await p.click('#btn-stream'); await p.click('.dest-start-all');
+  await p.click('#btn-stream'); await p.click('.dest-start-all'); await p.click('.pf-desk [data-cd="0"]'); await p.click('.pf-desk [data-pf=go]');
   let live = 0;
   for (let i = 0; i < 60 && live < 3; i++) { await p.waitForTimeout(500); live = await p.evaluate(() => [...window.webmix.streamer.dests.values()].filter(d => d.state === 'live').length); }
   ok('horizontal + two vertical destinations go live', live === 3, `${live}/3`);

@@ -42,7 +42,7 @@ const results = []; const ok = (n, c, x = '') => results.push(`${c ? 'PASS' : 'F
   await p.evaluate(() => { const s = window.webmix.settings; s.isoRec = false; s.autoRec = true; s.gateway = 'ws://127.0.0.1:8089/?token=abc';
     s.destinations.splice(0, s.destinations.length, { id: 'bk', platform: 'custom', server: 'rtmp://127.0.0.1:1981/live', key: 'bk', passphrase: '', latency: 500, enabled: true }); });
   await p.waitForTimeout(400);
-  await p.click('#btn-stream'); await p.click('.dest-start-all');
+  await p.click('#btn-stream'); await p.click('.dest-start-all'); await p.click('.pf-desk [data-cd="0"]'); await p.click('.pf-desk [data-pf=go]');
   let live = false;
   for (let i = 0; i < 40 && !live; i++) { await p.waitForTimeout(400); live = await p.evaluate(() => window.webmix.streamer.dests.get('bk')?.state === 'live'); }
   ok('stream goes live', live);
@@ -59,7 +59,7 @@ const results = []; const ok = (n, c, x = '') => results.push(`${c ? 'PASS' : 'F
   await p.click('#btn-rec'); await p.waitForTimeout(800);
   const rx2 = listenRtmp(1982, 'bk2', `${S}/backup-live2.flv`);
   await p.evaluate(() => { const d = window.webmix.settings.destinations[0]; d.server = 'rtmp://127.0.0.1:1982/live'; d.key = 'bk2'; });
-  await p.click('#btn-stream'); await p.click('.dest-start-all');
+  await p.click('#btn-stream'); await p.click('.dest-start-all'); await p.click('.pf-desk [data-cd="0"]'); await p.click('.pf-desk [data-pf=go]');
   live = false;
   for (let i = 0; i < 40 && !live; i++) { await p.waitForTimeout(400); live = await p.evaluate(() => window.webmix.streamer.dests.get('bk')?.state === 'live'); }
   await p.click('.dest-stop-all'); await p.click('.modal-foot .btn-danger >> nth=-1'); await p.waitForTimeout(1500);

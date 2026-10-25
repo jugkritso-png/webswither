@@ -63,7 +63,7 @@ const results = []; const ok = (n, c, x = '') => results.push(`${c ? 'PASS' : 'F
   const rx = listenRtmp(1994, 'slow', `${S}/abr.flv`);
   await p.evaluate(() => { const s = window.webmix.settings; s.gateway = 'ws://127.0.0.1:8089/?token=abc'; s.videoKbps = 8000;
     s.destinations.splice(0, s.destinations.length, { id: 'slow', platform: 'custom', server: 'rtmp://127.0.0.1:1994/live', key: 'slow', passphrase: '', latency: 500, enabled: true, orient: 'h' }); });
-  await p.click('#btn-stream'); await p.click('.dest-start-all');
+  await p.click('#btn-stream'); await p.click('.dest-start-all'); await p.click('.pf-desk [data-cd="0"]'); await p.click('.pf-desk [data-pf=go]');
   let live = false;
   for (let i = 0; i < 60 && !live; i++) { await p.waitForTimeout(500); live = await p.evaluate(() => window.webmix.streamer.dests.get('slow')?.state === 'live'); }
   ok('stream goes live at 8000 kbps', live && await p.evaluate(() => /vb=8000/.test(window.webmix.streamer.ws.url)));

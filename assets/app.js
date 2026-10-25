@@ -8019,7 +8019,7 @@ onmessage = async e => {
     autoRecStop();
     // ทดสอบปลายทาง: ไม่แสดงสรุป/แจ้งเตือน — ผลไปแสดงที่ปุ่มทดสอบแทน
     if (streamer.testing) { liveStats.end(); streamer.lastError = byUser ? '' : reason || ''; return; }
-    if (wasLive && liveStats.session) { const sess = liveStats.end(); if (isPhoneUI()) { closeLiveDialog?.(); openSummary(sess, byUser ? '' : reason); } }
+    if (wasLive && liveStats.session) { const sess = liveStats.end(); if (isPhoneUI()) { closeLiveDialog?.(); openSummary(sess, byUser ? '' : reason); } else if (sess.duration >= 60000) { closeLiveDialog?.(); openDeskSummary(sess, byUser ? '' : reason); } }
     if (byUser) { if (wasLive && !isPhoneUI()) toast('หยุดสตรีมแล้ว'); }
     else toast((wasLive ? 'การสตรีมหยุดลง: ' : 'เชื่อมต่อ Stream Gateway ไม่ได้: ') + (reason || 'ตรวจสอบว่า Gateway ทำงานอยู่และ URL ถูกต้อง'), 'error', 7000);
   }
@@ -8285,7 +8285,9 @@ onmessage = async e => {
           if (e.target.closest('.dest-start-all')) {
             const list = settings.destinations.filter(d => d.enabled);
             if (!list.length) { toast('ยังไม่ได้ติ๊กปลายทางที่จะเริ่มพร้อมกัน — กด “แก้ไขปลายทาง”', 'warn'); return; }
-            startDestinations(list);
+            // ยังไม่ได้ไลฟ์ → หน้าเตรียมก่อนไลฟ์ (ตรวจความพร้อม + นับถอยหลัง) · ไลฟ์อยู่แล้ว → เริ่มช่องที่เหลือทันที
+            if (!streamer.ws && !streamer.reconnecting && !gatewayProblem() && !list.some(d => destProblem(d))) { close(); openDeskPreflight(); }
+            else startDestinations(list);
           } else if (e.target.closest('.dest-stop-all')) {
             if (await confirmStopAll()) stopAllStreams();
           }
@@ -8557,21 +8559,25 @@ onmessage = async e => {
     tick() {
       const on = !!(streamer.ws || streamer.reconnecting);
       if (!on) return;
-      if (!this.session) this.session = { start: Date.now(), bytes: 0, lastSent: 0, kbps: [], fps: [], reconnects: 0, wasReconnecting: false, dests: {} };
+      if (!this.session) this.session = { start: Date.now(), bytes: 0, lastSent: 0, kbps: [], fps: [], reconnects: 0, wasReconnecting: false, dests: {}, all: [], step: 1, acc: [], events: [], abr0: abr.log.length };
       const s = this.session;
       const d = streamer.sent - s.lastSent;
       s.bytes += d >= 0 ? d : streamer.sent;
       s.lastSent = streamer.sent;
       s.kbps.push(streamer.state === 'live' ? streamer.kbps : 0);
       if (s.kbps.length > 120) s.kbps.shift();
+      // บิตเรตตลอดรายการ (สรุปหลังไลฟ์): เก็บไม่เกิน ~900 จุด — ยาวกว่านั้นรวมทีละ 2 จุด
+      s.acc.push(s.kbps[s.kbps.length - 1]);
+      if (s.acc.length >= s.step) { s.all.push(s.acc.reduce((a, b) => a + b, 0) / s.acc.length); s.acc = []; }
+      if (s.all.length > 900) { s.all = s.all.reduce((o, v, i, a) => (i % 2 ? o : o.concat((v + (a[i + 1] ?? v)) / 2)), []); s.step *= 2; }
       const f = streamer.encoder?.fps || (streamer.state === 'live' ? fps : 0);
       if (f) s.fps.push(f);
-      if (streamer.reconnecting && !s.wasReconnecting) s.reconnects++;
+      if (streamer.reconnecting && !s.wasReconnecting) { s.reconnects++; s.events.push({ at: Date.now(), text: 'เน็ตหลุด — ต่อใหม่อัตโนมัติ' }); }
       s.wasReconnecting = !!streamer.reconnecting;
       for (const [id, st] of streamer.dests) {
         const x = s.dests[id] || (s.dests[id] = { label: destLabel(settings.destinations.find(z => z.id === id)) || id, live: 0, down: 0, drops: 0, last: '' });
         if (st.state === 'live') x.live++; else x.down++;
-        if (x.last === 'live' && st.state !== 'live') x.drops++;
+        if (x.last === 'live' && st.state !== 'live') { x.drops++; s.events.push({ at: Date.now(), text: `${x.label} ต่อใหม่` }); }
         x.last = st.state;
       }
     },
@@ -8580,6 +8586,9 @@ onmessage = async e => {
       this.session = null;
       if (!s) return null;
       s.duration = Date.now() - s.start;
+      s.end = Date.now();
+      for (const a of abr.log.slice(s.abr0)) if (a.dir === 'down') s.events.push({ at: a.at, text: `ลดบิตเรตอัตโนมัติเหลือ ${(a.kbps / 1000).toFixed(1)} Mbps` });
+      s.events.sort((a, b) => a.at - b.at);
       return s;
     }
   };
@@ -8592,6 +8601,7 @@ onmessage = async e => {
 
   // หน้าเตรียมก่อนไลฟ์: ตรวจความพร้อมทีละข้อ แล้วนับถอยหลัง 3-2-1 ก่อนเริ่มทุกปลายทางที่ติ๊กไว้
   async function openPreflight() {
+    if (!isPhoneUI()) return openDeskPreflight();
     const list = settings.destinations.filter(d => d.enabled);
     const items = [];
     const add = (state, title, detail) => items.push({ state, title, detail });
@@ -8649,6 +8659,182 @@ onmessage = async e => {
         navigator.vibrate?.(20);
       }, 1000);
       $('button', el).addEventListener('click', () => { clearInterval(t); el.remove(); resolve(false); });
+    });
+  }
+
+  // หน้าเตรียมก่อนไลฟ์ (เดสก์ท็อป/แท็บเล็ต): รายการตรวจอัตโนมัติ (อัปเดตทุกวินาที) · ภาพ Program ตอนเริ่ม · นับถอยหลัง · เริ่มไลฟ์ / ทดสอบส่ง
+  let upMbps = 0;
+  async function preflightChecks() {
+    const out = [];
+    const add = (state, name, detail, fix) => out.push({ state, name, detail, fix });
+    const list = settings.destinations.filter(d => d.enabled);
+    const srcs = inputs.filter(i => !['color', 'bars', 'clock', 'black', 'title', 'timer', 'score', 'ticker'].includes(i.type));
+    const dead = srcs.filter(i => i.status !== 'live');
+    add(dead.length ? 'warn' : 'ok', 'แหล่งภาพทุกตัวมีสัญญาณ', dead.length ? `“${dead.map(i => i.name).slice(0, 3).join('”, “')}” ยังไม่มีสัญญาณ` : `${srcs.length || inputs.length} แหล่ง${inputs.some(i => i.type === 'wireless') ? ` · กล้องมือถือ ${inputs.filter(i => i.type === 'wireless').length} เครื่อง` : ''}`);
+    const mics = audio.channels.filter(c => !c.muted && c.kind !== 'player' && c.kind !== 'pad');
+    const quiet = mics.filter(c => !(c.level > -55));
+    add(!mics.length || quiet.length ? 'warn' : 'ok', 'ไมค์มีเสียง', !mics.length ? 'ยังไม่มีไมค์ — กด “เพิ่มเสียง” ในแผงเสียง'
+      : quiet.length ? `${quiet.map(c => c.name).slice(0, 2).join(', ')} เงียบ — ตรวจสายหรือปุ่ม Mute` : mics.slice(0, 2).map(c => `${c.name} ${Math.round(c.level)} dB`).join(' · '));
+    const gwErr = gatewayProblem(), bad = list.find(d => destProblem(d));
+    add(!list.length || bad || gwErr ? 'error' : 'ok', 'ปลายทางพร้อม', !list.length ? 'ยังไม่ได้ติ๊กปลายทาง — เพิ่ม / ติ๊กปลายทางในตั้งค่า' : bad ? `${destLabel(bad)}: ${destProblem(bad)}` : gwErr || `${list.map(destLabel).join(' · ')} — ข้อมูลครบ`, () => openSettings('stream'));
+    const need = settings.videoKbps * Math.max(1, list.length) / 1000, have = upMbps || (!usingLocalGateway() && navigator.connection?.downlink) || 0;
+    add(!navigator.onLine ? 'error' : have && have < need * 1.5 ? 'warn' : 'ok', 'อัปโหลดพอ', !navigator.onLine ? 'ไม่ได้เชื่อมต่ออินเทอร์เน็ต'
+      : have ? `วัดได้ ${have.toFixed(1)} Mbps · ต้องการ ${need.toFixed(1)} Mbps (${Math.max(1, list.length)} ปลายทาง)${have < need * 1.5 ? ' — ลดความละเอียดหรือปลายทาง' : ''}` : `ต้องการ ${need.toFixed(1)} Mbps · กดเพื่อวัดความเร็ว`, 'measure');
+    try {
+      const est = await navigator.storage?.estimate?.();
+      if (est && est.quota) {
+        const left = est.quota - est.usage, hours = left * 8 / (settings.videoKbps * 1000 + 160000) / 3600;
+        add(hours < 0.5 ? 'warn' : 'ok', 'พื้นที่บันทึก', `เหลือ ${fmtBytes(left)} · พอประมาณ ${hours >= 10 ? '10+' : hours.toFixed(1)} ชม.`);
+      }
+    } catch (e) {}
+    const lu = isFinite(lufs.i) ? lufs.i : lufs.s;
+    add(!isFinite(lu) ? 'warn' : Math.abs(lu - lufs.target) > 4 ? 'warn' : 'ok', 'ความดังเสียง', !isFinite(lu) ? 'ยังไม่มีเสียงให้วัด — ลองพูดใส่ไมค์' : `วัดได้ ${lu.toFixed(1)} LUFS · เป้า ${lufs.target}${lu < lufs.target - 4 ? ' — เบาเกินไป' : lu > lufs.target + 4 ? ' — ดังเกินไป' : ''}`);
+    const team = remoteCtl.team();
+    if (team.length) {
+      const on = team.filter(m => remoteCtl.online(m));
+      add(on.length === team.length ? 'ok' : 'warn', 'ทีมงานพร้อม', `${on.length} จาก ${team.length} ออนไลน์${on.length < team.length ? ' · ' + team.filter(m => !remoteCtl.online(m)).map(m => m.name).slice(0, 2).join(', ') + ' ยังไม่ออนไลน์' : ''}`, () => remoteCtl.openDialog());
+    }
+    const lowBat = battery && !battery.charging && battery.level < 0.3, slow = fps && fps < (+settings.fps || 30) * 0.8;
+    add(lowBat || slow ? 'warn' : 'ok', 'เครื่องนี้', [fps ? `ภาพ ${Math.round(fps)} fps` : '', battery ? (battery.charging ? 'เสียบสายชาร์จอยู่' : `แบต ${Math.round(battery.level * 100)}%`) : ''].filter(Boolean).join(' · ') + (lowBat ? ' — เสียบสายชาร์จ' : slow ? ' — เครื่องทำงานหนัก' : ''), slow ? () => openSettings('output') : null);
+    return out;
+  }
+  function openDeskPreflight() {
+    let checks = [], cd = [0, 3, 10].includes(store.get('pfCountdown', 3)) ? store.get('pfCountdown', 3) : 3, timer = 0;
+    const list = () => settings.destinations.filter(d => d.enabled);
+    dialog({
+      title: 'เตรียมก่อนไลฟ์',
+      wide: true,
+      body: `<p class="note pf-hint">ตรวจอัตโนมัติ — กดรายการเพื่อดูวิธีแก้</p>
+        <div class="pf-desk">
+          <section class="pf-checks" aria-label="รายการตรวจ"><div class="pf-sum"><b></b><span class="pf-bar"><i></i></span></div><div class="pf-rows"></div></section>
+          <aside class="pf-side" aria-label="เริ่มไลฟ์">
+            <small class="pf-cap">PROGRAM ตอนเริ่ม</small>
+            <canvas class="pf-pgm" width="384" height="216"></canvas>
+            <div class="pf-kv">
+              <div><span>ปลายทาง</span><b class="pf-dests"></b></div>
+              <div><span>คุณภาพ</span><b>${formatTag(Math.min(W, H), settings.fps)} · ${(settings.videoKbps / 1000).toFixed(1)} Mbps${W < H ? ' · 9:16' : ''}</b></div>
+              <div><span>บันทึกพร้อมไลฟ์</span><button type="button" class="pf-rec" role="switch" aria-checked="${!!settings.autoRec}">${settings.autoRec ? 'เปิด' : 'ปิด'}</button></div>
+            </div>
+            <div class="seg pf-cd" role="group" aria-label="นับถอยหลัง">${[[0, 'ไม่นับ'], [3, '3-2-1'], [10, '10 วิ']].map(([v, l]) => `<button type="button" data-cd="${v}" aria-pressed="${v === cd}">${l}</button>`).join('')}</div>
+            <span class="pf-grow"></span>
+            <div class="pf-warn" hidden></div>
+            <button type="button" class="btn btn-green btn-golive pf-go" data-pf="go">${icon('broadcast')}เริ่มไลฟ์</button>
+            <button type="button" class="btn pf-test" data-pf="test">ทดสอบส่งปลายทาง (ไม่กี่วินาที)</button>
+            <p class="pf-test-out" hidden></p>
+          </aside>
+        </div>`,
+      actions: [{ label: 'ปิด', value: 'close' }],
+      onOpen(modal, close) {
+        modal.classList.add('pf-modal');
+        const pgm = $('.pf-pgm', modal), g = pgm.getContext('2d');
+        pgm.height = Math.round(pgm.width * H / W);
+        const paint = async () => {
+          if (!modal.isConnected) { clearInterval(timer); return; }
+          try { g.drawImage(pgmCanvas, 0, 0, pgm.width, pgm.height); } catch (e) {}
+          checks = await preflightChecks();
+          const ok = checks.filter(c => c.state === 'ok').length, err = checks.filter(c => c.state === 'error').length;
+          $('.pf-sum b', modal).textContent = `ผ่าน ${ok} จาก ${checks.length}`;
+          const bar = $('.pf-bar i', modal); bar.style.width = `${Math.round(ok / checks.length * 100)}%`; bar.className = ok === checks.length ? 'is-ok' : err ? 'is-err' : 'is-warn';
+          $('.pf-rows', modal).innerHTML = checks.map((c, i) => `<button type="button" class="pf-row is-${c.state}" data-pf-row="${i}" ${c.fix ? '' : 'tabindex="-1"'}>
+              <span class="pf-mark">${c.state === 'ok' ? 'OK' : c.state === 'error' ? '✕' : '!'}</span>
+              <span class="pf-txt"><b>${esc(c.name)}</b><small>${esc(c.detail)}</small></span>
+              <span class="pf-badge">${c.state === 'ok' ? 'พร้อม' : c.state === 'error' ? 'ต้องแก้' : 'ควรดู'}</span></button>`).join('');
+          $('.pf-dests', modal).textContent = list().map(destLabel).join(' · ') || '—';
+          const warn = checks.length - ok - err, w = $('.pf-warn', modal);
+          w.hidden = !(warn || err);
+          w.className = 'pf-warn' + (err ? ' is-err' : '');
+          w.textContent = err ? `ยังมี ${err} รายการที่ต้องแก้ก่อนเริ่มไลฟ์` : `ยังมี ${warn} รายการที่ควรดู — เริ่มได้ แต่แนะนำให้แก้ก่อน`;
+          $('[data-pf=go]', modal).disabled = !!err;
+          $('[data-pf=test]', modal).disabled = !!err || !!streamer.testing;
+        };
+        paint();
+        timer = setInterval(paint, 1000);
+        modal.addEventListener('click', async e => {
+          const row = e.target.closest('[data-pf-row]');
+          if (row) {
+            const c = checks[+row.dataset.pfRow];
+            if (c?.fix === 'measure') { row.querySelector('small').textContent = 'กำลังวัดความเร็วอัปโหลด…'; try { upMbps = await measureUpload(() => {}); } catch (err) { toast('วัดความเร็วไม่ได้ — ตรวจอินเทอร์เน็ต', 'warn'); } paint(); }
+            else if (typeof c?.fix === 'function') { close(); c.fix(); }
+            return;
+          }
+          const cdb = e.target.closest('[data-cd]');
+          if (cdb) { cd = +cdb.dataset.cd; store.set('pfCountdown', cd); $$('[data-cd]', modal).forEach(b => b.setAttribute('aria-pressed', String(+b.dataset.cd === cd))); return; }
+          const recb = e.target.closest('.pf-rec');
+          if (recb) { settings.autoRec = !settings.autoRec; saveSettings(); recb.setAttribute('aria-checked', String(settings.autoRec)); recb.textContent = settings.autoRec ? 'เปิด' : 'ปิด'; return; }
+          const act = e.target.closest('[data-pf]')?.dataset.pf;
+          if (act === 'go') {
+            clearInterval(timer); close();
+            if (cd && !(await countdown(cd))) return;
+            startDestinations(list());
+            if (streamer.ws || streamer.reconnecting) openLiveDialog();
+          } else if (act === 'test') {
+            const out = $('.pf-test-out', modal), b = $('[data-pf=test]', modal);
+            b.disabled = true; out.hidden = false; out.className = 'pf-test-out';
+            const lines = [];
+            for (const d of list()) {
+              out.textContent = `กำลังทดสอบ ${destLabel(d)}…`;
+              const r = await testDestination(d);
+              lines.push((r.ok ? '✓ ' : '✕ ') + r.message);
+              if (!r.ok) out.classList.add('err');
+            }
+            out.textContent = lines.join('\n');
+            b.disabled = false;
+          }
+        });
+      }
+    }).then(() => clearInterval(timer));
+  }
+
+  // สรุปหลังไลฟ์ (เดสก์ท็อป): ตัวเลขสำคัญ · กราฟบิตเรตตลอดรายการพร้อมเหตุการณ์ · ปลายทาง · ไฟล์ที่ได้
+  function openDeskSummary(s, reason) {
+    if (!s) return;
+    const avgFps = s.fps.length ? s.fps.reduce((a, b) => a + b, 0) / s.fps.length : 0;
+    const series = s.all.length ? s.all : s.kbps, live = series.filter(v => v > 0);
+    const avgKbps = live.length ? live.reduce((a, b) => a + b, 0) / live.length : 0;
+    const t = ms => new Date(ms).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit', hour12: false });
+    const dests = Object.values(s.dests);
+    const stats = [
+      ['ระยะเวลา', fmtDuration(s.duration), `${t(s.start)} – ${t(s.end || Date.now())}`],
+      ['ข้อมูลที่ส่ง', fmtBytes(s.bytes), `${dests.length} ปลายทาง`],
+      ['บิตเรตเฉลี่ย', avgKbps ? (avgKbps / 1000).toFixed(1) + ' Mbps' : '—', `เป้า ${(settings.videoKbps / 1000).toFixed(1)} Mbps`],
+      ['ภาพเฉลี่ย', avgFps ? avgFps.toFixed(1) + ' fps' : '—', `ตั้งไว้ ${settings.fps} fps`],
+      ['หลุด / ต่อใหม่', `${s.reconnects} ครั้ง`, s.reconnects ? 'ต่อกลับอัตโนมัติ' : 'ไม่หลุดเลย']
+    ];
+    // กราฟ: เส้นประ = เป้าบิตเรต · เส้นแนวตั้ง = เหตุการณ์ (เน็ตหลุด / ลดบิตเรต / ปลายทางต่อใหม่)
+    const GWd = 976, GHt = 140, max = Math.max(settings.videoKbps * 1.25, ...series, 1);
+    const y = v => (GHt - 16 - v / max * (GHt - 30)).toFixed(1);
+    const pts = series.map((v, i) => `${(i / Math.max(1, series.length - 1) * GWd).toFixed(1)},${y(v)}`).join(' ');
+    const ev = s.events.slice(0, 6).map((e, i) => {
+      const x = Math.min(GWd - 4, Math.max(4, (e.at - s.start) / Math.max(1, s.duration) * GWd)), right = x > GWd * 0.65;
+      return `<line x1="${x.toFixed(1)}" y1="10" x2="${x.toFixed(1)}" y2="${GHt - 10}" class="sm-ev"/><text x="${(right ? x - 8 : x + 8).toFixed(1)}" y="${24 + i * 16}" text-anchor="${right ? 'end' : 'start'}" class="sm-evt">นาที ${Math.floor((e.at - s.start) / 60000)} · ${esc(e.text)}</text>`;
+    }).join('');
+    const caps = inputs.filter(i => i.capRun?.log?.length);
+    const files = [];
+    if (rec.last && Date.now() - rec.start < s.duration + 600000) files.push([rec.last.name, fmtBytes(rec.last.bytes)]);
+    if (iso.last && iso.last.files?.length) files.push([`ไฟล์แยกทุกกล้อง (ISO) · ${iso.last.files.length} ไฟล์`, fmtBytes(iso.last.bytes || 0)]);
+    for (const c of caps) files.push([`คำบรรยาย .srt · ${c.capRun.log.length} บรรทัด`, fmtBytes(new Blob([captionSrt(c.capRun.log)]).size)]);
+    dialog({
+      title: reason ? 'ไลฟ์หยุดลง' : 'ไลฟ์จบเรียบร้อย',
+      wide: true,
+      body: `<p class="note sm-sub">${esc(show.name || 'โชว์')} · ${t(s.start)} – ${t(s.end || Date.now())}${reason ? ' · ' + esc(reason) : ''}</p>
+        <section class="sm-stats" aria-label="ตัวเลขสำคัญ">${stats.map(([l, v, n]) => `<div><small>${l}</small><b>${v}</b><em>${n}</em></div>`).join('')}</section>
+        <section class="sm-graph" aria-label="บิตเรตตลอดรายการ"><div class="sm-gh"><b>บิตเรตตลอดรายการ</b><small>เส้นประ = เป้า ${(settings.videoKbps / 1000).toFixed(1)} Mbps</small></div>
+          <svg viewBox="0 0 ${GWd} ${GHt}" preserveAspectRatio="none" role="img" aria-label="กราฟบิตเรตตลอดรายการ"><line x1="0" x2="${GWd}" y1="${y(settings.videoKbps)}" y2="${y(settings.videoKbps)}" class="sm-target"/>${pts ? `<polyline points="${pts}" class="sm-line"/>` : ''}${ev}</svg></section>
+        <div class="sm-cols">
+          <section aria-label="ปลายทาง"><b>ปลายทาง</b>${dests.map(d => `<div class="sm-row"><span>${esc(d.label)}</span><span class="${d.drops || d.down > 5 ? 'warn' : 'ok'}">${d.drops ? `ต่อใหม่ ${d.drops} ครั้ง · หาย ${d.down} วิ` : d.down > 5 ? `ขาด ${d.down} วิ` : `ครบ ${fmtDuration(d.live * 1000)} · ไม่หลุด`}</span></div>`).join('') || '<p class="note">—</p>'}</section>
+          <section aria-label="ไฟล์ที่ได้"><b>ไฟล์ที่ได้</b>${files.map(([n, z]) => `<div class="sm-row"><span class="sm-file">${esc(n)}</span><span>${z}</span></div>`).join('') || `<p class="note">${rec.active ? 'ยังบันทึกอยู่ — กด REC เพื่อหยุดและบันทึกไฟล์' : 'ไม่ได้บันทึกไฟล์ — เปิด “บันทึกพร้อมไลฟ์” ในหน้าเตรียมก่อนไลฟ์ครั้งหน้า'}</p>`}</section>
+        </div>`,
+      actions: [{ label: 'เสร็จสิ้น', primary: true }],
+      onOpen(modal) {
+        modal.classList.add('sm-modal');
+        const foot = $('.modal-foot', modal);
+        foot.insertAdjacentHTML('afterbegin', `${caps.length ? '<button type="button" class="btn" data-sm="srt">ดาวน์โหลดคำบรรยาย</button>' : ''}<button type="button" class="btn" data-sm="save">บันทึกโชว์นี้ไว้ใช้ครั้งหน้า</button><span class="ml-auto"></span>`);
+        foot.addEventListener('click', e => {
+          const a = e.target.closest('[data-sm]')?.dataset.sm;
+          if (a === 'srt') caps.forEach(c => downloadBlob(new Blob([captionSrt(c.capRun.log)], { type: 'text/plain' }), `webmix-captions-${stamp()}.srt`));
+          else if (a === 'save') { const m = library.save(false); toast(m ? `บันทึก “${m.name}” ลงคลังโชว์แล้ว` : 'พื้นที่เก็บในเบราว์เซอร์เต็ม', m ? 'success' : 'error'); }
+        });
+      }
     });
   }
 
@@ -10488,7 +10674,7 @@ onmessage = async e => {
     $$('#seg-cardsize button').forEach(b => { b.classList.toggle('is-active', b.dataset.size === cardSize()); b.addEventListener('click', () => setCardSize(b.dataset.size)); });
 
     // สำหรับดีบัก/ทดสอบอัตโนมัติ
-    window.webmix = { chatFeed, chatAdd, chatShow, chatHide, playlist, dataSources, timerControl, multiview, renderer, gpu, setRenderer: v => { settings.renderer = v; renderer.resolve(); updateStatus(); }, show, ovl, setChannel, toggleInputOverlay, useRecFolder: dir => { recFolder = dir; }, inputs, state, settings, overlays, audio, rec, iso, stinger, replayCapture, slideGo, midi, checkAppUpdate, macros, runMacro, openCamControl, abr: { state: abr, decide: abrDecide, apply: abrApply, tick: abrTick }, streamer, wireless, cut, autoTransition, setPreview, tr, ftb, padFire, chanKey, remote: remoteCtl, lufs, layoutSize, renderInputs, renderAlerts, openOutputWindow, setOrient };
+    window.webmix = { chatFeed, chatAdd, chatShow, chatHide, playlist, dataSources, timerControl, multiview, renderer, gpu, setRenderer: v => { settings.renderer = v; renderer.resolve(); updateStatus(); }, show, ovl, setChannel, toggleInputOverlay, useRecFolder: dir => { recFolder = dir; }, inputs, state, settings, overlays, audio, rec, iso, stinger, replayCapture, slideGo, midi, checkAppUpdate, macros, runMacro, openCamControl, abr: { state: abr, decide: abrDecide, apply: abrApply, tick: abrTick }, openDeskSummary, openDeskPreflight, liveStats, streamer, wireless, cut, autoTransition, setPreview, tr, ftb, padFire, chanKey, remote: remoteCtl, lufs, layoutSize, renderInputs, renderAlerts, openOutputWindow, setOrient };
   }
 
   boot();
