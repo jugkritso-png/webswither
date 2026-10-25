@@ -8245,16 +8245,30 @@ onmessage = async e => {
   function openLiveDialog() {
     if (liveDialog) return;
     if (isPhoneUI()) return openMobileLive();
+    // แผงไลฟ์ด้านขวา: สถานะ · ตัวเลขสุขภาพสตรีม · ปลายทาง (เริ่ม/หยุดแยก) · ปรับบิตเรตอัตโนมัติ · คุณภาพ
     dialog({
-      title: 'ปลายทางการสตรีม',
-      wide: true,
+      title: 'ไลฟ์',
       body: `
-        <p class="modal-text">กด <b>เริ่ม</b> ทีละช่องเพื่อไลฟ์เฉพาะช่องที่ต้องการ หรือ <b>เริ่มทั้งหมด</b> เพื่อส่งทุกช่องที่ติ๊กไว้พร้อมกัน — แต่ละช่องเริ่ม/หยุดได้โดยไม่กระทบช่องอื่น และช่องที่หลุดจะเชื่อมต่อใหม่เอง</p>
-        <div class="dest-live"></div>`,
-      actions: [{ label: 'แก้ไขปลายทาง', value: 'edit' }, { label: 'ปิด', primary: true }],
+        <div class="lv-head"><span class="lv-pill"></span><span class="lv-count"></span></div>
+        <div class="lv-stats"></div>
+        <div class="lv-sec"><b>ปลายทาง</b><small class="modal-text">แต่ละปลายทางเริ่ม/หยุดแยกกันได้ · ช่องที่หลุดจะเชื่อมต่อใหม่เอง</small></div>
+        <div class="dest-live"></div>
+        <button type="button" class="btn btn-sm lv-add" data-lv="edit">${icon('plus')}เพิ่ม / แก้ไขปลายทาง</button>
+        <label class="lv-row lv-abr"><span><b>ปรับบิตเรตอัตโนมัติ</b><small>เน็ตตก → ลดบิตเรตเอง ไม่ให้ภาพค้าง</small></span><input type="checkbox" data-lv-abr ${settings.abr ? 'checked' : ''}><i aria-hidden="true"></i></label>
+        <div class="lv-row"><span><b>คุณภาพ</b><small class="lv-q"></small></span><button type="button" class="btn btn-sm" data-lv="quality">เปลี่ยน</button></div>`,
+      actions: [{ label: 'ปิด' }],
       onOpen(modal, close) {
+        modal.classList.add('lv-drawer');
+        modal.parentElement.classList.add('drawer-back');
         liveDialog = modal;
         closeLiveDialog = close;
+        modal.addEventListener('change', e => { if (e.target.matches('[data-lv-abr]')) { settings.abr = e.target.checked; saveSettings(); } });
+        modal.addEventListener('click', e => {
+          const a = e.target.closest('[data-lv]')?.dataset.lv;
+          if (a === 'edit') { close(); openSettings('stream'); }
+          else if (a === 'quality') { close(); openSettings('output'); }
+        });
+        const t = setInterval(() => { if (!modal.isConnected) clearInterval(t); else refreshLiveDialog(); }, 1000);
         const foot = $('.modal-foot', modal);
         foot.insertAdjacentHTML('afterbegin', `
           <button type="button" class="btn btn-green dest-start-all">${icon('broadcast')}เริ่มทั้งหมด</button>
@@ -8278,10 +8292,9 @@ onmessage = async e => {
         });
         refreshLiveDialog();
       }
-    }).then(r => {
+    }).then(() => {
       liveDialog = null;
       closeLiveDialog = null;
-      if (r?.value === 'edit') openSettings('stream');
     });
   }
 
@@ -8333,13 +8346,31 @@ onmessage = async e => {
       return;
     }
     const text = { live: 'LIVE', connecting: 'กำลังเชื่อมต่อ…', error: 'หลุด — กำลังลองใหม่', stopped: 'หยุดแล้ว', off: 'พร้อม' };
+    // หัวแผง + ตัวเลขสุขภาพสตรีม
+    const live = !!(streamer.ws || streamer.reconnecting), { live: nLive } = destCounts(), s = liveStats.session;
+    const pill = $('.lv-pill', liveDialog);
+    if (pill) {
+      pill.className = `lv-pill ${streamer.reconnecting ? 'is-warn' : live ? 'is-live' : ''}`;
+      pill.innerHTML = `${streamer.reconnecting ? 'กำลังต่อใหม่' : live ? 'LIVE' : 'พร้อม'} <b>${live && streamer.start ? fmtDuration(Date.now() - streamer.start) : '00:00:00'}</b>`;
+      $('.lv-count', liveDialog).textContent = `ออกอากาศ ${nLive} จาก ${settings.destinations.length} ปลายทาง`;
+      const fpsNow = streamer.encoder?.fps || (live ? fps : 0), spd = streamer.encoder?.speed;
+      const tile = (k, v, u, cls = '', extra = '') => `<div class="lv-tile ${cls}"><small>${k}</small><b>${v}<em>${u}</em></b>${extra}</div>`;
+      $('.lv-stats', liveDialog).innerHTML =
+        tile('BITRATE', live ? (streamer.kbps / 1000).toFixed(1) : '—', live ? 'Mbps' : '', 'lv-wide', `<svg viewBox="0 0 200 36" preserveAspectRatio="none" aria-hidden="true"><path d="${s ? sparkPath(s.kbps, 200, 34) : ''}"/></svg>`)
+        + tile('FPS', fpsNow ? fpsNow.toFixed(1) : '—', '')
+        + tile('เข้ารหัส', spd ? spd.toFixed(2) : '—', spd ? 'x' : '', spd && spd < 0.9 ? 'is-bad' : '')
+        + tile('หลุด / ต่อใหม่', s ? s.reconnects : 0, 'ครั้ง');
+      const q = $('.lv-q', liveDialog);
+      if (q) q.textContent = `${formatTag(Math.min(W, H), settings.fps)} · H.264 · ${settings.videoKbps} kbps${W < H ? ' · 9:16' : ''}`;
+    }
     box.innerHTML = settings.destinations.map(d => {
       const st = streamer.dests.get(d.id);
       const state = st ? st.state : 'off';
       const running = !!st && state !== 'stopped';
+      const pf = PLATFORMS[d.platform] || {};
       return `
         <div class="dest-live-row is-${state}">
-          <span class="dest-dot"></span>
+          <span class="dest-dot"></span><span class="lv-abbr lv-${esc(d.platform)}" aria-hidden="true">${esc((pf.label || '?').slice(0, 2).toUpperCase())}</span>
           <div class="dest-info"><b>${esc(destLabel(d))}</b><small>${esc((state === 'error' || (isNet(d) && state === 'live')) && st.message ? st.message : destMasked(d))}</small></div>
           <span class="dest-state">${text[state]}${state === 'live' && st.kbps && !isNet(d) ? ` · ${st.kbps} kbps` : ''}</span>
           <button type="button" class="btn btn-sm ${running ? 'btn-danger' : 'btn-green'}" data-dest-toggle="${esc(d.id)}" data-on="${running ? 0 : 1}">${running ? 'หยุด' : 'เริ่ม'}</button>
