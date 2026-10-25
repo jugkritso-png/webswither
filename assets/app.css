@@ -2349,3 +2349,13 @@ html.is-resizing iframe, html.is-resizing canvas { pointer-events: none; }
 .up-live { margin: 0; padding: 12px 14px; border-radius: 10px; background: #2a1f0b; border: 1px solid #7c5a13; color: #fcd34d; font-size: 13px; }
 .up-live[hidden] { display: none; }
 .up-modal .modal-foot .btn:first-child { margin-right: auto; }
+
+/* ---------- โหมดแนวตั้ง 9:16 */
+.orient-seg { height: 38px; padding: 3px; }
+.orient-seg button { padding: 0 10px; font-size: 12px; font-weight: 700; }
+.orient-seg button.is-active { background: #f5a524; color: #1a1305; }
+.card-vcrop { position: absolute; top: 0; bottom: 0; box-sizing: border-box; border: 2px solid #f5a524; background: rgba(245, 165, 36, .12); cursor: ew-resize; touch-action: none; z-index: 1; }
+html[data-orient=v] .card-num, html[data-orient=v] .card-tally { z-index: 2; }
+html[data-orient=v] .monitor { background: #000; }
+@media (max-width: 760px) { .orient-seg { display: none; } }
+html[data-orient=v] .safe-area { inset: 5% auto auto 50%; height: 90%; aspect-ratio: 9 / 16; transform: translateX(-50%); }

@@ -74,6 +74,7 @@
     key: { color: 'green', tolerance: 60 },
     srtInputs: [], titlePresets: [],
     renderer: 'auto',
+    orient: 'h',
     localGateway: true
   };
   const saved = store.get('settings', {}) || {};
@@ -86,6 +87,7 @@
   };
   if (!RESOLUTIONS[settings.resolution]) settings.resolution = defaults.resolution;
   if (!FRAME_RATES.includes(+settings.fps)) settings.fps = defaults.fps;
+  if (settings.orient !== 'v') settings.orient = 'h';
   const TRANSITIONS = ['mix', 'dip', 'wipe', 'push', 'stinger'];
   if (!TRANSITIONS.includes(settings.transition)) settings.transition = 'mix';
   settings.midi = { on: !!settings.midi?.on, map: Object.fromEntries(Object.entries(settings.midi?.map || {}).filter(([k, v]) => /^[a-z0-9]{2,12}$/.test(k) && /^(note|cc):\d{1,2}:\d{1,3}$/.test(v))) };
@@ -198,11 +200,14 @@
   let W = 1280, H = 720, PW = 1280, PH = 720;
 
   function applyResolution() {
-    [W, H] = RESOLUTIONS[settings.resolution];
-    PW = Math.min(W, 1280); PH = Math.round(PW * 9 / 16);
+    // โหมดแนวตั้ง 9:16: สลับกว้าง/สูงของ Program ทั้งระบบ (ไลฟ์ บันทึก Output ได้ภาพแนวตั้งจริง)
+    const [bw, bh] = RESOLUTIONS[settings.resolution];
+    [W, H] = settings.orient === 'v' ? [bh, bw] : [bw, bh];
+    document.documentElement.dataset.orient = settings.orient;
+    PW = W >= H ? Math.min(W, 1280) : Math.round(Math.min(H, 1280) * W / H); PH = Math.round(PW * H / W);
     pgmCanvas.width = W; pgmCanvas.height = H;
     pvwCanvas.width = PW; pvwCanvas.height = PH;
-    $('#pgm-format').textContent = formatTag(H, settings.fps);
+    $('#pgm-format').textContent = formatTag(Math.min(W, H), settings.fps) + (W < H ? ' · 9:16' : '');
     output.reset();
     ticker.setRate(settings.fps);
     checkHwAvc();
@@ -487,7 +492,7 @@
     const src = byId(overlays.key.sourceId);
     if (!src) return;
     if (keyer) {
-      const kw = Math.min(W, 1920), kh = Math.round(kw * 9 / 16);
+      const kw = Math.min(W, 1920), kh = Math.round(kw * H / W);
       if (keySrc.width !== kw) { keySrc.width = kw; keySrc.height = kh; }
       drawSource(keySrcCtx, src, kw, kh);
       if (keyer.run(keySrc, settings.key)) {
@@ -576,12 +581,19 @@
   }
   const colorOf = inp => (inp && inp.color && COLOR_TYPES.includes(inp.type) ? inp.color : null);
   // 2D: ใช้ CSS filter ของ canvas · อุณหภูมิสีใช้สีส้ม/ฟ้าทับแบบ soft-light
+  // โหมดแนวตั้ง: ภาพแนวนอนเต็มจอแนวตั้งแบบครอป — inp.vx = ตำแหน่งครอปซ้าย-ขวา (0–1, กลาง = 0.5)
+  const vCover = (w, h, sw, sh) => settings.orient === 'v' && h > w && sw > sh;
+  function drawFitV(ctx, inp, src, sw, sh, w, h) {
+    if (!vCover(w, h, sw, sh)) { drawFit(ctx, src, sw, sh, w, h); return; }
+    const k = Math.max(w / sw, h / sh), dw = sw * k, dh = sh * k;
+    ctx.drawImage(src, -(dw - w) * (inp.vx ?? 0.5), (h - dh) / 2, dw, dh);
+  }
   function drawFitColored(ctx, inp, src, sw, sh, w, h) {
     const cc = colorOf(inp);
-    if (!cc) { drawFit(ctx, src, sw, sh, w, h); return; }
+    if (!cc) { drawFitV(ctx, inp, src, sw, sh, w, h); return; }
     ctx.save();
     ctx.filter = `brightness(${cc.b}) contrast(${cc.c}) saturate(${cc.s})`;
-    drawFit(ctx, src, sw, sh, w, h);
+    drawFitV(ctx, inp, src, sw, sh, w, h);
     ctx.restore();
     if (cc.t) {
       const k = Math.min(1, sw && sh ? Math.min(w / sw, h / sh) : 1), dw = sw * k, dh = sh * k;
@@ -642,7 +654,7 @@
   const keyWork = document.createElement('canvas');
   const keyWorkCtx = keyWork.getContext('2d', { willReadFrequently: !keyer });
   function keyedCanvas(inp, L, cgSceneId) {
-    const kw = Math.max(64, Math.round(Math.min(W * L.scale, keyer ? 1920 : 640))), kh = Math.round(kw * 9 / 16);
+    const kw = Math.max(64, Math.round(Math.min(W * L.scale, keyer ? 1920 : 640))), kh = Math.round(kw * H / W);
     const cache = inp._key || (inp._key = { canvas: document.createElement('canvas'), frame: -1 });
     if (cache.frame === frameNo && cache.canvas.width === kw) return cache.canvas;
     if (keyWork.width !== kw || keyWork.height !== kh) { keyWork.width = kw; keyWork.height = kh; }
@@ -775,7 +787,7 @@
   // texture ของ Input: คืน { e, full } (full = ภาพเต็มเฟรม 16:9) หรือ null ถ้าไม่มีอะไรให้วาด
   function inputTexture(inp, transparent, cgSceneId) {
     const sec = Math.floor(Date.now() / 1000);
-    const GW = Math.min(W, 1920), GH = Math.round(GW * 9 / 16);
+    const GW = Math.min(W, 1920), GH = Math.round(GW * H / W);
     const noSignal = () => transparent ? null
       : { e: genTexture('ns:' + inp.id, `${inp.name}|${inp.srtState}|${inp.missing}|${inp.status}`, GW, GH, (c, w, h) => drawNoSignal(c, w, h, inp)), full: true };
     switch (inp.type) {
@@ -858,8 +870,10 @@
     if (vis.w <= 0 || vis.h <= 0) return;
     if (t.solid) { gpu.solid(vis, t.solid, alpha); return; }
     if (t.under) gpu.solid(vis, t.under, alpha);
-    const f = t.region ? { x: box.x, y: box.y + box.h * t.region.y, w: box.w, h: box.h * t.region.h } : t.full ? box : fitRect(t.e.w, t.e.h, box);
-    const r = intersect(f, clip);
+    const f = t.region ? { x: box.x, y: box.y + box.h * t.region.y, w: box.w, h: box.h * t.region.h } : t.full ? box
+      : vCover(box.w, box.h, t.e.w, t.e.h) ? (k => ({ x: box.x - (t.e.w * k - box.w) * (inp.vx ?? 0.5), y: box.y + (box.h - t.e.h * k) / 2, w: t.e.w * k, h: t.e.h * k }))(Math.max(box.w / t.e.w, box.h / t.e.h))
+      : fitRect(t.e.w, t.e.h, box);
+    const r = intersect(f, vis);
     if (r.w <= 0 || r.h <= 0) return;
     gpu.quad(t.e, r, [(r.x - f.x) / f.w, (r.y - f.y) / f.h, (r.x + r.w - f.x) / f.w, (r.y + r.h - f.y) / f.h], alpha, opts.key || null, t.full || t.region ? null : colorOf(inp));
   }
@@ -1463,6 +1477,7 @@
           <span class="card-num">${i + 1}</span>
           <span class="card-tally"></span>
           <span class="card-vu" hidden aria-hidden="true"><i><b></b></i><i><b></b></i><em></em></span>
+          ${settings.orient === 'v' && VCROP_TYPES.includes(inp.type) ? '<span class="card-vcrop" title="ส่วนที่จะแสดงในภาพแนวตั้ง — ลากซ้าย/ขวาเพื่อเลื่อน"></span>' : ''}
           ${inp.status !== 'live' ? `<span class="card-nosig">${icon('link')}${inp.type === 'wireless' || inp.type === 'guest' ? 'รอเชื่อมต่อ' : 'ไม่มีสัญญาณ'}</span>` : ''}
           <div class="card-actions">
             ${inp.type === 'playlist' && inp.list.items.length ? `
@@ -1503,8 +1518,51 @@
       drawSource(ctx, inp, tw, th);
     });
     cardVu.sync();
+    placeVcrops();
     updateTally();
   }
+
+  // กรอบครอปแนวตั้งบนการ์ด: กว้างตามสัดส่วนที่เห็นจริง · ลากเพื่อเลื่อนตำแหน่ง (inp.vx)
+  const VCROP_TYPES = ['camera', 'screen', 'media', 'wireless', 'guest', 'srt', 'image', 'replay', 'playlist', 'slides'];
+  const srcAspect = inp => { const e = inp.showImg || inp.el; const w = e && (e.videoWidth || e.naturalWidth), h = e && (e.videoHeight || e.naturalHeight); return w && h ? w / h : 16 / 9; };
+  const vcropFrac = inp => clamp((W / H) / srcAspect(inp), 0.05, 1);
+  function placeVcrops() {
+    for (const el of $$('#inputs-grid .card-vcrop')) {
+      const inp = byId(el.closest('.card').dataset.id);
+      if (!inp) continue;
+      const f = vcropFrac(inp), a = srcAspect(inp), thumbA = 16 / 9;
+      // ภาพในการ์ดวางแบบพอดีกรอบ 16:9 — กรอบครอปอยู่ในพื้นที่ภาพจริง
+      const imgW = a >= thumbA ? 1 : a / thumbA, x0 = (1 - imgW) / 2;
+      el.style.width = `${f * imgW * 100}%`;
+      el.style.left = `${(x0 + (1 - f) * imgW * (inp.vx ?? 0.5)) * 100}%`;
+    }
+  }
+  function bindVcropDrag(grid) {
+    grid.addEventListener('pointerdown', e => {
+      const el = e.target.closest('.card-vcrop');
+      if (!el) return;
+      e.preventDefault(); e.stopPropagation();
+      const inp = byId(el.closest('.card').dataset.id), thumb = el.parentElement;
+      if (!inp) return;
+      el.setPointerCapture(e.pointerId);
+      const x0 = e.clientX, v0 = inp.vx ?? 0.5, span = thumb.getBoundingClientRect().width * (1 - vcropFrac(inp)) * Math.min(1, srcAspect(inp) / (16 / 9));
+      const move = ev => { inp.vx = span > 0 ? clamp(v0 + (ev.clientX - x0) / span, 0, 1) : 0.5; placeVcrops(); };
+      const up = () => { el.removeEventListener('pointermove', move); el.removeEventListener('pointerup', up); el.removeEventListener('pointercancel', up); el.dataset.dragged = '1'; };
+      el.addEventListener('pointermove', move); el.addEventListener('pointerup', up); el.addEventListener('pointercancel', up);
+    });
+    grid.addEventListener('click', e => { if (e.target.closest('.card-vcrop')) e.stopPropagation(); }, true);
+  }
+  function setOrient(v) {
+    if (v === settings.orient) return;
+    if (rec.active || streamer.active || streamer.reconnecting) { toast('กำลังไลฟ์หรือบันทึกอยู่ — หยุดก่อนแล้วค่อยเปลี่ยนเป็นแนวตั้ง / แนวนอน', 'warn'); syncOrientSeg(); return; }
+    settings.orient = v === 'v' ? 'v' : 'h';
+    saveSettings();
+    applyResolution();
+    renderInputs();
+    syncOrientSeg();
+    toast(settings.orient === 'v' ? `โหมดแนวตั้ง 9:16 · Program ${W}×${H} — ลากกรอบสีส้มบนการ์ดเพื่อเลือกส่วนที่จะแสดง` : `กลับเป็นแนวนอน 16:9 · Program ${W}×${H}`, 'success', 5000);
+  }
+  const syncOrientSeg = () => $$('#seg-orient button').forEach(b => b.classList.toggle('is-active', b.dataset.value === settings.orient));
 
   let lastTap = { id: null, time: 0 };
   function onGridClick(e) {
@@ -7872,7 +7930,7 @@ onmessage = async e => {
       : location.protocol === 'https:' && /^ws:\/\//i.test(gw) ? 'หน้านี้เปิดผ่าน HTTPS จึงต้องใช้ Gateway แบบ wss://' : '';
   }
 
-  const destPayload = d => ({ id: d.id, name: destLabel(d), url: destUrl(d), ...(d.orient === 'vcrop' ? { vertical: 'crop' } : d.orient === 'vfit' ? { vertical: 'fit' } : {}) });
+  const destPayload = d => ({ id: d.id, name: destLabel(d), url: destUrl(d), ...(settings.orient === 'v' ? {} : d.orient === 'vcrop' ? { vertical: 'crop' } : d.orient === 'vfit' ? { vertical: 'fit' } : {}) });
   const isRunning = id => { const st = streamer.dests.get(id); return !!st && st.state !== 'stopped'; };
 
   // เริ่มเฉพาะปลายทางที่เลือก — ถ้ายังไม่ได้เชื่อมต่อ Gateway จะเปิดการเชื่อมต่อให้อัตโนมัติ
@@ -7881,7 +7939,7 @@ onmessage = async e => {
     if (!list.length) return;
     for (const d of list) {
       const max = PLATFORMS[d.platform]?.maxHeight;
-      if (max && H > max) toast(`${destLabel(d)} รับภาพสูงสุด ${max}p — สตรีม ${formatTag(H, settings.fps)} อาจถูกปฏิเสธหรือถูกย่อภาพ`, 'warn', 7000);
+      if (max && Math.min(W, H) > max) toast(`${destLabel(d)} รับภาพสูงสุด ${max}p — สตรีม ${formatTag(Math.min(W, H), settings.fps)} อาจถูกปฏิเสธหรือถูกย่อภาพ`, 'warn', 7000);
     }
     const gwErr = gatewayProblem();
     const bad = list.find(d => destProblem(d));
@@ -8535,7 +8593,7 @@ onmessage = async e => {
     const mark = { ok: '✓', warn: '!', error: '✕' };
     const r = await dialog({
       title: 'พร้อมไลฟ์หรือยัง',
-      body: `<p class="pf-sub">${formatTag(H, settings.fps)} · ${settings.videoKbps} kbps</p>
+      body: `<p class="pf-sub">${formatTag(Math.min(W, H), settings.fps)} · ${settings.videoKbps} kbps</p>
         <div class="pf-list">${items.map(i => `<div class="pf-item is-${i.state}"><span class="pf-dot" aria-hidden="true">${mark[i.state]}</span><div><b>${esc(i.title)}</b><small>${esc(i.detail)}</small></div></div>`).join('')}</div>`,
       actions: blocked ? [{ label: 'แก้ไขปลายทาง', value: 'edit', primary: true }, { label: 'ปิด' }] : [{ label: 'ยกเลิก' }, { label: 'เริ่มไลฟ์', value: 'go', primary: true }],
       onOpen(modal) { modal.classList.add('m-sheet'); const go = $('.modal-foot .btn-primary', modal); if (go && !blocked) go.classList.add('btn-golive'); }
@@ -9590,7 +9648,7 @@ onmessage = async e => {
 
   function updateStatus() {
     setStat('#st-engine', `${renderer.label()} · ${fps ? fps.toFixed(0) : '--'} fps · ${renderMs.toFixed(1)} ms`, fps && fps < settings.fps * 0.8 ? 'warn' : 'ok');
-    setStat('#st-output', `${W}×${H} ${formatTag(H, settings.fps)} · ${settings.videoKbps} kbps`, 'ok');
+    setStat('#st-output', `${W}×${H} ${formatTag(Math.min(W, H), settings.fps)} · ${settings.videoKbps} kbps`, 'ok');
     if (streamer.state === 'live') {
       const slow = streamer.ws && streamer.ws.bufferedAmount > 2e6;
       const { live, active, errors } = destCounts();
@@ -9734,7 +9792,10 @@ onmessage = async e => {
       $$('.pane').forEach(p => p.classList.toggle('is-active', p.dataset.pane === tab.dataset.tab));
     }));
 
+    bindVcropDrag($('#inputs-grid'));
     $('#inputs-grid').addEventListener('click', onGridClick);
+    $('#seg-orient').addEventListener('click', e => { const b = e.target.closest('[data-value]'); if (b) setOrient(b.dataset.value); });
+    syncOrientSeg();
     // ลากไฟล์วิดีโอ / รูป / PDF มาวางในแผงแหล่งภาพ
     const srcPanel = $('#inputs-grid').closest('.panel') || $('#inputs-grid');
     srcPanel.addEventListener('dragover', e => { if ([...(e.dataTransfer?.types || [])].includes('Files')) { e.preventDefault(); srcPanel.classList.add('is-drop'); } });
@@ -9891,6 +9952,7 @@ onmessage = async e => {
           if (i.type === 'slides') o.slides = { page: i.slides.page, file: i.fileName || '' };
           if (i.layout) o.layout = JSON.parse(JSON.stringify(i.layout));
           if (i.color) o.color = { ...i.color };
+          if (typeof i.vx === 'number' && i.vx !== 0.5) o.vx = i.vx;
           if (i.bg && i.bg.mode !== 'none') o.bg = { ...i.bg };
           return o;
         }),
@@ -9934,6 +9996,7 @@ onmessage = async e => {
         const made = byId(id);
         if (made && raw.layout) made.layout = sanitizeLayout(raw.layout);
         if (made && raw.color) made.color = sanitizeColor(raw.color);
+        if (made && typeof raw.vx === 'number') made.vx = clamp(raw.vx, 0, 1);
         if (made && raw.bg) made.bg = sanitizeBg(raw.bg);
         if (made && GRAPHIC_TYPES.includes(made.type) && raw.data && /^https?:\/\//i.test(raw.data.url || '')) {
           made.data = { url: String(raw.data.url), header: raw.data.header !== false, row: Math.max(0, +raw.data.row || 0), rows: [], error: '', fetchedAt: 0 };
@@ -10284,7 +10347,7 @@ onmessage = async e => {
     $$('#seg-cardsize button').forEach(b => { b.classList.toggle('is-active', b.dataset.size === cardSize()); b.addEventListener('click', () => setCardSize(b.dataset.size)); });
 
     // สำหรับดีบัก/ทดสอบอัตโนมัติ
-    window.webmix = { chatFeed, chatAdd, chatShow, chatHide, playlist, dataSources, timerControl, multiview, renderer, gpu, setRenderer: v => { settings.renderer = v; renderer.resolve(); updateStatus(); }, show, ovl, setChannel, toggleInputOverlay, useRecFolder: dir => { recFolder = dir; }, inputs, state, settings, overlays, audio, rec, iso, stinger, replayCapture, slideGo, midi, checkAppUpdate, macros, runMacro, openCamControl, abr: { state: abr, decide: abrDecide, apply: abrApply, tick: abrTick }, streamer, wireless, cut, autoTransition, setPreview, tr, ftb, padFire, chanKey, remote: remoteCtl, lufs, layoutSize, renderInputs, renderAlerts, openOutputWindow };
+    window.webmix = { chatFeed, chatAdd, chatShow, chatHide, playlist, dataSources, timerControl, multiview, renderer, gpu, setRenderer: v => { settings.renderer = v; renderer.resolve(); updateStatus(); }, show, ovl, setChannel, toggleInputOverlay, useRecFolder: dir => { recFolder = dir; }, inputs, state, settings, overlays, audio, rec, iso, stinger, replayCapture, slideGo, midi, checkAppUpdate, macros, runMacro, openCamControl, abr: { state: abr, decide: abrDecide, apply: abrApply, tick: abrTick }, streamer, wireless, cut, autoTransition, setPreview, tr, ftb, padFire, chanKey, remote: remoteCtl, lufs, layoutSize, renderInputs, renderAlerts, openOutputWindow, setOrient };
   }
 
   boot();
