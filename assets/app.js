@@ -4776,7 +4776,7 @@
   const fmtDb = db => db === -Infinity || db <= -59.9 ? '−∞' : `${db > 0 ? '+' : ''}${db.toFixed(1)}`;
   const meterPct = db => clamp((db + 60) / 60, 0, 1);
 
-  const FX_DEFAULT = { delayMs: 0, low: 0, mid: 0, high: 0, comp: false, threshold: -18, ratio: 4, gate: false, gateDb: -50, duck: false, duckDb: -15, duckThr: -40, duckBy: 'voice' };
+  const FX_DEFAULT = { delayMs: 0, lowCut: false, lowCutHz: 80, low: 0, mid: 0, midHz: 1000, high: 0, comp: false, threshold: -18, ratio: 4, attack: 5, release: 150, gate: false, gateDb: -50, duck: false, duckDb: -15, duckThr: -40, duckBy: 'voice' };
   // ช่องที่นับว่าเป็น "เสียงพูด" สำหรับ Ducking: ไมค์ แขกรับเชิญ และกล้องมือถือไร้สาย
   const isVoiceChannel = c => c.kind === 'mic' || (!!c.inputId && ['guest', 'wireless'].includes(byId(c.inputId)?.type));
   /* ------------------------------------------------------ loudness (LUFS) */
@@ -4927,7 +4927,9 @@
       const fader = ctx.createGain(), afv = ctx.createGain(), analyser = ctx.createAnalyser();
       analyser.fftSize = 1024;
       node.connect(delay);
-      delay.connect(low); low.connect(mid); mid.connect(high); high.connect(fader);
+      // ตัดเสียงทุ้ม (Low cut) อยู่หน้า EQ เสมอ — ปิดอยู่ = ความถี่ 10 Hz (ไม่มีผลกับเสียงที่ได้ยิน)
+      const hpf = ctx.createBiquadFilter(); hpf.type = 'highpass'; hpf.frequency.value = 10; hpf.Q.value = 0.707;
+      delay.connect(hpf); hpf.connect(low); low.connect(mid); mid.connect(high); high.connect(fader);
       comp.connect(fader);
       // ducking: เกนแยกหลังเฟดเดอร์ ลดเสียงอัตโนมัติเมื่อช่องเสียงพูดดัง (ดู duckTick)
       const duck = ctx.createGain();
@@ -4941,7 +4943,7 @@
       anL.fftSize = anR.fftSize = 512;
       afv.connect(st); st.connect(split); split.connect(anL, 0); split.connect(anR, 1);
       const ch = {
-        id: uid(), node, input: delay, delay, low, mid, high, comp, fader, duckGain: duck, afvGain: afv, analyser, split: st, anL, anR,
+        id: uid(), node, input: delay, delay, hpf, low, mid, high, comp, fader, duckGain: duck, afvGain: afv, analyser, split: st, anL, anR,
         lr: { l: -90, r: -90, peak: -90, peakAt: 0, clipAt: 0, lastAt: 0 },
         db: 0, muted: false, afv: false, level: -90, peak: -90, peakAt: 0,
         fx: { ...FX_DEFAULT },
@@ -4960,7 +4962,9 @@
             comp: !!f.comp, threshold: clamp(+f.threshold || -18, -60, 0), ratio: clamp(+f.ratio || 4, 1, 20),
             gate: !!f.gate, gateDb: clamp(+f.gateDb || FX_DEFAULT.gateDb, -80, -10),
             duck: !!f.duck, duckDb: clamp(+f.duckDb || FX_DEFAULT.duckDb, -40, -3), duckThr: clamp(+f.duckThr || FX_DEFAULT.duckThr, -60, -10),
-            duckBy: typeof f.duckBy === 'string' && f.duckBy ? f.duckBy.slice(0, 80) : 'voice' };
+            duckBy: typeof f.duckBy === 'string' && f.duckBy ? f.duckBy.slice(0, 80) : 'voice',
+            lowCut: !!f.lowCut, lowCutHz: clamp(+f.lowCutHz || 80, 20, 400), midHz: clamp(+f.midHz || 1000, 200, 8000),
+            attack: clamp(+f.attack || 5, 1, 200), release: clamp(+f.release || 150, 20, 1000) };
         }
       }
       this.channels.push(ch);
@@ -4975,6 +4979,10 @@
       if (!this.ctx) return;
       const t = this.ctx.currentTime, f = ch.fx;
       ch.delay.delayTime.setTargetAtTime(f.delayMs / 1000, t, 0.01);
+      ch.hpf.frequency.setTargetAtTime(f.lowCut ? f.lowCutHz : 10, t, 0.01);
+      ch.mid.frequency.setTargetAtTime(f.midHz || 1000, t, 0.01);
+      ch.comp.attack.setTargetAtTime((f.attack || 5) / 1000, t, 0.01);
+      ch.comp.release.setTargetAtTime((f.release || 150) / 1000, t, 0.01);
       ch.low.gain.setTargetAtTime(f.low, t, 0.01);
       ch.mid.gain.setTargetAtTime(f.mid, t, 0.01);
       ch.high.gain.setTargetAtTime(f.high, t, 0.01);
@@ -5007,8 +5015,8 @@
       ch.gateOn = !!f.gate;
       try { ch.delay.disconnect(); } catch (e) {}
       try { ch.gate.disconnect(); } catch (e) {}
-      if (f.gate) { ch.delay.connect(ch.gate); ch.gate.connect(ch.low); }
-      else { ch.delay.connect(ch.low); ch.gateOpen = true; }
+      if (f.gate) { ch.delay.connect(ch.gate); ch.gate.connect(ch.hpf); }
+      else { ch.delay.connect(ch.hpf); ch.gateOpen = true; }
     },
     addStream(inp, stream) {
       if (!stream.getAudioTracks().length || !this.ensure()) return;
@@ -5299,69 +5307,149 @@
     });
   }
 
-  const fxActive = ch => ch.fx && (ch.fx.delayMs || ch.fx.low || ch.fx.mid || ch.fx.high || ch.fx.comp || ch.fx.gate || ch.fx.duck);
+  const fxActive = ch => ch.fx && (ch.fx.delayMs || ch.fx.lowCut || ch.fx.low || ch.fx.mid || ch.fx.high || ch.fx.comp || ch.fx.gate || ch.fx.duck);
 
   // หน้าต่างปรับเสียงต่อช่อง — เปลี่ยนค่าแล้วได้ยินผลทันที
+  // หน้าต่างเอฟเฟกต์เสียงรายช่อง: รายชื่อช่องซ้าย · กราฟ EQ จริงจากฟิลเตอร์ · คอมเพรสเซอร์พร้อมมิเตอร์ลดระดับ · เกต / ดีเลย์ / ดั๊กกิ้ง
+  // เปลี่ยนค่าแล้วได้ยินผลทันที
+  const FX_VOICE = { lowCut: true, lowCutHz: 80, low: -2.5, mid: 3, midHz: 3200, high: 1.5, comp: true, threshold: -18, ratio: 3, attack: 10, release: 120, gate: true, gateDb: -48 };
   function openChannelFx(ch) {
     const f = ch.fx;
-    const row = (key, label, min, max, step, unit) => `
-      <label class="field fx-row"><span>${label}: <b class="mono" data-val="${key}">${f[key] > 0 && unit === 'dB' ? '+' : ''}${f[key]} ${unit}</b></span>
+    const fmt = (key, v) => key === 'delayMs' || key === 'attack' || key === 'release' ? `${v} ms` : key === 'ratio' ? `${v} : 1`
+      : key === 'lowCutHz' || key === 'midHz' ? (v >= 1000 ? `${+(v / 1000).toFixed(1)} kHz` : `${v} Hz`) : `${v > 0 && /low|mid|high/.test(key) ? '+' : ''}${v} dB`;
+    const row = (key, label, min, max, step) => `
+      <label class="fx-row"><span>${label}<b class="mono" data-val="${key}">${fmt(key, f[key])}</b></span>
         <input class="range" type="range" data-fx="${key}" min="${min}" max="${max}" step="${step}" value="${f[key]}"></label>`;
+    const sw = (key, label, extra = '') => `<label class="fx-sw"><input type="checkbox" data-fx="${key}" ${f[key] ? 'checked' : ''}><i aria-hidden="true"></i><span>${label}</span>${extra}</label>`;
+    const others = audio.channels.filter(c => c !== ch);
+    const list = audio.channels.map(c => `<button type="button" class="fx-ch ${c === ch ? 'is-on' : ''}" data-ch="${c.id}">
+        <b>${esc(c.name)}</b><span class="fx-ch-meter"><i></i></span>
+        <span class="fx-ch-tags">${c.fx.lowCut || c.fx.low || c.fx.mid || c.fx.high ? '<em>EQ</em>' : ''}${c.fx.comp ? '<em>COMP</em>' : ''}${c.fx.gate ? '<em>GATE</em>' : ''}${c.fx.duck ? '<em>DUCK</em>' : ''}</span></button>`).join('');
     dialog({
-      title: `ปรับเสียง — ${ch.name}`,
-      body: `
-        <div class="help"><h3>Noise Gate (ตัดเสียงรบกวนตอนไม่ได้พูด)</h3></div>
-        <label class="check"><input type="checkbox" data-fx="gate" ${f.gate ? 'checked' : ''}> เปิด Noise Gate — เสียงที่เบากว่าระดับนี้ถูกปิด (แอร์ พัดลม เสียงห้อง) <b class="gate-led ${f.gate ? '' : 'off'}" aria-hidden="true"></b></label>
-        ${row('gateDb', 'ระดับเปิดเสียง', -80, -10, 1, 'dB')}
-        <p class="note gate-note">${audio.ctx && !audio.ctx.audioWorklet ? 'เบราว์เซอร์นี้ไม่รองรับ Noise Gate (ต้องเปิดผ่าน https)' : 'พูดปกติแล้วไฟเขียวต้องติด — ไฟดับตอนเงียบ ถ้าเสียงพูดขาดหายให้ลดระดับลง'}</p>
-        <div class="help"><h3>ดีเลย์ (ให้เสียงตรงกับภาพ)</h3></div>
-        ${row('delayMs', 'หน่วงเสียง', 0, 500, 10, 'ms')}
-        <div class="help"><h3>EQ</h3></div>
-        ${row('low', 'เสียงต่ำ (120 Hz)', -12, 12, 0.5, 'dB')}
-        ${row('mid', 'เสียงกลาง (1 kHz)', -12, 12, 0.5, 'dB')}
-        ${row('high', 'เสียงสูง (8 kHz)', -12, 12, 0.5, 'dB')}
-        <div class="help"><h3>คอมเพรสเซอร์ (เกลี่ยระดับเสียงพูดให้สม่ำเสมอ)</h3></div>
-        <label class="check"><input type="checkbox" data-fx="comp" ${f.comp ? 'checked' : ''}> เปิดคอมเพรสเซอร์</label>
-        ${row('threshold', 'Threshold', -50, 0, 1, 'dB')}
-        ${row('ratio', 'Ratio', 1, 20, 0.5, ': 1')}
-        <div class="help"><h3>Ducking (ลดเสียงช่องนี้อัตโนมัติเมื่อมีคนพูด)</h3></div>
-        <label class="check"><input type="checkbox" data-fx="duck" ${f.duck ? 'checked' : ''}> เปิด Ducking — เหมาะกับเพลงพื้นหลัง เสียงจากคอม หรือวิทยุ <b class="duck-led" aria-hidden="true"></b></label>
-        <label class="field"><span>ลดเสียงเมื่อช่องนี้มีเสียง</span><select class="select" data-fx="duckBy">
-          <option value="voice">ไมค์และแขกรับเชิญทุกช่อง</option>
-          ${audioChanOptions().filter(([k]) => k !== chanKey(ch)).map(([k, n]) => `<option value="${esc(k)}" ${k === f.duckBy ? 'selected' : ''}>${esc(n)}</option>`).join('')}
-        </select></label>
-        ${row('duckDb', 'ลดลง', -40, -3, 1, 'dB')}
-        ${row('duckThr', 'ระดับที่ถือว่าเริ่มพูด', -60, -10, 1, 'dB')}
-        <p class="note">ไฟม่วง = กำลังลดเสียงอยู่ · ถ้าเพลงลดลงเองทั้งที่ไม่มีใครพูด (เสียงห้อง/แอร์) ให้เพิ่มระดับที่ถือว่าเริ่มพูด หรือเปิด Noise Gate ที่ช่องไมค์</p>`,
-      actions: [{ label: 'รีเซ็ต', value: 'reset' }, { label: 'เสร็จสิ้น', primary: true }],
-      onOpen(modal) {
+      title: `เอฟเฟกต์เสียง — ${ch.name}`,
+      wide: true,
+      body: `<div class="fx-wrap">
+        <nav class="fx-list" aria-label="ช่องเสียง">${list}</nav>
+        <div class="fx-main">
+          <section class="fx-card fx-eq">
+            <div class="fx-h"><h3>EQ 4 ย่าน</h3><span class="fx-sub">ลากแถบเพื่อปรับ · เส้นกราฟคือผลรวมจริง</span></div>
+            <svg class="fx-graph" viewBox="0 0 700 150" preserveAspectRatio="none" aria-label="กราฟ EQ"><g class="fx-grid"></g><path class="fx-fill"/><path class="fx-curve"/></svg>
+            <div class="fx-bands">
+              <div class="fx-band">${sw('lowCut', 'Low cut')}${row('lowCutHz', 'ความถี่', 20, 400, 5)}</div>
+              <div class="fx-band"><b>Low</b>${row('low', 'เสียงต่ำ 120 Hz', -12, 12, 0.5)}</div>
+              <div class="fx-band"><b>Presence</b>${row('mid', 'ระดับ', -12, 12, 0.5)}${row('midHz', 'ความถี่', 200, 8000, 50)}</div>
+              <div class="fx-band"><b>Air</b>${row('high', 'เสียงสูง 8 kHz', -12, 12, 0.5)}</div>
+            </div>
+          </section>
+          <section class="fx-card">
+            <div class="fx-h"><h3>คอมเพรสเซอร์</h3>${sw('comp', 'เปิด')}</div>
+            ${row('threshold', 'Threshold', -50, 0, 1)}${row('ratio', 'Ratio', 1, 20, 0.5)}
+            <div class="fx-two">${row('attack', 'Attack', 1, 200, 1)}${row('release', 'Release', 20, 1000, 10)}</div>
+            <div class="fx-gr"><span>ลดเสียงอยู่</span><span class="fx-gr-bar"><i></i></span><b class="mono">0.0 dB</b></div>
+          </section>
+          <section class="fx-card">
+            <div class="fx-h"><h3>เกต · ดีเลย์ · ดั๊กกิ้ง</h3></div>
+            ${sw('gate', 'Noise Gate — ตัดเสียงรบกวนตอนไม่ได้พูด', '<b class="gate-led ' + (f.gate ? '' : 'off') + '" aria-hidden="true"></b>')}
+            ${row('gateDb', 'ระดับเปิดเสียง', -80, -10, 1)}
+            <p class="note gate-note">${audio.ctx && !audio.ctx.audioWorklet ? 'เบราว์เซอร์นี้ไม่รองรับ Noise Gate (ต้องเปิดผ่าน https)' : 'พูดปกติแล้วไฟเขียวต้องติด — ไฟดับตอนเงียบ'}</p>
+            ${row('delayMs', 'ดีเลย์ (ซิงก์ปาก)', 0, 500, 10)}
+            ${sw('duck', 'ดั๊กกิ้ง: ลดช่องนี้เมื่อมีคนพูด', '<b class="duck-led" aria-hidden="true"></b>')}
+            <label class="fx-row"><span>ลดเสียงเมื่อช่องนี้มีเสียง</span><select class="select" data-fx="duckBy">
+              <option value="voice">ไมค์และแขกรับเชิญทุกช่อง</option>
+              ${audioChanOptions().filter(([k]) => k !== chanKey(ch)).map(([k, n]) => `<option value="${esc(k)}" ${k === f.duckBy ? 'selected' : ''}>${esc(n)}</option>`).join('')}
+            </select></label>
+            <div class="fx-two">${row('duckDb', 'ลดลง', -40, -3, 1)}${row('duckThr', 'ถือว่าเริ่มพูดที่', -60, -10, 1)}</div>
+          </section>
+        </div>
+      </div>`,
+      actions: [{ label: 'ตั้งเป็นเสียงพูดชัด', value: 'voice' }, ...(others.length ? [{ label: 'คัดลอกไปช่องอื่น', value: 'copy' }] : []), { label: 'รีเซ็ต', value: 'reset' }, { label: 'เสร็จ', primary: true }],
+      onOpen(modal, close) {
+        modal.classList.add('fx-modal');
+        const curve = $('.fx-curve', modal), fill = $('.fx-fill', modal);
+        // เส้นกริด: 50 / 200 / 1k / 4k / 12k Hz และ 0 dB
+        const N = 140, freqs = new Float32Array(N), mag = new Float32Array(N), ph = new Float32Array(N);
+        const xOf = hz => Math.log(hz / 20) / Math.log(1000) * 700;
+        for (let i = 0; i < N; i++) freqs[i] = 20 * Math.pow(1000, i / (N - 1));
+        $('.fx-grid', modal).innerHTML = [50, 200, 1000, 4000, 12000].map(hz => `<line x1="${xOf(hz)}" x2="${xOf(hz)}" y1="0" y2="150"/><text x="${xOf(hz) + 4}" y="144">${hz >= 1000 ? hz / 1000 + 'k' : hz}</text>`).join('') + '<line x1="0" x2="700" y1="75" y2="75" class="z"/>';
+        const draw = () => {
+          const total = new Float32Array(N);
+          if (audio.ctx) for (const node of [ch.hpf, ch.low, ch.mid, ch.high]) {
+            node.getFrequencyResponse(freqs, mag, ph);
+            for (let i = 0; i < N; i++) total[i] += 20 * Math.log10(Math.max(mag[i], 1e-5));
+          }
+          let d = '';
+          for (let i = 0; i < N; i++) d += `${i ? 'L' : 'M'}${(i / (N - 1) * 700).toFixed(1)} ${clamp(75 - total[i] * 5, 2, 148).toFixed(1)} `;
+          curve.setAttribute('d', d);
+          fill.setAttribute('d', d + 'L700 150 L0 150 Z');
+        };
+        const refresh = () => {
+          for (const el of $$('[data-fx]', modal)) {
+            const k = el.dataset.fx;
+            if (el.type === 'checkbox') el.checked = !!f[k]; else el.value = f[k];
+            const label = $(`[data-val="${k}"]`, modal);
+            if (label) label.textContent = fmt(k, f[k]);
+          }
+          $('.gate-led', modal).classList.toggle('off', !f.gate);
+          ch.ui?.fxBtn?.classList.toggle('is-on', !!fxActive(ch));
+          // AudioParam เปลี่ยนแบบค่อยเป็นค่อยไป — วาดใหม่หลังค่าเข้าที่
+          draw(); setTimeout(draw, 80);
+        };
         modal.addEventListener('input', e => {
           const key = e.target.dataset.fx;
           if (!key) return;
           f[key] = e.target.type === 'checkbox' ? e.target.checked : e.target.tagName === 'SELECT' ? e.target.value : +e.target.value;
           const label = $(`[data-val="${key}"]`, modal);
-          if (label) label.textContent = `${f[key] > 0 && /low|mid|high|threshold/.test(key) ? '+' : ''}${f[key]} ${key === 'delayMs' ? 'ms' : key === 'ratio' ? ': 1' : 'dB'}`;
+          if (label) label.textContent = fmt(key, f[key]);
           audio.applyFx(ch);
           if (key === 'gate') $('.gate-led', modal).classList.toggle('off', !f.gate);
           ch.ui?.fxBtn?.classList.toggle('is-on', !!fxActive(ch));
+          draw(); setTimeout(draw, 80);
         });
-        // ไฟสถานะเกต: เขียว = เปิดให้เสียงผ่าน
-        const led = $('.gate-led', modal);
+        $('.fx-list', modal).addEventListener('click', e => {
+          const b = e.target.closest('[data-ch]');
+          const next = b && audio.channels.find(c => c.id === b.dataset.ch);
+          if (!next || next === ch) return;
+          close();
+          setTimeout(() => openChannelFx(next), 0);
+        });
+        modal._fxRefresh = refresh;
+        draw(); setTimeout(draw, 80);
+        // ไฟเกต / ดั๊ก · มิเตอร์ลดระดับของคอมเพรสเซอร์ · มิเตอร์ของแต่ละช่องในรายการ
+        const led = $('.gate-led', modal), gr = $('.fx-gr-bar i', modal), grText = $('.fx-gr b', modal);
+        const meters = $$('.fx-ch', modal).map(b => [audio.channels.find(c => c.id === b.dataset.ch), $('.fx-ch-meter i', b)]);
         const tick = () => {
           if (!modal.isConnected) return;
           led.classList.toggle('open', !!(f.gate && ch.gateOn && ch.gateOpen));
           $('.duck-led', modal).classList.toggle('on', !!(f.duck && ch.ducked));
           if (ch.gateError) $('.gate-note', modal).textContent = 'เปิด Noise Gate ไม่ได้ในเบราว์เซอร์นี้ (ต้องเปิดผ่าน https หรือ localhost)';
+          const red = f.comp && audio.ctx ? Math.min(0, ch.comp.reduction) : 0;
+          gr.style.width = `${clamp(-red / 20, 0, 1) * 100}%`;
+          grText.textContent = `${red.toFixed(1)} dB`;
+          for (const [c, el] of meters) if (c) el.style.width = `${meterPct(c.level) * 100}%`;
           setTimeout(tick, 100);
         };
         tick();
+        // ปุ่มด้านล่าง (ยกเว้น “เสร็จ”) ทำงานโดยไม่ปิดหน้าต่าง
+        for (const btn of $$('.modal-foot .btn', modal)) {
+          const label = btn.textContent;
+          if (label === 'เสร็จ') continue;
+          const clone = btn.cloneNode(true);
+          btn.replaceWith(clone);
+          clone.addEventListener('click', () => {
+            if (label === 'รีเซ็ต') { Object.assign(f, FX_DEFAULT, { duckBy: f.duckBy }); toast(`รีเซ็ตการปรับเสียงของ “${ch.name}” แล้ว`); }
+            else if (label === 'ตั้งเป็นเสียงพูดชัด') { Object.assign(f, FX_VOICE); toast('ตั้งเป็น “เสียงพูดชัด” แล้ว — ตัดเสียงทุ้ม เน้นความชัด เกลี่ยระดับ ตัดเสียงรบกวน', 'success'); }
+            else if (label.startsWith('คัดลอก')) {
+              const { duck, duckBy, duckDb, duckThr, ...eq } = f;
+              for (const c of others) { Object.assign(c.fx, eq); audio.applyFx(c); }
+              renderMixer();
+              toast(`คัดลอก EQ / คอมเพรสเซอร์ / เกต / ดีเลย์ ไปอีก ${others.length} ช่องแล้ว`, 'success');
+              return;
+            }
+            audio.applyFx(ch);
+            refresh();
+          });
+        }
       }
-    }).then(r => {
-      if (r?.value !== 'reset') return;
-      Object.assign(f, FX_DEFAULT);
-      audio.applyFx(ch);
-      ch.ui?.fxBtn?.classList.toggle('is-on', false);
-      toast(`รีเซ็ตการปรับเสียงของ “${ch.name}” แล้ว`);
     });
   }
 
