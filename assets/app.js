@@ -7902,6 +7902,8 @@ onmessage = async e => {
     const sink = await openRecordingSink(name);
     rec.starting = false;
     Object.assign(rec, { recorder: r, sink, chain: Promise.resolve(), bytes: 0, start: Date.now(), active: true, warnedRam: false, failed: false });
+    disk.stopped = null; disk.samples = []; disk.autoIso = false;
+    setTimeout(diskTick, 1500);
     // WebM: เพิ่มความยาวและดัชนีเลื่อนหาตำแหน่ง (Cues) ระหว่างเขียน — MP4 ส่งผ่านตามเดิม
     const fix = !type.includes('mp4') && window.WebmSeek ? new WebmSeek.WebmSeekFix() : null;
     let written = 0;
@@ -8981,6 +8983,89 @@ onmessage = async e => {
   }
 
   // การ์ดเตือนบนหน้าสวิตช์ (มือถือ): เรียงตามความรุนแรง บอกว่าเกิดอะไรและควรทำอะไร · กด "รับทราบ" เพื่อซ่อนจนกว่าจะเกิดใหม่
+  // พื้นที่ดิสก์ระหว่างบันทึก (design 68/70): วัดพื้นที่ว่างทุก 10 วินาที · ประเมินเวลาที่เหลือจากอัตราเขียนจริงและบิตเรตที่ตั้งไว้
+  // เหลือ < 30 นาที เตือนเหลือง · < 10 นาที แดง · < 2 นาที หยุด ISO ให้เอง · < 1 นาที หยุดบันทึกให้เอง (ไฟล์ปิดได้ครบไม่เสีย) — ไลฟ์ไม่หยุด
+  const disk = { free: null, total: null, dir: '', samples: [], level: '', minutes: Infinity, mainMinutes: Infinity, autoIso: false, stopped: null, fake: null, pop: false };
+  const fileRate = () => (settings.videoKbps + 160) * 125;
+  const fmtMinutes = m => !isFinite(m) ? '—' : m < 60 ? `${Math.max(0, Math.round(m))} นาที` : `${Math.floor(m / 60)} ชม. ${Math.round(m % 60)} นาที`;
+  async function diskQuery() {
+    if (disk.fake != null) return { free: disk.fake, total: 512e9, dir: 'โฟลเดอร์ทดสอบ' };
+    try {
+      if (desktop && desktop.diskFree) { const r = await desktop.diskFree(recFolder && recFolder.native ? recFolder.name : null); if (r && r.free != null) return r; }
+      if (rec.sink && rec.sink.kind === 'opfs' && navigator.storage?.estimate) { const e = await navigator.storage.estimate(); if (e.quota) return { free: Math.max(0, e.quota - e.usage), total: e.quota, dir: 'พื้นที่ของเบราว์เซอร์' }; }
+    } catch (e) {}
+    return null;
+  }
+  async function diskTick() {
+    const writing = rec.active || iso.list.length > 0;
+    const r = writing ? await diskQuery() : null;
+    if (!writing || !r) {
+      Object.assign(disk, { samples: [], level: '', minutes: Infinity, autoIso: false });
+      if (!writing) disk.free = null;
+      renderDiskChip(); renderAlerts();
+      return;
+    }
+    Object.assign(disk, { free: r.free, total: r.total, dir: r.dir || '' });
+    const now = Date.now();
+    disk.samples.push({ t: now, free: r.free });
+    disk.samples = disk.samples.filter(x => now - x.t <= 60000);
+    const first = disk.samples[0];
+    const measured = now - first.t > 5000 ? Math.max(0, (first.free - r.free) / ((now - first.t) / 1000)) : 0;
+    const files = (rec.active ? 1 : 0) + iso.list.length;
+    const rate = Math.max(files * fileRate(), measured);
+    disk.minutes = rate ? r.free / rate / 60 : Infinity;
+    disk.mainMinutes = r.free / fileRate() / 60;
+    disk.level = disk.minutes < 10 ? 'red' : disk.minutes < 30 ? 'amber' : '';
+    if (disk.minutes < 2 && iso.list.length && !disk.autoIso) {
+      disk.autoIso = true;
+      stopIso();
+      toast('พื้นที่ดิสก์ใกล้เต็ม — หยุดไฟล์แยกกล้อง (ISO) ให้แล้ว ไฟล์หลักบันทึกต่อ', 'warn', 8000);
+      return diskTick();
+    }
+    if (r.free / fileRate() / 60 < 1 && rec.active && !disk.stopped) {
+      disk.stopped = { at: now, duration: now - rec.start, where: rec.sink?.label || disk.dir };
+      rec.recorder.stop();
+      toast('พื้นที่ดิสก์เต็ม — หยุดบันทึกแล้ว ไฟล์ปิดเรียบร้อย', 'error', 10000);
+    }
+    renderDiskChip(); renderAlerts();
+  }
+  setInterval(diskTick, 10000);
+  $('#st-disk')?.addEventListener('click', e => { e.stopPropagation(); const p = $('#disk-pop'); p.hidden = !p.hidden; renderDiskChip(); });
+  document.addEventListener('click', e => { const p = $('#disk-pop'); if (p && !p.hidden && !e.target.closest('#disk-pop')) p.hidden = true; });
+  // บันทึกต่อในโฟลเดอร์อื่น: เลือกโฟลเดอร์ แล้วปิดไฟล์เดิมและเริ่มไฟล์ใหม่ที่นั่นทันที
+  async function recordElsewhere() {
+    const dir = await pickRecFolder();
+    if (!dir) return;
+    if (rec.active) {
+      const r = rec.recorder;
+      await new Promise(res => { const prev = r.onstop; r.onstop = async e => { await prev?.(e); res(); }; r.stop(); });
+      await toggleRecord();
+      toast(`บันทึกต่อใน “${recFolder?.name || ''}” แล้ว`, 'success');
+    }
+    disk.samples = [];
+    setTimeout(diskTick, 1500);
+  }
+  function renderDiskChip() {
+    const el = $('#st-disk');
+    if (!el) return;
+    const show = disk.free != null && (rec.active || iso.list.length > 0);
+    el.hidden = !show;
+    if (!show) { $('#disk-pop').hidden = true; return; }
+    el.className = `stat stat-disk ${disk.level === 'red' ? 'bad' : disk.level === 'amber' ? 'warn' : 'ok'}`;
+    $('b', el).textContent = `${fmtBytes(disk.free)} · ${fmtMinutes(disk.minutes)}`;
+    const pop = $('#disk-pop');
+    if (pop.hidden) return;
+    const used = disk.total ? 1 - disk.free / disk.total : 0;
+    pop.innerHTML = `<div class="dp-h"><b>พื้นที่บันทึก</b><small>${esc(disk.dir)}</small></div>
+      <div class="dp-big"><b class="mono">${fmtBytes(disk.free)}</b><small>เหลือจาก ${fmtBytes(disk.total || 0)}</small></div>
+      <span class="dp-bar"><i class="${disk.level}" style="width:${Math.min(100, used * 100).toFixed(1)}%"></i></span>
+      <div class="dp-rows"><div><span>ไฟล์หลัก (Program)</span><b class="mono">${rec.active ? ((settings.videoKbps + 160) / 1000).toFixed(1) + ' Mbps' : '—'}</b></div>
+        <div><span>ไฟล์แยก ${iso.list.length} กล้อง (ISO)</span><b class="mono">${iso.list.length ? (iso.list.length * (settings.videoKbps + 160) / 1000).toFixed(1) + ' Mbps' : '—'}</b></div>
+        <div class="dp-sum"><span>บันทึกได้อีก</span><b class="mono ${disk.level}">${fmtMinutes(disk.minutes)}</b></div>
+        ${iso.list.length ? `<div><span>ถ้าหยุด ISO</span><b class="mono ok">${fmtMinutes(disk.mainMinutes)}</b></div>` : ''}</div>
+      <p>เตือนเหลืองเมื่อเหลือต่ำกว่า 30 นาที · แดงเมื่อต่ำกว่า 10 นาที · เหลือ 2 นาทีหยุด ISO ให้เอง · 1 นาทีหยุดบันทึกเพื่อให้ไฟล์ปิดได้ครบ · ไลฟ์ไม่หยุด</p>`;
+  }
+
   const alertDismissed = new Set(), trouble = { lowFps: 0 }, wideAlerts = matchMedia('(min-width: 761px) and (min-height: 501px)');
   function renderAlerts() {
     renderNetBanner();
@@ -9025,6 +9110,20 @@ onmessage = async e => {
       list.push({ key: 'clip-' + ch.id, level: 'red', icon: 'dB', title: `${ch.name} ดังเกิน (CLIP)`, text: `พีคแตะ 0 dB ${n} ครั้ง · แนะนำลดระดับ 4 dB`,
         action: { label: 'ลด 4 dB', run: () => { ch.db = Math.max(-60, (ch.db === -Infinity ? -60 : ch.db) - 4); ch.clips = []; audio.applyGain(ch); renderMixer(); } } });
     }
+    // พื้นที่ดิสก์ระหว่างบันทึก (design 68/70)
+    if (disk.stopped) {
+      list.push({ key: 'disk-full-' + disk.stopped.at, level: 'red', icon: 'GB', title: 'หยุดบันทึกแล้ว — พื้นที่เต็ม',
+        text: `ไฟล์ที่บันทึกมา ${fmtDuration(disk.stopped.duration)} ปิดเรียบร้อย อยู่ใน ${disk.stopped.where}${live ? ' · ไลฟ์ยังออกอากาศอยู่' : ''}` });
+    } else if (disk.level && (rec.active || iso.list.length)) {
+      const actions = [];
+      if (iso.list.length) actions.push({ label: 'หยุดไฟล์แยกกล้อง (ISO)', run: () => { stopIso(); toast('หยุดไฟล์แยกกล้องแล้ว — ไฟล์หลักบันทึกต่อ', 'success'); diskTick(); } });
+      if (canPickFolder && rec.active && !isPhoneUI()) actions.push({ label: 'บันทึกต่อในโฟลเดอร์อื่น', run: recordElsewhere });
+      if (rec.active && (isPhoneUI() || !actions.length)) actions.push({ label: live ? 'หยุดบันทึก ไลฟ์ต่อ' : 'หยุดบันทึก', run: () => rec.recorder.stop() });
+      list.push({ key: 'disk-' + disk.level, level: disk.level === 'red' ? 'red' : 'amber', icon: 'GB', actions,
+        title: `พื้นที่ดิสก์เหลือ ${fmtBytes(disk.free)} — บันทึกได้อีกราว ${fmtMinutes(disk.minutes)}`,
+        text: iso.list.length ? `ไฟล์แยกกล้อง (ISO) ใช้พื้นที่มากที่สุด · หยุด ISO แล้วไฟล์หลักบันทึกต่อได้อีก ${fmtMinutes(disk.mainMinutes)}`
+          : disk.level === 'red' ? `ลบไฟล์เก่าหรือบันทึกต่อที่อื่น · เหลือ 1 นาทีจะหยุดบันทึกให้เองเพื่อให้ไฟล์ไม่เสีย${live ? ' — ไลฟ์ไม่หยุด' : ''}` : (live ? 'ไลฟ์ไม่กระทบ — เฉพาะการบันทึก' : 'เตรียมพื้นที่หรือโฟลเดอร์สำรองไว้') });
+    }
     if (live && streamer.encoder && streamer.encoder.speed && streamer.encoder.speed < 0.9) {
       list.push({ key: 'enc', level: 'gray', title: `เข้ารหัสไม่ทัน (${streamer.encoder.speed.toFixed(2)}x)`, text: 'ภาพที่ผู้ชมเห็นอาจกระตุก — ลดความละเอียดหรือเฟรมเรตในตั้งค่า', action: { label: 'ตั้งค่า', run: () => openSettings('output') } });
     }
@@ -9039,12 +9138,12 @@ onmessage = async e => {
       <div class="m-alert is-${a.level}" role="${a.level === 'red' ? 'alert' : 'status'}">
         <span class="m-alert-ic" aria-hidden="true">${esc(a.icon || '!')}</span>
         <div class="m-alert-text"><b>${esc(a.title)}</b><small>${esc(a.text)}</small></div>
-        <div class="m-alert-actions">${a.action ? `<button type="button" class="btn btn-sm" data-alert-act="${i}">${esc(a.action.label)}</button>` : ''}<button type="button" class="btn btn-sm btn-ghost m-alert-ok" data-alert-ok="${esc(a.key)}">รับทราบ</button></div>
+        <div class="m-alert-actions">${(a.actions || (a.action ? [a.action] : [])).map((x, j) => `<button type="button" class="btn btn-sm" data-alert-act="${i}:${j}">${esc(x.label)}</button>`).join('')}<button type="button" class="btn btn-sm btn-ghost m-alert-ok" data-alert-ok="${esc(a.key)}">รับทราบ</button></div>
         <button type="button" class="m-alert-x" data-alert-ok="${esc(a.key)}" aria-label="ปิด">${icon('x')}</button>
       </div>`).join('');
     box.onclick = e => {
       const act = e.target.closest('[data-alert-act]');
-      if (act) { shown[+act.dataset.alertAct]?.action?.run(); return; }
+      if (act) { const [i, j] = act.dataset.alertAct.split(':').map(Number), a = shown[i]; (a?.actions || (a?.action ? [a.action] : []))[j || 0]?.run(); return; }
       const okb = e.target.closest('[data-alert-ok]');
       if (okb) { alertDismissed.add(okb.dataset.alertOk); box.dataset.sig = '-'; renderAlerts(); }
     };
@@ -11087,7 +11186,7 @@ onmessage = async e => {
     $$('#seg-cardsize button').forEach(b => { b.classList.toggle('is-active', b.dataset.size === cardSize()); b.addEventListener('click', () => setCardSize(b.dataset.size)); });
 
     // สำหรับดีบัก/ทดสอบอัตโนมัติ
-    window.webmix = { chatFeed, chatAdd, chatShow, chatHide, playlist, dataSources, timerControl, multiview, renderer, gpu, setRenderer: v => { settings.renderer = v; renderer.resolve(); updateStatus(); }, show, ovl, setChannel, toggleInputOverlay, useRecFolder: dir => { recFolder = dir; }, inputs, state, settings, overlays, audio, rec, iso, stinger, replayCapture, slideGo, midi, checkAppUpdate, macros, runMacro, openCamControl, abr: { state: abr, decide: abrDecide, apply: abrApply, tick: abrTick }, openDeskSummary, openDeskPreflight, liveStats, openDryRun, setDryRunSeconds: n => { DRY_RUN_SEC = n; }, streamer, wireless, cut, autoTransition, setPreview, tr, ftb, padFire, chanKey, remote: remoteCtl, lufs, layoutSize, renderInputs, renderAlerts, openOutputWindow, setOrient };
+    window.webmix = { chatFeed, chatAdd, chatShow, chatHide, playlist, dataSources, timerControl, multiview, renderer, gpu, setRenderer: v => { settings.renderer = v; renderer.resolve(); updateStatus(); }, show, ovl, setChannel, toggleInputOverlay, useRecFolder: dir => { recFolder = dir; }, inputs, state, settings, overlays, audio, rec, iso, stinger, replayCapture, slideGo, midi, checkAppUpdate, macros, runMacro, openCamControl, abr: { state: abr, decide: abrDecide, apply: abrApply, tick: abrTick }, openDeskSummary, openDeskPreflight, liveStats, openDryRun, setDryRunSeconds: n => { DRY_RUN_SEC = n; }, disk, diskTick, setDiskFree: b => { disk.fake = b; return diskTick(); }, streamer, wireless, cut, autoTransition, setPreview, tr, ftb, padFire, chanKey, remote: remoteCtl, lufs, layoutSize, renderInputs, renderAlerts, openOutputWindow, setOrient };
   }
 
   boot();

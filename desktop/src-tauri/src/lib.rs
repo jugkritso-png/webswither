@@ -253,6 +253,47 @@ fn safe_name(name: &str) -> Result<String, String> {
     if ok { Ok(name.to_string()) } else { Err("ชื่อไฟล์ไม่ถูกต้อง".into()) }
 }
 
+/// พื้นที่ว่างของดิสก์ที่บันทึก (ไบต์) — เตือนก่อนดิสก์เต็มระหว่างบันทึก
+#[tauri::command]
+fn disk_free(app: AppHandle, dir: Option<String>) -> Option<serde_json::Value> {
+    let mut path = dir.filter(|d| !d.is_empty()).map(PathBuf::from).unwrap_or_else(|| default_rec_dir(&app));
+    // โฟลเดอร์ยังไม่ถูกสร้าง → ใช้โฟลเดอร์แม่ที่มีอยู่จริง (อยู่บนดิสก์เดียวกัน)
+    while !path.exists() {
+        if !path.pop() {
+            return None;
+        }
+    }
+    let (free, total) = space_of(&path)?;
+    Some(serde_json::json!({ "free": free, "total": total, "dir": path.to_string_lossy() }))
+}
+
+#[cfg(unix)]
+fn space_of(path: &std::path::Path) -> Option<(u64, u64)> {
+    use std::os::unix::ffi::OsStrExt;
+    let c = std::ffi::CString::new(path.as_os_str().as_bytes()).ok()?;
+    let mut st: libc::statvfs = unsafe { std::mem::zeroed() };
+    if unsafe { libc::statvfs(c.as_ptr(), &mut st) } != 0 {
+        return None;
+    }
+    let frag = st.f_frsize as u64;
+    Some((st.f_bavail as u64 * frag, st.f_blocks as u64 * frag))
+}
+
+#[cfg(windows)]
+fn space_of(path: &std::path::Path) -> Option<(u64, u64)> {
+    use std::os::windows::ffi::OsStrExt;
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetDiskFreeSpaceExW(dir: *const u16, avail: *mut u64, total: *mut u64, free: *mut u64) -> i32;
+    }
+    let wide: Vec<u16> = path.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+    let (mut avail, mut total, mut free) = (0u64, 0u64, 0u64);
+    if unsafe { GetDiskFreeSpaceExW(wide.as_ptr(), &mut avail, &mut total, &mut free) } == 0 {
+        return None;
+    }
+    Some((avail, total))
+}
+
 /// เริ่มไฟล์บันทึกใหม่ในโฟลเดอร์ (ค่าเริ่มต้น: วิดีโอ/WebMix) — คืนเลขอ้างอิงของไฟล์
 #[tauri::command]
 async fn rec_open(app: AppHandle, state: State<'_, AppState>, name: String, dir: Option<String>) -> Result<serde_json::Value, String> {
@@ -668,6 +709,7 @@ pub fn run() {
             desktop_info,
             pick_folder,
             rec_open,
+            disk_free,
             rec_write,
             rec_patch,
             rec_close,

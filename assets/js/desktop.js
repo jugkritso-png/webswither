@@ -28,6 +28,8 @@
     mobile: /Android/i.test(navigator.userAgent),
 
     pickFolder: () => invoke('pick_folder'),
+    // พื้นที่ว่างของดิสก์ที่บันทึก → { free, total, dir } (ไบต์) หรือ null
+    diskFree: dir => invoke('disk_free', { dir: dir || null }).catch(() => null),
     // อัปเดตแอป (Windows / macOS / Linux AppImage): ตรวจ → { version, current, notes } หรือ null · ติดตั้งแล้วแอปเปิดใหม่เอง
     updateCheck: () => invoke('update_check'),
     updateInstall: () => invoke('update_install'),

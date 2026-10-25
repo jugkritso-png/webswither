@@ -2796,3 +2796,26 @@ html[data-orient=v] .safe-area { inset: 5% auto auto 50%; height: 90%; aspect-ra
 .dr-again { height: 44px; justify-content: center; }
 .dr-go { height: 50px; font-size: 16px; justify-content: center; }
 @media (max-width: 900px) { .dr-wrap { grid-template-columns: 1fr; } .dr-side { padding-left: 0; border-left: 0; } }
+
+/* ---- พื้นที่ดิสก์ (design 68/70) */
+button.stat-disk { border: 1px solid var(--line-2); border-radius: 999px; background: transparent; color: inherit; font: inherit; padding: 1px 10px; cursor: pointer; margin-left: auto; }
+button.stat-disk.warn { border-color: var(--amber); background: rgba(245,165,36,.1); }
+button.stat-disk.bad { border-color: #E5484D; background: rgba(229,72,77,.12); }
+.disk-pop { position: fixed; right: 16px; bottom: 44px; z-index: 60; width: 360px; display: flex; flex-direction: column; gap: 12px; padding: 16px; border-radius: 12px; background: #12161C; border: 1px solid #2A313D; box-shadow: 0 16px 40px rgba(0,0,0,.55); }
+.disk-pop[hidden] { display: none; }
+.dp-h { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; }
+.dp-h small { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 60%; }
+.dp-big { display: flex; align-items: baseline; gap: 8px; }
+.dp-big b { font-size: 26px; }
+.dp-big small { color: var(--muted); }
+.dp-bar { position: relative; height: 10px; border-radius: 5px; background: #2A313D; overflow: hidden; }
+.dp-bar i { position: absolute; inset: 0 auto 0 0; background: #2EA36B; }
+.dp-bar i.amber { background: #F0B44C; } .dp-bar i.red { background: #E5484D; }
+.dp-rows { display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+.dp-rows > div { display: flex; justify-content: space-between; gap: 10px; }
+.dp-rows span { color: var(--muted); }
+.dp-sum { padding-top: 6px; border-top: 1px solid #222935; }
+.dp-sum span { color: var(--text); }
+.dp-rows .red { color: #FF9EA2; } .dp-rows .amber { color: #F0B44C; } .dp-rows .ok { color: #7FD1A7; }
+.disk-pop p { margin: 0; font-size: 12px; color: var(--muted); line-height: 1.6; }
+.m-alert-actions { flex-wrap: wrap; }
