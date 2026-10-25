@@ -9644,16 +9644,41 @@ onmessage = async e => {
     menu.className = 'menu add-sheet';
     menu.setAttribute('role', 'menu');
     menu.setAttribute('aria-label', title);
-    menu.innerHTML = `<div class="add-sheet-title">${esc(title)}</div>` + groups.map(([label, list]) => `
-      <div class="menu-label">${esc(label)}</div>
-      <div class="add-grid">${list.map(it => `<button role="menuitem" class="add-tile" data-i="${n++}">${icon(it[0])}<span><b>${esc(it[1])}</b><small>${esc(it[2])}</small></span></button>`).join('')}</div>`).join('');
+    // จอใหญ่: หน้าต่างกลางจอพร้อมช่องค้นหา + ลากไฟล์มาวาง (ตามแบบ) · มือถือ: แผ่นเลื่อนขึ้นจากล่างเหมือนเดิม
+    const big = !isPhoneUI() && title === 'เพิ่มแหล่งภาพ';
+    menu.innerHTML = (big
+      ? `<div class="add-big-head"><b>${esc(title)}</b><label class="add-search">${icon('search')}<input type="search" placeholder="ค้นหา เช่น กล้อง, NDI, สไลด์" aria-label="ค้นหาแหล่งภาพ"></label><span class="add-drop-hint">ลากไฟล์วิดีโอ / รูป / PDF มาวางในหน้าต่างนี้ก็ได้</span><button type="button" class="btn btn-ghost btn-icon add-close" aria-label="ปิด">${icon('x')}</button></div>`
+      : `<div class="add-sheet-title">${esc(title)}</div>`) + groups.map(([label, list], gi) => `
+      <div class="add-group g${gi % 5}"><div class="menu-label">${esc(label)}</div>
+      <div class="add-grid">${list.map(it => `<button role="menuitem" class="add-tile" data-i="${n++}" data-q="${esc((it[1] + ' ' + it[2]).toLowerCase())}">${icon(it[0])}<span><b>${esc(it[1])}</b><small>${esc(it[2])}</small></span></button>`).join('')}</div></div>`).join('')
+      + (big ? '<p class="note add-none" hidden>ไม่พบแหล่งภาพที่ค้นหา</p>' : '');
+    if (big) {
+      menu.classList.add('add-big');
+      const scrim = document.createElement('div');
+      scrim.className = 'menu add-scrim';
+      document.body.appendChild(scrim);
+      menu.querySelector('.add-close').addEventListener('click', closeMenu);
+      menu.querySelector('.add-search input').addEventListener('input', e => {
+        const q = e.target.value.trim().toLowerCase();
+        let any = false;
+        for (const t of menu.querySelectorAll('.add-tile')) { const hit = !q || t.dataset.q.includes(q); t.hidden = !hit; any = any || hit; }
+        for (const g of menu.querySelectorAll('.add-group')) g.hidden = ![...g.querySelectorAll('.add-tile')].some(t => !t.hidden);
+        menu.querySelector('.add-none').hidden = any;
+      });
+      menu.addEventListener('dragover', e => { if ([...(e.dataTransfer?.types || [])].includes('Files')) { e.preventDefault(); menu.classList.add('is-drop'); } });
+      menu.addEventListener('dragleave', e => { if (!menu.contains(e.relatedTarget)) menu.classList.remove('is-drop'); });
+      menu.addEventListener('drop', e => { const files = [...(e.dataTransfer?.files || [])]; if (!files.length) return; e.preventDefault(); closeMenu(); audio.ensure(); addDroppedFiles(files); });
+    }
     document.body.appendChild(menu);
     // ปุ่มที่ซ่อนอยู่ (เช่น แผงเสียงบนมือถือ) — วางเมนูกลางจอแทน
     let r = anchor.getBoundingClientRect();
     if (!r.width) r = { right: innerWidth / 2 + menu.offsetWidth / 2, top: innerHeight / 3, bottom: innerHeight / 3 };
     const mw = menu.offsetWidth, mh = menu.offsetHeight;
-    menu.style.left = `${clamp(r.right - mw, 8, innerWidth - mw - 8)}px`;
-    menu.style.top = `${r.bottom + 6 + mh > innerHeight ? Math.max(8, r.top - mh - 6) : r.bottom + 6}px`;
+    if (big) { menu.style.left = `${Math.max(8, (innerWidth - mw) / 2)}px`; menu.style.top = `${Math.max(8, (innerHeight - mh) / 2)}px`; }
+    else {
+      menu.style.left = `${clamp(r.right - mw, 8, innerWidth - mw - 8)}px`;
+      menu.style.top = `${r.bottom + 6 + mh > innerHeight ? Math.max(8, r.top - mh - 6) : r.bottom + 6}px`;
+    }
     menu.addEventListener('click', e => {
       const b = e.target.closest('[data-i]');
       if (!b) return;
@@ -9661,10 +9686,10 @@ onmessage = async e => {
       audio.ensure();
       items[+b.dataset.i][3]();
     });
-    menu.querySelector('button').focus({ preventScroll: true });
+    (menu.querySelector('.add-search input') || menu.querySelector('button')).focus({ preventScroll: true });
     setTimeout(() => document.addEventListener('pointerdown', outsideMenu, true));
   }
-  function outsideMenu(e) { if (!e.target.closest('.menu')) closeMenu(); }
+  function outsideMenu(e) { if (!e.target.closest('.menu') || e.target.closest('.add-scrim')) closeMenu(); }
   function closeMenu() {
     $$('.menu').forEach(m => m.remove());
     document.removeEventListener('pointerdown', outsideMenu, true);
