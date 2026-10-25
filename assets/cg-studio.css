@@ -2,3 +2,123 @@
 @media(max-width:1120px){.app-shell{grid-template-columns:220px minmax(400px,1fr) 260px}.topbar{gap:11px}.doc-name input{width:130px}.top-actions{gap:4px}.top-actions .button{padding:0 7px;font-size:9px}.canvas-stage{width:min(100%,calc((100vh - 410px)*1.7778))}.timeline-controls{gap:4px}.timeline-controls select{max-width:76px}}
 @media(max-width:860px){body{height:auto;min-height:100vh;overflow:auto}.topbar{height:auto;min-height:58px;flex-wrap:wrap;padding:8px 10px}.connection{margin-left:auto}.top-actions{width:100%;overflow:auto}.app-shell{height:auto;min-height:calc(100vh - 100px);grid-template-columns:1fr;grid-template-rows:auto minmax(680px,auto) auto}.left-panel{border-right:0;border-bottom:1px solid var(--line);max-height:310px}.inspector-panel{border-left:0;border-top:1px solid var(--line);max-height:none}.center-panel{min-height:720px;grid-template-rows:43px minmax(250px,1fr) 23px 140px 58px 22px}.canvas-stage{width:min(100%,calc((100vw - 40px)*.5625*1.7778));max-height:100%}.bottom-dock{grid-template-columns:.8fr 1.2fr}.scene-cards .scene-card{flex-basis:74px;height:80px}}
 @media(max-width:540px){.doc-name{order:3;width:100%;border:0;padding-left:0}.connection{margin-left:auto}.connection small{display:none}.brand{font-size:11px}.brand b{font-size:9px}.app-shell{grid-template-rows:auto minmax(650px,auto) auto}.center-panel{grid-template-rows:38px minmax(220px,1fr) 20px 132px 55px 22px}.canvas-stage-wrap{padding:9px}.canvas-stage{width:100%}.canvas-footer{font-size:7px}.canvas-footer span:nth-child(2){display:none}.bottom-dock{grid-template-columns:1fr}.timeline-dock{display:block}.playout-row{align-items:flex-start;flex-direction:column}.playout-actions{width:100%}.playout-actions .button{flex:1}.output-status small{display:none}}
+
+/* ==========================================================================
+   ชุดดีไซน์เดียวกับ WebMix Pro (ทับสไตล์เดิม): สี · ตัวอักษร · ขนาดขั้นต่ำ · ปุ่ม Take/Preview แบบ PGM/PVW
+   ========================================================================== */
+:root {
+  --bg: #0B0E13; --panel: #11151B; --panel2: #171B22; --panel3: #1B212B;
+  --line: #222935; --line2: #2A313D; --text: #E8ECF1; --muted: #9AA4B2; --dim: #5D6578;
+  --accent: #C8323A; --pgm: #E5484D; --pvw: #2EA36B; --pvw-tag: #18794E;
+  --blue: #2F6FE8; --blue2: #4F86F0; --amber: #F0B44C; --green: #2EA36B;
+  --mono: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: "IBM Plex Sans Thai", Inter, system-ui, sans-serif;
+}
+body { font-size: 13px; background: var(--bg); padding: 8px; display: flex; flex-direction: column; gap: 8px; }
+.button, .icon-button, .tiny-button, .tool, .field input:not([type=color]), .field select, .field textarea, .library, .doc-name input, .timeline-controls select, .duration-field input, .output-status select { font-family: inherit; }
+
+/* แถบบน: กล่องโค้งมนแบบสตูดิโอ */
+.topbar { height: 54px; flex: none; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); padding: 0 10px 0 14px; gap: 16px; }
+.brand { gap: 10px; letter-spacing: 0; }
+.brand-mark { position: relative; width: 24px; height: 24px; border-radius: 7px; background: conic-gradient(from 200deg, #ef4444, #f5a524, #ef4444); box-shadow: 0 2px 12px rgba(239,68,68,.35); }
+.brand-mark::after { content: ""; position: absolute; inset: 7px; border-radius: 50%; background: var(--bg); box-shadow: 0 0 0 2px rgba(255,255,255,.08); }
+.brand-name { font-size: 16px; font-weight: 800; }
+.brand-tag { margin-left: 6px; font-size: 9.5px; font-weight: 800; letter-spacing: .14em; padding: 2px 6px; border-radius: 4px; color: var(--amber); background: rgba(240,180,76,.1); border: 1px solid rgba(240,180,76,.3); vertical-align: 2px; }
+.doc-name { border-left-color: var(--line); }
+.doc-name span, .eyebrow { font-size: 11px; letter-spacing: .1em; color: var(--muted); }
+.doc-name input { font: 600 14px inherit; font-family: inherit; width: 220px; }
+.connection { font-size: 12px; color: var(--muted); }
+.connection small { font-size: 11px; border-left-color: var(--line); }
+.connection.is-connected i, .output-status i { background: var(--green); box-shadow: 0 0 10px rgba(46,163,107,.55); }
+
+/* ปุ่ม */
+.button, .icon-button, .tiny-button, .tool { border-radius: 8px; border-color: var(--line2); background: var(--panel2); color: var(--text); font-size: 13px; font-weight: 600; height: 36px; }
+.button:hover:not(:disabled), .icon-button:hover:not(:disabled), .tiny-button:hover, .tool:hover { border-color: var(--blue2); background: #1B2232; }
+.button.quiet { background: var(--panel2); }
+.icon-button { width: 36px; height: 36px; }
+.tiny-button { width: 28px; height: 28px; font-size: 16px; }
+.library { height: 36px; max-width: 150px; border-radius: 8px; border-color: var(--line2); background: var(--panel2); font-size: 12px; }
+.button.live { background: var(--accent); border-color: var(--pgm); color: #fff; padding: 0 26px; font-weight: 700; letter-spacing: .02em; }
+.button.live:hover:not(:disabled) { background: #d93a42; border-color: #ff6b70; }
+.button.pvw { background: var(--pvw-tag); border-color: var(--pvw); color: #fff; }
+.button.pvw:hover:not(:disabled) { background: #1d8a59; border-color: #4cc489; }
+
+/* โครงสามคอลัมน์เป็นกล่องแยก (เหมือนแผงในสตูดิโอ) */
+.app-shell { flex: 1; height: auto; min-height: 0; gap: 8px; grid-template-columns: 272px minmax(450px, 1fr) 304px; }
+.left-panel, .inspector-panel, .center-panel { border: 1px solid var(--line) !important; border-radius: 10px; background: var(--panel); }
+.center-panel { grid-template-rows: 48px minmax(180px, 1fr) 26px 164px 68px 26px; }
+.panel-tabs { height: 48px; background: var(--panel); border-bottom-color: var(--line); border-radius: 10px 10px 0 0; }
+.tab { font-size: 12px; letter-spacing: .08em; }
+.tab.is-active { border-color: var(--blue2); }
+.section-label, .dock-head, .block-label, .group-title { font-size: 11px; letter-spacing: .1em; color: var(--muted); }
+.group-title { color: var(--text); }
+.scene-chip { font-size: 12px; border-radius: 8px; border-color: var(--line2); background: var(--panel2); }
+.scene-chip.is-active, .scene-card.is-active { border-color: var(--blue2); background: rgba(47,111,232,.14); color: #fff; }
+.element-heading, .block-label, .field-group { border-top-color: var(--line); }
+.element-row { height: 36px; border-radius: 8px; font-size: 13px; color: #C9D1DB; }
+.element-row:hover { background: var(--panel2); }
+.element-row.is-selected { background: rgba(47,111,232,.16); box-shadow: inset 3px 0 var(--blue2); }
+.element-row .layer-icon { color: var(--blue2); }
+.element-row .lock { color: var(--amber); }
+.empty-tree, .panel-hint, .inspector-note { font-size: 12px; }
+.block-grid button { height: 68px; border-radius: 10px; border-color: var(--line2); background: var(--panel2); font-size: 12px; color: #C9D1DB; }
+.block-grid button:hover, .template-list button:hover { border-color: var(--blue2); background: rgba(47,111,232,.1); }
+.block-grid b { color: var(--blue2); }
+.template-list button { height: 52px; border-radius: 10px; border-color: var(--line2); background: var(--panel2); font-size: 13px; }
+.template-swatch { border-radius: 4px; background: #0B0E13; }
+.template-swatch:after { background: var(--accent); }
+
+/* แคนวาส */
+.canvas-toolbar { background: var(--panel); border-bottom-color: var(--line); border-radius: 10px 10px 0 0; }
+.tool-group { font-size: 12px; color: var(--muted); }
+.tool { height: 32px; width: 34px; }
+.tool.is-active { background: rgba(47,111,232,.18); border-color: var(--blue2); }
+.canvas-dimension, .canvas-footer, #zoom-label { font-family: var(--mono); font-size: 11px; }
+.guide-toggle input, .check-field input { accent-color: var(--blue2); }
+.canvas-stage-wrap { background-color: #000; background-image: radial-gradient(#161b23 1px, transparent 1px); }
+.canvas-stage { border-color: var(--line2); border-radius: 6px; }
+.safe-overlay { border-color: rgba(127,166,255,.45); color: rgba(127,166,255,.7); font: 10px var(--mono); }
+.selection-box { border-color: var(--blue2); }
+.handle { background: #fff; border-color: var(--blue2); width: 10px; height: 10px; border-radius: 2px; }
+.handle.nw { left: -6px; top: -6px; } .handle.ne { right: -6px; top: -6px; } .handle.sw { left: -6px; bottom: -6px; } .handle.se { right: -6px; bottom: -6px; }
+
+/* แถบล่าง */
+.bottom-dock { background: var(--panel); border-top-color: var(--line); }
+.scenes-dock, .timeline-dock { border-color: var(--line); border-radius: 10px; background: #0E1218; }
+.dock-head span { font-size: 11px; }
+.scene-entry:has(.scene-card) { flex-basis: 112px; }
+.scene-card { flex-basis: 112px; height: 104px; border-radius: 8px; border-color: var(--line2); background: linear-gradient(150deg, #1B2232, #11151B); }
+.scene-card small { font-size: 11px; color: var(--muted); }
+.scene-card b { font-size: 12px; }
+.timeline-controls label { font-size: 11px; color: var(--muted); }
+.timeline-controls select, .duration-field input { height: 32px; border-radius: 8px; border-color: var(--line2); background: var(--panel2); font-size: 12px; max-width: 110px; }
+.hold-track { height: 32px; border-radius: 8px; border-color: #2c4a7a; background: linear-gradient(90deg, #1B3A6B, #172a4a); font-size: 11px; color: #A9C3FF; }
+.hold-track:before { background: var(--blue2); } .hold-track:after { background: #2a4f8f; }
+.playout-row { background: var(--panel); border-top-color: var(--line); padding: 10px 14px; }
+.playout-row.is-onair { box-shadow: inset 0 3px 0 var(--pgm); }
+.output-status span { font-size: 13px; }
+.output-status select { height: 30px; max-width: 110px; border-radius: 8px; border-color: var(--line2); background: var(--panel2); font-size: 12px; }
+.output-status small { font-size: 11px; border-left-color: var(--line); }
+.air-chip { padding: 4px 10px !important; border-radius: 999px; background: var(--panel3); color: #C9D1DB; font-size: 11px !important; font-weight: 800 !important; letter-spacing: .08em; white-space: nowrap; }
+.air-chip.is-pgm { background: var(--accent); color: #fff; }
+.air-chip.is-pvw { background: var(--pvw-tag); color: #fff; }
+.playout-actions .button { height: 40px; }
+#toast { font-size: 12px; color: var(--amber); background: transparent; border-radius: 0 0 10px 10px; }
+
+/* แผงคุณสมบัติ */
+.inspector-panel { padding: 16px; }
+.inspector-head { border-bottom-color: var(--line); }
+.inspector-head h2 { font-size: 16px; }
+.field > span { font-size: 12px; color: var(--muted); font-weight: 600; }
+.field input:not([type=color]), .field select, .field textarea { height: 36px; border-radius: 8px; border-color: var(--line2); background: #0E1218; font-size: 13px; }
+.field textarea { height: auto; }
+.field input:focus, .field select:focus, .field textarea:focus { border-color: var(--blue2); }
+.field input[type=color] { height: 36px; border-radius: 8px; border-color: var(--line2); background: #0E1218; }
+.inspector-note, .readout { border-radius: 8px; border-color: var(--line); background: var(--panel2); }
+.readout { font-family: var(--mono); font-size: 12px; }
+.check-field { font-size: 13px; color: #C9D1DB; }
+.layer-actions .button { height: 32px; font-size: 12px; }
+
+@media (max-width: 1120px) { .app-shell { grid-template-columns: 236px minmax(400px, 1fr) 272px; } .doc-name input { width: 140px; } .top-actions .button { padding: 0 9px; font-size: 12px; } }
+@media (max-width: 860px) { body { padding: 6px; } .app-shell { grid-template-columns: 1fr; } .center-panel { grid-template-rows: 48px minmax(250px, 1fr) 26px 150px 62px 26px; } }
+@media (max-width: 540px) { .center-panel { grid-template-rows: 44px minmax(220px, 1fr) 24px 140px auto 26px; } .topbar { height: auto; } .brand-name { font-size: 14px; } }

@@ -64,6 +64,11 @@
     $('#take').disabled = $('#clear').disabled = $('#preview-webmix').disabled = !connected;
     $('#take').textContent = isOnAir ? 'อัปเดตบนจอ' : 'Take';
     $('#preview-webmix').textContent = isStaged ? 'เอาออกจาก Preview' : 'Preview ใน WebMix';
+    // ป้ายสถานะแบบเดียวกับสตูดิโอ: ON AIR (แดง) · PREVIEW (เขียว) · OFF AIR
+    const chip = $('#air-chip');
+    chip.textContent = isOnAir ? 'ON AIR' : isStaged ? 'PREVIEW' : connected ? 'OFF AIR' : 'ไม่ได้เชื่อมต่อ';
+    chip.className = 'air-chip' + (isOnAir ? ' is-pgm' : isStaged ? ' is-pvw' : '');
+    $('.playout-row').classList.toggle('is-onair', isOnAir);
     ensureTickerLoop();
   }
   function sceneMarkup(scene, compact = false) {

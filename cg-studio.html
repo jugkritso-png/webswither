@@ -3,18 +3,18 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="theme-color" content="#090b0f">
+  <meta name="theme-color" content="#0B0E13">
   <title>WebMix CG Studio</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="assets/cg-studio.css">
   <script src="assets/js/cg.js" defer></script>
   <script src="assets/js/cg-studio.js" defer></script>
 </head>
 <body>
   <header class="topbar">
-    <a class="brand" href="./"><span class="brand-mark">W</span><span>WEBMIX <b>CG STUDIO</b></span></a>
+    <a class="brand" href="./" title="กลับไปสตูดิโอ"><span class="brand-mark"></span><span class="brand-name">WebMix<span class="brand-tag">CG STUDIO</span></span></a>
     <label class="doc-name"><span>PROJECT</span><input id="doc-name" value="กราฟิกใหม่" maxlength="80" aria-label="ชื่อโปรเจกต์ CG"></label>
     <div class="connection"><i id="connection-dot"></i><span id="connection-text">โหมดออกแบบ</span><small id="save-state">บันทึกในเครื่อง</small></div>
     <div class="top-actions">
@@ -69,7 +69,7 @@
         <section class="scenes-dock"><div class="dock-head"><b>SCENES</b><button id="add-scene-bottom" class="tiny-button" title="เพิ่ม Scene">＋</button></div><div id="scene-cards" class="scene-cards"></div></section>
         <section class="timeline-dock"><div class="dock-head"><b>PLAYOUT TRANSITIONS</b><span>IN · HOLD · OUT</span></div><div class="timeline-controls"><label>IN<select id="transition-in"><option value="fade">Fade</option><option value="cut">Cut</option><option value="wipe">Wipe</option><option value="zoom">Zoom</option><option value="slide-left">Slide Left</option><option value="slide-right">Slide Right</option><option value="slide-up">Slide Up</option><option value="slide-down">Slide Down</option></select></label><div class="hold-track"><span>HOLD</span><i></i></div><label>OUT<select id="transition-out"><option value="fade">Fade</option><option value="cut">Cut</option><option value="wipe">Wipe</option><option value="zoom">Zoom</option><option value="slide-left">Slide Left</option><option value="slide-right">Slide Right</option><option value="slide-up">Slide Up</option><option value="slide-down">Slide Down</option></select></label><label class="duration-field">DURATION<input id="transition-duration" type="number" min="150" max="3000" step="50" value="500"> ms</label></div></section>
       </div>
-      <section class="playout-row"><div class="output-status"><i></i><span id="overlay-label">Overlay 1</span><select id="overlay-slot" aria-label="เลือกช่อง Overlay"><option value="0">Overlay 1</option><option value="1">Overlay 2</option><option value="2">Overlay 3</option><option value="3">Overlay 4</option><option value="4">Overlay 5</option><option value="5">Overlay 6</option><option value="6">Overlay 7</option><option value="7">Overlay 8</option></select><small>WEBMIX OUTPUT</small></div><div class="playout-actions"><button id="preview-webmix" class="button quiet" disabled>Preview ใน WebMix</button><button id="take" class="button live" disabled>Take</button><button id="clear" class="button quiet" disabled>Clear</button></div></section>
+      <section class="playout-row"><div class="output-status"><span id="air-chip" class="air-chip">OFF AIR</span><span id="overlay-label">Overlay 1</span><select id="overlay-slot" aria-label="เลือกช่อง Overlay"><option value="0">Overlay 1</option><option value="1">Overlay 2</option><option value="2">Overlay 3</option><option value="3">Overlay 4</option><option value="4">Overlay 5</option><option value="5">Overlay 6</option><option value="6">Overlay 7</option><option value="7">Overlay 8</option></select><small>WEBMIX OUTPUT</small></div><div class="playout-actions"><button id="preview-webmix" class="button pvw" disabled>Preview ใน WebMix</button><button id="take" class="button live" disabled>Take</button><button id="clear" class="button quiet" disabled>Clear</button></div></section>
       <div id="toast" role="status" aria-live="polite"></div>
     </section>
 
