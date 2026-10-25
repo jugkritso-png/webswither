@@ -1418,6 +1418,100 @@
     if (btn) btn.innerHTML = icon(inp.el.paused ? 'play' : 'pause');
   }
 
+  /* ------------------------------------------------------ resizable layout */
+  // ลากเส้นแบ่งปรับขนาด: ↕ จอ Preview/Program กับแผงด้านล่าง · ↔ คอลัมน์ แหล่งภาพ | ซ้อนภาพ | เสียง
+  // ค่าเก็บในเครื่อง (ตัวแปร CSS บน <html>) · ดับเบิลคลิก = ค่าเริ่มต้น · โฟกัสแล้วกดลูกศรได้ · จอแคบ/มือถือใช้เลย์เอาต์อัตโนมัติ
+  const layoutSize = {
+    v: store.get('layoutSize', {}) || {},
+    root: document.documentElement,
+    apply() {
+      const v = this.v, r = this.root.style;
+      if (v.mon) r.setProperty('--mon-vh', `${v.mon}vh`); else r.removeProperty('--mon-vh');
+      if (v.b && v.c) { r.setProperty('--ws-b', `${v.b}px`); r.setProperty('--ws-c', `${v.c}px`); } else { r.removeProperty('--ws-b'); r.removeProperty('--ws-c'); }
+      requestAnimationFrame(() => this.place());
+    },
+    save() { store.set('layoutSize', this.v); this.apply(); },
+    // จอภาพสูงสุดเท่าที่คอลัมน์กว้างพอ (สูงกว่านั้นไม่มีผล)
+    monMax() {
+      const col = $('.monitor-panel.pvw .monitor-wrap');
+      return col ? clamp((col.clientWidth - 20) * 9 / 16 / innerHeight * 100, 20, 75) : 60;
+    },
+    monNow() { const m = $('.monitor-panel.pvw .monitor'); return m ? m.getBoundingClientRect().height / innerHeight * 100 : 42; },
+    // ย่อได้จนแผงเปลี่ยนภาพ (กลาง) ยังแสดงครบไม่ต้องเลื่อน
+    setMon(vh) {
+      this.v.mon = clamp(vh, 15, this.monMax());
+      this.apply();
+      const d = $('.stage > .deck');
+      for (let i = 0; i < 3 && d && d.scrollHeight > d.clientHeight + 1; i++) { this.v.mon += (d.scrollHeight - d.clientHeight) / innerHeight * 100; this.apply(); }
+      this.v.mon = Math.round(this.v.mon * 10) / 10;
+      this.save();
+    },
+    cols() {
+      const ws = $('.workspace'), p = [$('.inputs-panel'), $('.overlays-panel'), $('.audio-panel')];
+      return { ws, p, b: p[1].getBoundingClientRect().width, c: p[2].getBoundingClientRect().width, w: ws.clientWidth };
+    },
+    setCols(b, c) {
+      const { w } = this.cols(), minA = 380, gaps = 16;
+      c = clamp(c, 240, w - gaps - minA - 220);
+      b = clamp(b, 220, w - gaps - minA - c);
+      this.v.b = Math.round(b); this.v.c = Math.round(c); this.save();
+    },
+    place() {
+      const { ws, p } = this.cols();
+      $$('.split-v', ws).forEach((h, i) => { h.style.left = `${p[i + 1].offsetLeft - 4}px`; });
+    },
+    drag(el, onMove) {
+      el.addEventListener('pointerdown', e => {
+        if (e.button !== 0) return;
+        e.preventDefault();
+        el.setPointerCapture(e.pointerId);
+        el.classList.add('is-drag'); this.root.classList.add('is-resizing');
+        const start = onMove(null, e);
+        const move = ev => onMove(start, ev);
+        const up = () => { el.classList.remove('is-drag'); this.root.classList.remove('is-resizing'); el.removeEventListener('pointermove', move); el.removeEventListener('pointerup', up); el.removeEventListener('pointercancel', up); };
+        el.addEventListener('pointermove', move); el.addEventListener('pointerup', up); el.addEventListener('pointercancel', up);
+      });
+    },
+    init() {
+      const ws = $('.workspace'), hs = $('#split-stage');
+      if (!ws || !hs) return;
+      for (let i = 0; i < 2; i++) {
+        const h = document.createElement('div');
+        h.className = 'split split-v';
+        h.setAttribute('role', 'separator'); h.setAttribute('aria-orientation', 'vertical'); h.tabIndex = 0;
+        h.title = i ? 'ลากเพื่อปรับความกว้าง ซ้อนภาพ / เสียง ↔ · ดับเบิลคลิก = ค่าเริ่มต้น' : 'ลากเพื่อปรับความกว้าง แหล่งภาพ / ซ้อนภาพ ↔ · ดับเบิลคลิก = ค่าเริ่มต้น';
+        ws.appendChild(h);
+        this.drag(h, (st, e) => {
+          if (!st) { const c = this.cols(); return { x: e.clientX, b: c.b, c: c.c }; }
+          const dx = e.clientX - st.x;
+          if (i === 0) this.setCols(st.b - dx, st.c); else this.setCols(st.b + dx, st.c - dx);
+        });
+        h.addEventListener('dblclick', () => { delete this.v.b; delete this.v.c; this.save(); });
+        h.addEventListener('keydown', e => {
+          const d = { ArrowLeft: -20, ArrowRight: 20 }[e.key];
+          if (!d) return;
+          e.preventDefault(); e.stopPropagation();
+          const c = this.cols();
+          if (i === 0) this.setCols(c.b - d, c.c); else this.setCols(c.b + d, c.c - d);
+        });
+      }
+      this.drag(hs, (st, e) => {
+        if (!st) return { y: e.clientY, mon: this.monNow() };
+        this.setMon(st.mon + (e.clientY - st.y) / innerHeight * 100);
+      });
+      hs.addEventListener('dblclick', () => { delete this.v.mon; this.save(); });
+      hs.addEventListener('keydown', e => {
+        const d = { ArrowUp: -2, ArrowDown: 2 }[e.key];
+        if (!d) return;
+        e.preventDefault(); e.stopPropagation();
+        this.setMon(this.monNow() + d);
+      });
+      new ResizeObserver(() => this.place()).observe(ws);
+      this.apply();
+    },
+    reset() { this.v = {}; this.save(); }
+  };
+
   /* ------------------------------------------------------ transport (timeline ใต้จอ Preview / Program) */
   // แบบสตูดิโอ: เล่น/หยุด · เริ่มใหม่ · วนซ้ำ · แถบเลื่อนตำแหน่ง · เวลาที่เล่นไป / ความยาว · เวลาที่เหลือ (เหลือง ≤15 วิ · แดงกะพริบ ≤5 วิ)
   // ใช้กับคลิปวิดีโอ · Playlist · รีเพลย์ · สไลด์ (หน้า) — แหล่งอื่นแสดงชนิดแหล่งภาพ (LIVE) เฉย ๆ
@@ -8348,6 +8442,7 @@ onmessage = async e => {
     // มือถือ: แท็บล่าง และปุ่ม "หยุดไลฟ์…" บนแจ้งเตือนของ Android (MainActivity เรียก WebMix.nativeAction)
     setMobileView(['switch', 'audio', 'graphics'].includes(store.get('mview', 'switch')) ? store.get('mview', 'switch') : 'switch');
     transport.init();
+    layoutSize.init();
     $('#lufs').addEventListener('click', e => { audio.ensure(); lufs.openMenu(e.currentTarget); });
     // ทอล์กแบ็ก: กดค้างเพื่อพูด
     const talkBtn = $('#btn-talk');
@@ -8873,7 +8968,7 @@ onmessage = async e => {
     $$('#seg-cardsize button').forEach(b => { b.classList.toggle('is-active', b.dataset.size === cardSize()); b.addEventListener('click', () => setCardSize(b.dataset.size)); });
 
     // สำหรับดีบัก/ทดสอบอัตโนมัติ
-    window.webmix = { chatFeed, chatAdd, chatShow, chatHide, playlist, dataSources, timerControl, multiview, renderer, gpu, setRenderer: v => { settings.renderer = v; renderer.resolve(); updateStatus(); }, show, ovl, setChannel, toggleInputOverlay, useRecFolder: dir => { recFolder = dir; }, inputs, state, settings, overlays, audio, rec, iso, stinger, replayCapture, slideGo, midi, checkAppUpdate, macros, runMacro, openCamControl, abr: { state: abr, decide: abrDecide, apply: abrApply, tick: abrTick }, streamer, wireless, cut, autoTransition, setPreview, tr, ftb, padFire, chanKey, remote: remoteCtl, lufs };
+    window.webmix = { chatFeed, chatAdd, chatShow, chatHide, playlist, dataSources, timerControl, multiview, renderer, gpu, setRenderer: v => { settings.renderer = v; renderer.resolve(); updateStatus(); }, show, ovl, setChannel, toggleInputOverlay, useRecFolder: dir => { recFolder = dir; }, inputs, state, settings, overlays, audio, rec, iso, stinger, replayCapture, slideGo, midi, checkAppUpdate, macros, runMacro, openCamControl, abr: { state: abr, decide: abrDecide, apply: abrApply, tick: abrTick }, streamer, wireless, cut, autoTransition, setPreview, tr, ftb, padFire, chanKey, remote: remoteCtl, lufs, layoutSize };
   }
 
   boot();

@@ -285,7 +285,7 @@ kbd {
 .monitor-wrap { display: flex; align-items: center; justify-content: center; flex: 1; padding: 10px; min-height: 0; }
 .monitor {
   position: relative;
-  width: min(100%, calc(42vh * 16 / 9));
+  width: min(100%, calc(var(--mon-vh, 42vh) * 16 / 9));
   aspect-ratio: 16 / 9;
   background: #000;
   border-radius: 4px;
@@ -442,7 +442,7 @@ kbd {
 /* ---------- Workspace ---------- */
 .workspace {
   display: grid;
-  grid-template-columns: minmax(0, 1.7fr) minmax(250px, .9fr) minmax(280px, 1fr);
+  grid-template-columns: minmax(0, 1.7fr) var(--ws-b, minmax(250px, .9fr)) var(--ws-c, minmax(280px, 1fr));
   gap: 8px;
   flex: 1;
   min-height: 0;
@@ -866,7 +866,7 @@ kbd {
 /* ---------- Responsive ---------- */
 @media (max-width: 1279px) {
   .stage { grid-template-columns: minmax(0, 1fr) 200px minmax(0, 1fr); }
-  .workspace { grid-template-columns: minmax(0, 1.4fr) minmax(240px, .9fr) minmax(260px, 1fr); }
+  .workspace { grid-template-columns: minmax(0, 1.4fr) var(--ws-b, minmax(240px, .9fr)) var(--ws-c, minmax(260px, 1fr)); }
 }
 
 @media (max-width: 1023px) {
@@ -1787,7 +1787,7 @@ html.remote-mode body > *:not(#remote):not(svg):not(.toasts):not(.modal-backdrop
 /* แถบ transport ใต้จอ Preview / Program — ใช้ภาษาออกแบบเดียวกับแอป:
    พื้นเข้ม + เส้นขอบ --line + มุม 6px · กลุ่มปุ่มแบบ .seg · กล่องเวลาแบบนาฬิกา TIME / ON AIR · สีตามช่อง (PVW เขียว / PGM แดง) */
 .monitor-wrap { flex-direction: column; gap: 6px; }
-.transport { width: min(100%, calc(42vh * 16 / 9)); min-height: 58px; flex: none; display: flex; flex-direction: column; justify-content: flex-end; gap: 4px; padding: 5px 6px 6px; border-radius: 6px; background: var(--panel-2); border: 1px solid var(--line); font-size: 11px; color: var(--muted); }
+.transport { width: min(100%, calc(var(--mon-vh, 42vh) * 16 / 9)); min-height: 58px; flex: none; display: flex; flex-direction: column; justify-content: flex-end; gap: 4px; padding: 5px 6px 6px; border-radius: 6px; background: var(--panel-2); border: 1px solid var(--line); font-size: 11px; color: var(--muted); }
 .tp-ctl { display: flex; align-items: center; gap: 6px; min-width: 0; height: 32px; }
 .transport .tp-src { font-size: 10px; font-weight: 700; letter-spacing: .16em; color: var(--dim); padding: 0 4px; }
 .transport .tp-live { margin-left: auto; padding: 0 6px; font-size: 10px; font-weight: 800; letter-spacing: .16em; color: var(--dim); }
@@ -1897,3 +1897,41 @@ html.remote-mode:has(#remote[data-tally=pgm]) body { background: #4a0606; }
 .rmt-ptt.is-on { background: #b91c1c; border-color: #ef4444; color: #fff; }
 .rmt-listen { width: 56px; height: 56px; border-radius: 12px; border: 1px solid var(--line-2); background: var(--panel-2); font-size: 22px; cursor: pointer; opacity: .55; }
 .rmt-listen.is-on { opacity: 1; border-color: #22c55e; }
+
+/* ปรับขนาดเลย์เอาต์: ลากเส้นแบ่ง (เฉพาะจอกว้าง ≥1024px) · ดับเบิลคลิก = ค่าเริ่มต้น · ปุ่มลูกศรเมื่อโฟกัส */
+.workspace { position: relative; }
+.split { position: relative; z-index: 20; flex: none; touch-action: none; outline: none; }
+.split::after { content: ""; position: absolute; border-radius: 2px; background: transparent; transition: background .12s; }
+.split:hover::after, .split:focus-visible::after, .split.is-drag::after { background: var(--blue); }
+.split-h { height: 8px; margin: -8px 0; cursor: row-resize; }
+.split-h::after { left: 40%; right: 40%; top: 3px; height: 2px; }
+.split-h::before { content: ""; position: absolute; left: 50%; top: 2px; width: 36px; height: 4px; margin-left: -18px; border-radius: 2px; background: var(--line-2); }
+.split-v { position: absolute; top: 0; bottom: 0; width: 8px; margin-left: -4px; cursor: col-resize; }
+.split-v::after { top: 30%; bottom: 30%; left: 3px; width: 2px; }
+.split-v::before { content: ""; position: absolute; top: 50%; left: 2px; width: 4px; height: 36px; margin-top: -18px; border-radius: 2px; background: var(--line-2); opacity: 0; transition: opacity .12s; }
+.workspace:hover .split-v::before, .split-v:focus-visible::before { opacity: 1; }
+html.is-resizing, html.is-resizing * { user-select: none !important; }
+html.is-resizing iframe, html.is-resizing canvas { pointer-events: none; }
+@media (max-width: 1023px), (pointer: coarse) and (orientation: landscape) and (max-height: 500px) { .split { display: none !important; } }
+/* แผงเปลี่ยนภาพ (กลาง) สูงตามจอภาพ ไม่ดันความสูงเอง — ย่อจอภาพแล้วได้พื้นที่ด้านล่างจริง · ที่น้อยลงปุ่มจะกระชับขึ้น
+   (เฉพาะเมาส์ — จอสัมผัสคงปุ่มขนาดนิ้วกด แผงกลางจึงกำหนดความสูงขั้นต่ำเอง) */
+@media (min-width: 1024px) and (pointer: fine) {
+  .stage > .deck { height: 0; min-height: 100%; overflow: hidden auto; container: deck / size; }
+  @container deck (max-height: 470px) {
+    .deck-body { gap: 7px; padding: 7px 9px; }
+    .deck-main { min-height: 100px; }
+    .key { min-height: 42px; }
+    .key-ovl { min-height: 36px; }
+    .deck-options { gap: 7px; }
+  }
+  @container deck (max-height: 390px) {
+    .deck-body { gap: 5px; padding: 5px 8px; }
+    .deck-main { min-height: 70px; gap: 6px; }
+    .key { min-height: 30px; font-size: 13px; }
+    .key kbd { display: none; }
+    .key-ovl { min-height: 26px; font-size: 12px; }
+    .deck .panel-head { height: 30px; }
+    .deck .opt-label { margin-bottom: 2px; }
+    .seg button { height: 22px; }
+  }
+}
