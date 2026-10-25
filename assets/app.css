@@ -2750,3 +2750,7 @@ html[data-orient=v] .safe-area { inset: 5% auto auto 50%; height: 90%; aspect-ra
 @media (max-width: 820px) { .rt-steps { grid-template-columns: 1fr; } }
 .modal.rt-modal .rt-team { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 8px; }
 .modal.rt-modal .rt-mem { padding: 8px 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel-2); }
+/* รหัสจับคู่ (design 36): ช่องเดียวแสดงเหมือนกล่อง 6 หลัก */
+.rmt-pair input.rmt-pin { height: 64px; font-size: 30px; font-weight: 600; letter-spacing: .55em; text-align: center; padding-left: .55em; background: repeating-linear-gradient(90deg, transparent 0 calc(100% / 6 - 2px), var(--line-2) calc(100% / 6 - 2px) calc(100% / 6)); }
+.rmt-pair-msg:not(:first-of-type) { color: inherit; }
+.rmt-pair-once { margin: 0; text-align: center; }

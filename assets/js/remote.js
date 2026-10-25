@@ -52,6 +52,7 @@
         <label class="field"><span>ตำแหน่ง</span><select name="role" class="select">${Object.entries(ROLES).map(([k, v]) => `<option value="${k}">${esc(v.label)} — ${esc(v.desc)}</option>`).join('')}</select></label>
         <label class="field"><span>รหัสจับคู่</span><input name="pin" class="input mono rmt-pin" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" required></label>
         <button class="btn btn-primary rmt-pair-go" type="submit">เข้าร่วมทีม</button>
+        <p class="note rmt-pair-once">จับคู่ครั้งเดียว — ครั้งต่อไปเปิดลิงก์เดิมแล้วเข้าได้เลย</p>
       </form>
       <aside class="rmt-team" hidden>
         <div class="rmt-members"></div>

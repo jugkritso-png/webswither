@@ -6674,7 +6674,7 @@
           this.fails = this.fails.filter(t => now - t < 60000);
           if (!md.pin) { this.deny(conn, 'pair', ''); return; }
           if (this.fails.length >= 5) { this.deny(conn, 'locked', 'ใส่รหัสผิดหลายครั้ง — รอ 1 นาทีแล้วลองใหม่'); return; }
-          if (String(md.pin) !== this.pin()) { this.fails.push(now); this.deny(conn, 'pin', 'รหัสจับคู่ไม่ถูกต้อง — ดูรหัส 6 หลักบนเครื่องหลัก (ปุ่ม “รีโมต”)'); return; }
+          if (String(md.pin) !== this.pin()) { this.fails.push(now); const left = 5 - this.fails.length; this.deny(conn, 'pin', `รหัสจับคู่ไม่ถูกต้อง — ดูรหัส 6 หลักบนเครื่องหลัก (ปุ่ม “รีโมต”)${left > 0 ? ` · ผิดได้อีก ${left} ครั้ง` : ''}`); return; }
           m = { dev, token: randCode(24, 'abcdefghijkmnpqrstuvwxyz23456789'), name: name || 'ไม่ระบุชื่อ', role: REMOTE_ROLES[md.role] ? md.role : 'monitor' };
           settings.remoteTeam = this.team().filter(t => t.dev !== dev).concat(m);
           saveSettings();
