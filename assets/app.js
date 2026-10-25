@@ -3551,25 +3551,35 @@
     const pct = v => Math.round(v * 100);
     const slider = (name, label, min, max, val) => `<label>${label} <b data-val="${name}">${val}</b><input type="range" class="range" name="${name}" min="${min}" max="${max}" value="${val}"></label>`;
     const result = await dialog({
-      title: `ตำแหน่ง — ${inp.name}`,
+      title: `ตำแหน่ง / ครอป / คีย์ — ${inp.name}`,
+      wide: true,
       body: `
-        <canvas class="layout-preview" width="960" height="540" tabindex="0" aria-label="ลากเพื่อย้าย · ลากมุมเพื่อย่อ/ขยาย · ลากขอบเพื่อครอป"></canvas>
-        <p class="note layout-hint">ลากภาพเพื่อย้าย · ลาก<b>มุม</b>เพื่อย่อ/ขยาย · ลาก<b>ขีดกลางขอบ</b>เพื่อครอป · ดับเบิลคลิก = เต็มจอ · ปุ่มลูกศรขยับทีละนิด (Shift = มากขึ้น) · ติดแนวกลาง/ขอบเอง (กด Alt ค้างเพื่อไม่ให้ติด)</p>
-        <div class="layout-presets">${LAYOUT_PRESETS.map(([label], i) => `<button type="button" data-preset="${i}">${label}</button>`).join('')}</div>
-        <div class="layout-grid">
-          ${slider('x', 'แนวนอน (X) %', -20, 120, pct(L.x))}${slider('y', 'แนวตั้ง (Y) %', -20, 120, pct(L.y))}
-          ${slider('scale', 'ขนาด %', 5, 100, pct(L.scale))}${slider('opacity', 'ความทึบ %', 0, 100, pct(L.opacity))}
-          ${slider('cl', 'ครอปซ้าย %', 0, 45, pct(L.crop.l))}${slider('cr', 'ครอปขวา %', 0, 45, pct(L.crop.r))}
-          ${slider('ct', 'ครอปบน %', 0, 45, pct(L.crop.t))}${slider('cb', 'ครอปล่าง %', 0, 45, pct(L.crop.b))}
-        </div>
-        <div class="field"><span>คีย์ฉาก (Chroma key)</span>
-          <div class="seg" data-seg="key"><button type="button" data-value="none">ไม่ใช้</button><button type="button" data-value="green">GREEN</button><button type="button" data-value="blue">BLUE</button></div>
-        </div>
-        <div class="layout-grid">${slider('tol', 'ความไว (Tolerance)', 10, 150, L.tolerance)}
-          <label class="check"><input type="checkbox" name="border" ${L.border ? 'checked' : ''}> ขอบสีขาว (เมื่อย่อภาพ)</label></div>
-        <p class="note">ค่านี้ใช้เมื่อแหล่งภาพนี้ขึ้นเป็น Overlay — เห็นผลทันทีบน Program/Preview (กด PVW ในแท็บ ซ้อนภาพ เพื่อดูก่อนขึ้นจอ)</p>`,
-      actions: [{ label: 'รีเซ็ต', value: 'reset' }, { label: 'เสร็จ', primary: true, value: 'ok' }],
+        <div class="ly-wrap">
+          <div class="ly-stage">
+            <div class="ly-canvas"><canvas class="layout-preview" width="960" height="540" tabindex="0" aria-label="ลากเพื่อย้าย · ลากมุมเพื่อย่อ/ขยาย · ลากขอบเพื่อครอป"></canvas><span class="ly-readout"></span></div>
+            <p class="note layout-hint">ลากกรอบเพื่อย้าย · ลาก<b>มุม</b>เพื่อย่อขยาย · ลาก<b>ขอบเหลือง</b>เพื่อครอป · ดับเบิลคลิก = เต็มจอ · ลูกศรขยับทีละนิด (Shift = มากขึ้น) · กด Alt ค้างเพื่อไม่ให้ติดแนว</p>
+            <div class="layout-presets">${LAYOUT_PRESETS.map(([label], i) => `<button type="button" data-preset="${i}">${label}</button>`).join('')}</div>
+          </div>
+          <aside class="ly-side" aria-label="ค่าละเอียด">
+            <b class="ly-h">ตำแหน่งและขนาด</b>
+            <div class="layout-grid">${slider('x', 'X %', -20, 120, pct(L.x))}${slider('y', 'Y %', -20, 120, pct(L.y))}
+              ${slider('scale', 'ขนาด %', 5, 100, pct(L.scale))}${slider('opacity', 'ความทึบ %', 0, 100, pct(L.opacity))}</div>
+            <b class="ly-h">ครอป</b>
+            <div class="layout-grid">${slider('cl', 'ซ้าย %', 0, 45, pct(L.crop.l))}${slider('cr', 'ขวา %', 0, 45, pct(L.crop.r))}
+              ${slider('ct', 'บน %', 0, 45, pct(L.crop.t))}${slider('cb', 'ล่าง %', 0, 45, pct(L.crop.b))}</div>
+            <div class="ly-key">
+              <b class="ly-h">คีย์ฉากเขียว</b>
+              <div class="seg" data-seg="key"><button type="button" data-value="none">ไม่ใช้</button><button type="button" data-value="green">GREEN</button><button type="button" data-value="blue">BLUE</button></div>
+              <div class="layout-grid ly-one">${slider('tol', 'ความใกล้เคียง (Tolerance)', 10, 150, L.tolerance)}</div>
+              <small class="note">หรือใช้ “ลบพื้นหลังด้วย AI” ที่การ์ดแหล่งภาพ (ไม่ต้องมีฉากเขียว)</small>
+            </div>
+            <label class="ly-row"><span>ขอบและเงา</span><label class="check"><input type="checkbox" name="border" ${L.border ? 'checked' : ''}> ขอบขาว (เมื่อย่อภาพ)</label></label>
+            <p class="note">ใช้เมื่อแหล่งภาพนี้ขึ้นเป็น Overlay — เห็นผลทันทีบน Program/Preview</p>
+          </aside>
+        </div>`,
+      actions: [{ label: 'คืนค่าเดิม', value: 'reset' }, { label: 'เสร็จ', primary: true, value: 'ok' }],
       onOpen(modal) {
+        modal.classList.add('ly-modal');
         const f = $('form', modal).elements;
         const paintSeg = () => $$('[data-seg="key"] button', modal).forEach(b => b.classList.toggle('is-active', b.dataset.value === L.key));
         const sync = () => {
@@ -3578,6 +3588,7 @@
             $(`[data-val="${name}"]`, modal).textContent = v;
           }
           paintSeg();
+          $('.ly-readout', modal).textContent = `X ${pct(L.x)}% · Y ${pct(L.y)}% · ขนาด ${pct(L.scale)}%`;
         };
         sync();
         modal.addEventListener('input', e => {

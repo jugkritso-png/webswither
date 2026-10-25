@@ -2570,7 +2570,7 @@ html[data-orient=v] .safe-area { inset: 5% auto auto 50%; height: 90%; aspect-ra
 @media (max-width: 900px) { .sm-stats { grid-template-columns: repeat(2, 1fr); } .sm-cols { grid-template-columns: 1fr; } }
 
 /* ---- เริ่มต้นใช้งาน (design 27) */
-.modal.ob.wide { max-width: 980px; }
+.modal.ob.wide { width: min(980px, calc(100vw - 24px)); max-width: none; }
 .ob-stepper { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; list-style: none; margin: 0 0 16px; padding: 0; }
 .ob-stepper li { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 10px; font-size: 13px; color: var(--muted, #9AA4B2); min-width: 0; white-space: nowrap; }
 .ob-stepper li span { width: 24px; height: 24px; flex: none; border-radius: 50%; display: grid; place-items: center; font-size: 12px; font-weight: 700; background: #1B212B; color: #9AA4B2; }
@@ -2604,3 +2604,19 @@ html[data-orient=v] .safe-area { inset: 5% auto auto 50%; height: 90%; aspect-ra
 .ob-done-btns { display: flex; justify-content: center; margin-top: 12px; }
 .ob-count { color: var(--muted, #9AA4B2); font-size: 13px; margin-right: 8px; }
 @media (max-width: 760px) { .ob-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } .ob-cam { grid-template-columns: 1fr; } .ob-stepper li { font-size: 0; justify-content: center; } .ob-stepper li span { font-size: 12px; } .ob-tile { height: 72px; } }
+
+/* ---- ตำแหน่ง / ครอป / คีย์ (design 28) */
+.modal.ly-modal.wide { width: min(1320px, calc(100vw - 24px)); max-width: none; }
+.ly-wrap { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 18px; }
+.ly-stage { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.ly-canvas { position: relative; }
+.ly-readout { position: absolute; left: 10px; bottom: 10px; padding: 3px 8px; border-radius: 4px; background: rgba(0,0,0,.7); font: 500 12px var(--mono); color: #e8ecf1; pointer-events: none; }
+.ly-side { display: flex; flex-direction: column; gap: 10px; padding-left: 18px; border-left: 1px solid var(--line); }
+.ly-h { font-size: 13px; }
+.ly-key { display: flex; flex-direction: column; gap: 8px; padding: 12px; border-radius: 10px; background: var(--panel-2, #171b22); }
+.ly-one { grid-template-columns: 1fr; }
+.ly-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 13px; }
+.ly-modal .layout-presets button { height: 36px; padding: 0 14px; font-size: 13px; border-radius: 8px; }
+@media (max-width: 980px) { .ly-wrap { grid-template-columns: 1fr; } .ly-side { padding-left: 0; border-left: 0; } }
+.modal.pf-modal.wide { width: min(1080px, calc(100vw - 24px)); max-width: none; }
+.modal.sm-modal.wide, .modal.sh-modal.wide { width: min(1040px, calc(100vw - 24px)); max-width: none; }

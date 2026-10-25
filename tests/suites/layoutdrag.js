@@ -15,7 +15,7 @@ const near = (a, b, e = 0.01) => Math.abs(a - b) <= e;
   await p.waitForTimeout(600);
   const id = await p.evaluate(() => window.webmix.inputs.find(i => i.type === 'image').id);
   const card = p.locator(`.card[data-id="${id}"]`); await card.hover(); await card.locator('[data-card=layout]').click();
-  await p.waitForSelector('.layout-preview'); await p.waitForTimeout(500);
+  await p.waitForSelector('.layout-preview'); await p.waitForTimeout(500); await p.screenshot({ path: S + '/ly.png' });
   const box = await p.locator('.layout-preview').boundingBox();
   const at = (fx, fy) => [box.x + fx * box.width, box.y + fy * box.height];
   const L = () => p.evaluate(i => JSON.parse(JSON.stringify(window.webmix.inputs.find(x => x.id === i).layout)), id);
