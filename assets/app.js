@@ -3865,14 +3865,14 @@
      บัฟเฟอร์: MediaRecorder 2 ตัวสลับกันเริ่มใหม่ทุก N วินาที → ตัวเก่ามีภาพย้อนหลัง N–2N วินาทีเสมอ (หน่วยความจำคงที่)
      แหล่ง: Program (ย่อเหลือ ≤960px) หรือกล้อง/แหล่งภาพสดตัวเดียว */
   const REPLAY_LENS = [5, 8, 12, 20];
-  const REPLAY_SPEEDS = [1, 0.5, 0.25];
-  const speedLabel = v => v === 1 ? '1×' : v === 0.5 ? '½×' : '¼×';
+  const REPLAY_SPEEDS = [1, 0.75, 0.5, 0.25];
+  const speedLabel = v => v === 1 ? '1×' : v === 0.75 ? '¾×' : v === 0.5 ? '½×' : '¼×';
   const replayFeed = { canvas: document.createElement('canvas'), stream: null, users: 0 };
   replayFeed.ctx = replayFeed.canvas.getContext('2d');
   function sanitizeReplay(r) {
     r = r || {};
     return { len: REPLAY_LENS.includes(+r.len) ? +r.len : 8, speed: REPLAY_SPEEDS.includes(+r.speed) ? +r.speed : 0.5,
-      source: typeof r.source === 'string' && r.source ? r.source.slice(0, 40) : 'program', autoReturn: r.autoReturn !== false };
+      source: typeof r.source === 'string' && r.source ? r.source.slice(0, 40) : 'program', autoReturn: r.autoReturn !== false, sting: !!r.sting };
   }
   function replayStream(inp) {
     if (inp.replay.source !== 'program') {
@@ -3957,7 +3957,7 @@
       if (!rec.chunks.length || age < 1) { toast('ภาพย้อนหลังยังไม่พอ — รอสักครู่แล้วกดใหม่', 'warn'); return; }
       const clip = await seekableClip(new Blob(rec.chunks, { type: rec.type }), rec.type);
       if (inp.removed) return;
-      if (inp.url) URL.revokeObjectURL(inp.url);
+      if (inp.url && !(inp.clips || []).some(c => c.url === inp.url)) URL.revokeObjectURL(inp.url);
       inp.url = URL.createObjectURL(clip);
       const v = inp.el;
       v.pause();
@@ -3965,6 +3965,10 @@
       const dur = isFinite(v.duration) && v.duration > 0 ? v.duration : age;
       inp.clipStart = Math.max(0, dur - inp.replay.len);
       inp.clipLen = dur - inp.clipStart;
+      // เก็บคลิปล่าสุด 6 คลิปไว้เลือกเล่นซ้ำ (ไฮไลต์)
+      const clips = inp.clips || (inp.clips = []);
+      clips.unshift({ url: inp.url, name: `ไฮไลต์ ${(inp.clipNo = (inp.clipNo || 0) + 1)}`, start: inp.clipStart, len: inp.clipLen, at: Date.now() });
+      while (clips.length > 6) { const old = clips.pop(); if (old.url !== inp.url) URL.revokeObjectURL(old.url); }
       v.playbackRate = inp.replay.speed;
       v.currentTime = inp.clipStart;
       setInputStatus(inp, 'live');
@@ -3973,9 +3977,25 @@
     } finally { inp.capturing = false; }
   }
   // เริ่มเล่นเมื่อรีเพลย์กำลังขึ้นจอ (CUT / AUTO / T-Bar) — จำภาพเดิมไว้กลับไปตอนจบ
+  // โหลดคลิปที่เก็บไว้กลับมาเป็นรีเพลย์ปัจจุบัน
+  async function replayUseClip(inp, c) {
+    const v = inp.el;
+    v.pause();
+    inp.url = c.url;
+    await new Promise(res => { v.onloadedmetadata = res; v.onerror = res; v.src = c.url; setTimeout(res, 3000); });
+    inp.clipStart = c.start; inp.clipLen = c.len;
+    v.playbackRate = inp.replay.speed;
+    v.currentTime = c.start;
+    setInputStatus(inp, 'live');
+  }
   function replayGoingOn(id) {
     const inp = byId(id);
     if (!inp || inp.type !== 'replay' || inp.status !== 'live' || !inp.el.paused) return;
+    // จุด OUT: หยุดเมื่อถึงปลายช่วงที่เลือก แล้วทำเหมือนเล่นจบ
+    if (!inp.outWatch) {
+      inp.outWatch = true;
+      inp.el.addEventListener('timeupdate', () => { const v = inp.el; if (inp.clipLen && !v.paused && v.currentTime >= inp.clipStart + inp.clipLen - 0.02 && v.currentTime < v.duration - 0.05) { v.pause(); replayEnded(inp); } });
+    }
     inp.returnTo = state.programId !== id ? state.programId : null;
     inp.el.currentTime = inp.clipStart || 0;
     inp.el.playbackRate = inp.replay.speed;
@@ -3985,7 +4005,16 @@
     if (state.programId !== inp.id || !inp.replay.autoReturn || !byId(inp.returnTo)) return;
     if (tr.auto) return;
     setPreview(inp.returnTo);
-    autoTransition();
+    replayAuto(inp);
+  }
+  // AUTO ของรีเพลย์: ถ้าตั้ง “ใส่ Stinger” ไว้ ใช้ Stinger ทั้งตอนเข้าและออก แล้วคืนเอฟเฟกต์เดิม
+  function replayAuto(inp) {
+    if (inp.replay.sting && stinger.ready && settings.transition !== 'stinger') {
+      const prev = settings.transition;
+      settings.transition = 'stinger';
+      autoTransition();
+      settings.transition = prev;
+    } else autoTransition();
   }
   function createReplayInput(props) {
     const v = document.createElement('video');
@@ -4002,30 +4031,128 @@
     toast('เริ่มเก็บภาพย้อนหลังแล้ว — กด ⟲ บนการ์ด (หรือปุ่ม I) เมื่อต้องการรีเพลย์', 'success', 5000);
     return inp;
   }
+  // Instant Replay + Stinger: ภาพรีเพลย์ · ช่วง IN / OUT · ความเร็ว · คลิปไฮไลต์ · ตั้งค่า · Stinger
   async function openReplayDialog(inp) {
     const cur = inp.replay;
     const sources = inputs.filter(i => i.stream && i.type !== 'replay');
+    const pct = v => `${Math.round(v * 100)}%`;
+    let stPicked = null;
     const r = await dialog({
-      title: 'Instant Replay',
-      body: `
-        <label class="field"><span>ชื่อ</span><input name="name" class="input" maxlength="40" value="${esc(inp.name)}"></label>
-        <label class="field"><span>ภาพที่เก็บย้อนหลัง</span><select name="source" class="select">
-          <option value="program">Program (ภาพที่ออกอากาศ)</option>
-          ${sources.map(s2 => `<option value="${s2.id}" ${cur.source === s2.id ? 'selected' : ''}>${esc(s2.name)}</option>`).join('')}</select></label>
-        <label class="field"><span>ความยาวรีเพลย์</span><select name="len" class="select">${REPLAY_LENS.map(l => `<option value="${l}" ${l === cur.len ? 'selected' : ''}>${l} วินาที</option>`).join('')}</select></label>
-        <label class="field"><span>ความเร็ว</span><select name="speed" class="select">${REPLAY_SPEEDS.map(x => `<option value="${x}" ${x === cur.speed ? 'selected' : ''}>${x === 1 ? 'ปกติ' : x === 0.5 ? 'สโลว์ ½' : 'สโลว์ ¼'}</option>`).join('')}</select></label>
-        <label class="check"><input type="checkbox" name="autoReturn" ${cur.autoReturn ? 'checked' : ''}> เล่นจบแล้วกลับภาพเดิมอัตโนมัติ</label>
-        <p class="note">${inp.rbError ? esc(inp.rbError) : 'เก็บภาพย้อนหลังในหน่วยความจำตลอดเวลา (ไม่บันทึกลงดิสก์) · กด ⟲ หรือปุ่ม I เพื่อจับคลิป'}</p>`,
-      actions: [{ label: 'ยกเลิก' }, { label: 'บันทึก', primary: true, value: 'save' }]
+      title: 'Instant Replay และ Stinger',
+      wide: true,
+      body: `<div class="rp-wrap">
+        <div class="rp-left">
+          <section class="rp-card"><div class="rp-h"><h3>Instant Replay</h3><span class="rp-buf"></span></div>
+            <div class="rp-view"><canvas width="960" height="540" aria-label="ภาพรีเพลย์"></canvas><span class="rp-badge"></span></div>
+            <div class="rp-tl" aria-label="ช่วงรีเพลย์"><div class="rp-range"></div><span class="rp-head"></span></div>
+            <div class="rp-ctl">
+              <button type="button" class="btn btn-sm rp-in" data-rp="in">IN</button><button type="button" class="btn btn-sm rp-out" data-rp="out">OUT</button>
+              ${REPLAY_SPEEDS.slice().reverse().map(x => `<button type="button" class="btn btn-sm rp-spd ${x === cur.speed ? 'is-on' : ''}" data-spd="${x}">${pct(x)}</button>`).join('')}
+              <span class="rp-gap"></span>
+              <button type="button" class="btn btn-sm" data-rp="cap">⟲ จับ ${cur.len} วิล่าสุด (I)</button>
+              <button type="button" class="btn btn-sm btn-danger" data-rp="air">เล่นรีเพลย์ออก Program</button>
+            </div>
+          </section>
+          <div class="rp-clips"></div>
+        </div>
+        <div class="rp-right">
+          <section class="rp-card"><div class="rp-h"><h3>ตั้งค่ารีเพลย์</h3></div>
+            <label class="field"><span>ชื่อ</span><input name="name" class="input" maxlength="40" value="${esc(inp.name)}"></label>
+            <div class="rp-two">
+              <label class="field"><span>ภาพที่เก็บย้อนหลัง</span><select name="source" class="select">
+                <option value="program">Program (ภาพที่ออกอากาศ)</option>
+                ${sources.map(s2 => `<option value="${s2.id}" ${cur.source === s2.id ? 'selected' : ''}>${esc(s2.name)}</option>`).join('')}</select></label>
+              <label class="field"><span>ความยาวรีเพลย์</span><select name="len" class="select">${REPLAY_LENS.map(l => `<option value="${l}" ${l === cur.len ? 'selected' : ''}>${l} วินาที</option>`).join('')}</select></label>
+            </div>
+            <label class="field rp-hide"><span>ความเร็ว</span><select name="speed" class="select">${REPLAY_SPEEDS.map(x => `<option value="${x}" ${x === cur.speed ? 'selected' : ''}>${pct(x)}</option>`).join('')}</select></label>
+            <label class="check"><input type="checkbox" name="autoReturn" ${cur.autoReturn ? 'checked' : ''}> เล่นจบแล้วกลับภาพเดิมอัตโนมัติ</label>
+            <label class="check"><input type="checkbox" name="sting" ${cur.sting ? 'checked' : ''}> ใส่ Stinger ก่อน / หลังรีเพลย์</label>
+            <p class="note">${inp.rbError ? esc(inp.rbError) : 'ปุ่มลัด: I = จับรีเพลย์ · เก็บภาพย้อนหลังในหน่วยความจำ ไม่บันทึกลงดิสก์'}</p></section>
+          <section class="rp-card"><div class="rp-h"><h3>Stinger (วิดีโอเปลี่ยนภาพ)</h3><span class="rp-st-state"></span></div>
+            <div class="rp-st"><button type="button" class="btn btn-sm" data-st-pick>เลือกไฟล์…</button><b class="st-name">${esc(settings.stinger.name || 'ยังไม่ได้เลือก')}</b></div>
+            <label class="field"><span>จุดตัดภาพ <b class="st-cut mono">${Math.round(settings.stinger.cutAt * 100)}%</b> ของความยาว</span><input type="range" class="range" name="cutAt" min="5" max="95" step="1" value="${Math.round(settings.stinger.cutAt * 100)}"></label>
+            <p class="note">รองรับ .webm (พื้นโปร่งใส) และ .mp4 · ภาพสลับตอนวิดีโอบังเต็มจอ · ใช้กับปุ่ม AUTO เมื่อเลือกเอฟเฟกต์ STING</p></section>
+        </div>
+      </div>`,
+      actions: [{ label: 'ล้างคลิป', value: 'clear' }, { label: 'ยกเลิก' }, { label: 'บันทึก', primary: true, value: 'save' }],
+      onOpen(modal) {
+        modal.classList.add('rp-modal');
+        const f = $('form', modal).elements, v = inp.el;
+        const cx = $('.rp-view canvas', modal).getContext('2d');
+        const paintClips = () => {
+          const L = inp.clips || [];
+          $('.rp-clips', modal).innerHTML = L.length ? L.map((c, i) => `<button type="button" class="rp-clip ${c.url === inp.url ? 'is-on' : ''}" data-clip="${i}"><b>${esc(c.name)}</b><span class="mono">${c.len.toFixed(1)} วิ</span></button>`).join('')
+            : '<p class="note">คลิปที่จับไว้จะเก็บที่นี่ (ล่าสุด 6 คลิป)</p>';
+        };
+        paintClips();
+        const tick = () => {
+          if (!modal.isConnected) return;
+          drawSource(cx, inp, 960, 540);
+          const dur = isFinite(v.duration) ? v.duration : 0;
+          const rec = inp.rb && inp.rb.recs[0];
+          $('.rp-buf', modal).innerHTML = rec ? `<span class="rp-rec">บัฟเฟอร์ ${Math.min(cur.len, Math.round((performance.now() - rec.t0) / 1000))} วิ · กำลังเก็บ</span>` : `<span class="rp-off">${esc(inp.rbError || 'ไม่ได้เก็บภาพ')}</span>`;
+          $('.rp-badge', modal).textContent = inp.status === 'live' ? `REPLAY ${pct(cur.speed)}` : 'ยังไม่มีคลิป';
+          if (dur) {
+            const a = (inp.clipStart || 0) / dur, b = ((inp.clipStart || 0) + (inp.clipLen || dur)) / dur;
+            Object.assign($('.rp-range', modal).style, { left: `${a * 100}%`, width: `${Math.max(0, b - a) * 100}%` });
+            $('.rp-head', modal).style.left = `${(v.currentTime / dur) * 100}%`;
+          }
+          $('.rp-st-state', modal).textContent = stinger.ready ? `${stinger.el.duration.toFixed(1)} วิ` : '';
+          requestAnimationFrame(tick);
+        };
+        tick();
+        // คลิกบนแถบเวลา = เลื่อนไปจุดนั้น (ดูก่อนตั้ง IN / OUT)
+        $('.rp-tl', modal).addEventListener('pointerdown', e => {
+          const dur = isFinite(v.duration) ? v.duration : 0;
+          if (!dur) return;
+          const rc = e.currentTarget.getBoundingClientRect();
+          v.currentTime = clamp((e.clientX - rc.left) / rc.width, 0, 1) * dur;
+        });
+        modal.addEventListener('click', async e => {
+          const sp = e.target.closest('[data-spd]');
+          if (sp) { cur.speed = +sp.dataset.spd; f.speed.value = sp.dataset.spd; v.playbackRate = cur.speed; $$('.rp-spd', modal).forEach(b => b.classList.toggle('is-on', b === sp)); renderInputs(); return; }
+          const clip = e.target.closest('[data-clip]');
+          if (clip) { await replayUseClip(inp, inp.clips[+clip.dataset.clip]); paintClips(); return; }
+          const a = e.target.closest('[data-rp]')?.dataset.rp;
+          const dur = isFinite(v.duration) ? v.duration : 0;
+          if (a === 'in' && dur) { const end = (inp.clipStart || 0) + (inp.clipLen || dur); inp.clipStart = Math.min(v.currentTime, end - 0.2); inp.clipLen = end - inp.clipStart; }
+          else if (a === 'out' && dur) { inp.clipLen = Math.max(0.2, v.currentTime - (inp.clipStart || 0)); }
+          else if (a === 'cap') { await replayCapture(inp); paintClips(); }
+          else if (a === 'air') {
+            if (inp.status !== 'live') { toast('ยังไม่มีคลิป — กด “จับ” ก่อน', 'warn'); return; }
+            if (state.programId === inp.id) return;
+            audio.ensure();
+            state.previewId = inp.id;
+            replayAuto(inp);
+          }
+          if ((a === 'in' || a === 'out') && inp.clips?.[0]?.url === inp.url) Object.assign(inp.clips.find(c => c.url === inp.url), { start: inp.clipStart, len: inp.clipLen });
+          if (a === 'in' || a === 'out') paintClips();
+        });
+        const cutIn = f.cutAt;
+        cutIn.addEventListener('input', () => { $('.st-cut', modal).textContent = cutIn.value + '%'; });
+        $('[data-st-pick]', modal).addEventListener('click', () => pickFiles('video/*', files => { stPicked = files[0] || null; if (stPicked) $('.st-name', modal).textContent = stPicked.name; }));
+        // “ล้างคลิป” ไม่ปิดหน้าต่าง
+        const cb = [...$$('.modal-foot .btn', modal)].find(b => b.textContent === 'ล้างคลิป');
+        const cc = cb.cloneNode(true); cb.replaceWith(cc);
+        cc.addEventListener('click', () => { for (const c of inp.clips || []) if (c.url !== inp.url) URL.revokeObjectURL(c.url); inp.clips = (inp.clips || []).filter(c => c.url === inp.url).slice(0, 1); paintClips(); });
+      }
     });
     if (r?.value !== 'save') return;
     const f = r.form;
-    const next = sanitizeReplay({ len: f.len.value, speed: f.speed.value, source: f.source.value, autoReturn: f.autoReturn.checked });
+    const next = sanitizeReplay({ len: f.len.value, speed: f.speed.value, source: f.source.value, autoReturn: f.autoReturn.checked, sting: f.sting.checked });
     const restart = next.len !== cur.len || next.source !== cur.source;
     inp.replay = next;
     inp.name = String(f.name.value || '').trim().slice(0, 40) || inp.name;
     inp.el.playbackRate = next.speed;
     if (restart) replayStart(inp);
+    settings.stinger.cutAt = clamp(+f.cutAt.value / 100, 0.05, 0.95);
+    if (stPicked) {
+      if (await loadStinger(stPicked)) {
+        settings.stinger.name = stPicked.name.slice(0, 80);
+        mediaStore.put('stinger', stPicked).then(ok => { if (!ok) toast('พื้นที่ในเบราว์เซอร์ไม่พอเก็บไฟล์ Stinger — เปิดหน้าใหม่แล้วต้องเลือกอีกครั้ง', 'warn', 6000); });
+      } else toast(`เปิดวิดีโอ “${stPicked.name}” ไม่ได้ — ลองไฟล์ WebM หรือ MP4`, 'error');
+    }
+    saveSettings();
     renderInputs(); refreshSourceSelects();
   }
 
