@@ -119,6 +119,7 @@ adb shell setprop debug.webmix.selftest 0
 adb logcat -d -v time > "$OUT/logcat-bg-all.txt" || true
 grep -E 'WebMix|LiveService|chromium|AndroidRuntime' "$OUT/logcat-bg-all.txt" | tail -300 > "$OUT/logcat-bg.txt" || true
 adb logcat -d -v brief -s WebMix:* > "$OUT/logcat-bg-webmix.txt" || true
+adb logcat -d -v time -s WebMixGateway:* > "$OUT/logcat-bg-gateway.txt" || true
 sleep 3
 touch "$OUT/bg-stop"
 pkill -INT -f "0.0.0.0:[0-9]*/live/bg" 2>/dev/null || true
@@ -144,7 +145,7 @@ node -e '
   });
   const fps = total ? frames / total : 0, re = Math.max(0, segs.length - 1);
   console.log(`ไลฟ์เบื้องหลัง: ${total.toFixed(1)} วินาที · ${frames} เฟรม (${fps.toFixed(1)} fps) · ช่วงขาดนานสุด ${gap.toFixed(2)} วินาที · ต่อใหม่ ${re} ครั้ง${re ? ` (ขาดไป ${reGap.toFixed(1)} วินาที)` : ""}`);
-  if (re) console.log(`::warning::ไลฟ์เบื้องหลัง: การเชื่อมต่อ RTMP หลุดแล้วต่อใหม่ ${re} ครั้ง ระหว่างกดโฮม/ปิดจอ`);
+  if (re) { console.log(`::warning::ไลฟ์เบื้องหลัง: การเชื่อมต่อ RTMP หลุดแล้วต่อใหม่ ${re} ครั้ง ระหว่างกดโฮม/ปิดจอ`); fs.writeFileSync(dir + "/bg-reconnected", String(re)); }
   if (total < 35) { console.log("สตรีมหยุดก่อนเวลา (ปิดจอแล้วสตรีมหลุด และไม่ต่อกลับมา)"); process.exit(1); }
   if (re > 1 || reGap > 8) { console.log("สตรีมหลุดหลายครั้ง หรือต่อกลับช้าเกิน 8 วินาที"); process.exit(1); }
   if (fps < 20 || gap > 1) { console.log("ภาพค้าง/เฟรมหายระหว่างปิดจอ"); process.exit(1); }
@@ -152,12 +153,19 @@ node -e '
   # ไม่ผ่าน: พิมพ์สิ่งที่ต้องใช้หาสาเหตุลง log ของงานเลย (ไฟล์ artifact ดาวน์โหลดไม่ได้ทุกที่)
   echo "--- ผลทดสอบในแอป (สตรีม + เหตุการณ์ระหว่างค้าง)"
   adb logcat -d -v raw -s WebMix:I | awk '/^WEBMIX_SELFTEST /{f=1} f' | tr -d '\n' | grep -o '"stream"[^}]*}' | head -c 4000; echo
+  echo "--- Gateway ในแอป (ตัวเข้ารหัส / ปลายทาง)"
+  grep -E "encoder|✕|✓|→|restart|libx264|exited" "$OUT/logcat-bg-gateway.txt" | tail -30
   echo "--- logcat ของแอป (WebMix)"
   grep -vE "glBindAttrib|s_gl|Non-monotonic|backward in time" "$OUT/logcat-bg-webmix.txt" | tail -40
   echo "--- logcat ที่เกี่ยวข้อง"
   grep -iE "webmix|gateway|ffmpeg|LiveService|ActivityManager.*(kill|died|Process)|lowmemory|chromium.*(crash|renderer|gone)|freez|cached app" "$OUT/logcat-bg-all.txt" | grep -vE "glBindAttrib|s_gl|Non-monotonic|backward in time" | tail -80
   exit 1
 }
+# หลุดแล้วต่อใหม่แต่ยังผ่าน: แสดงว่าฝั่งไหนหลุด (ตัวเข้ารหัสล่ม = Gateway เริ่มใหม่เอง · ปลายทางหลุด = ลองใหม่หลัง 1 วินาที)
+if [ -s "$OUT/bg-reconnected" ]; then
+  echo "--- Gateway ในแอประหว่างหลุด"
+  grep -E "encoder|✕|✓|→|restart|libx264|exited" "$OUT/logcat-bg-gateway.txt" | tail -30
+fi
 
 # RTMPS ไปเซิร์ฟเวอร์จริงของ Facebook ด้วย ffmpeg ตัวเดียวกับในแอป (คีย์ปลอม): ต้องผ่าน DNS และ TLS
 # แล้วไปติดที่ Facebook ปฏิเสธคีย์ — ถ้าติดที่ DNS หรือ TLS แปลว่าการสตรีมไป Facebook/YouTube จากมือถือจะใช้ไม่ได้

@@ -44,6 +44,14 @@ const MAX_KBPS: u32 = 51_000;
 const RETRY: Duration = Duration::from_secs(5);
 /// ข้อมูลที่ค้างส่งไปปลายทางที่ช้าได้สูงสุดกี่ชิ้น (เกินแล้วทิ้ง ไม่ให้หน่วยความจำบวม)
 const DEST_QUEUE: usize = 512;
+/// ปลายทางที่ไลฟ์อยู่แล้วหลุด → ลองใหม่เร็ว (ปลายทางที่ยังไม่เคยขึ้นใช้ RETRY ตามเดิม กันยิงซ้ำตอนคีย์ผิด)
+const RETRY_LIVE: Duration = Duration::from_secs(1);
+/// ตัวเข้ารหัสล่มแล้วเริ่มใหม่ได้ไม่เกินกี่ครั้งต่อนาที (เกินนี้ = ปิดการเชื่อมต่อให้แอปต่อใหม่เองแบบเดิม)
+const ENCODER_RESTARTS_PER_MIN: usize = 3;
+const EBML_MAGIC: [u8; 4] = [0x1A, 0x45, 0xDF, 0xA3];
+const WEBM_CLUSTER: [u8; 4] = [0x1F, 0x43, 0xB6, 0x75];
+/// ส่วนหัว WebM ยาวเกินนี้ = ไม่ใช่สตรีมแบบที่รู้จัก ไม่เก็บไว้
+const HEAD_MAX: usize = 1 << 20;
 
 #[derive(Clone, Debug)]
 pub struct Config {
@@ -537,9 +545,28 @@ struct State {
     closed: bool,
 }
 
+/// ส่วนหัวของสตรีม WebM ที่แอปส่งมา (EBML + Segment Info + Tracks ก่อน Cluster แรก)
+/// ใช้เริ่มตัวเข้ารหัสตัวใหม่กลางไลฟ์: ส่วนหัว + ข้อมูลตั้งแต่ Cluster ถัดไป
+#[derive(Default)]
+struct InputHead {
+    bytes: Vec<u8>,
+    done: bool,
+    usable: bool,
+    /// รอ Cluster ถัดไปเพื่อป้อนตัวเข้ารหัสตัวใหม่
+    resync: bool,
+    restarts: Vec<Instant>,
+}
+
+fn find_bytes(hay: &[u8], needle: &[u8]) -> Option<usize> {
+    hay.windows(needle.len()).position(|w| w == needle)
+}
+
 #[derive(Clone)]
 struct Session {
     cfg: Arc<Config>,
+    /// ค่าที่ใช้กับตัวเข้ารหัสจริง (เปลี่ยนเป็น libx264 เมื่อตัวเข้ารหัสฮาร์ดแวร์ล่มซ้ำระหว่างไลฟ์)
+    enc_cfg: Arc<Mutex<Arc<Config>>>,
+    input_head: Arc<Mutex<InputHead>>,
     srt_supported: bool,
     fps: u32,
     kbps: u32,
@@ -558,6 +585,8 @@ struct Session {
 impl Session {
     fn new(cfg: Arc<Config>, srt_supported: bool, fps: u32, kbps: u32, height: u32, out: mpsc::UnboundedSender<Message>, tag: String) -> Self {
         Self {
+            enc_cfg: Arc::new(Mutex::new(cfg.clone())),
+            input_head: Arc::new(Mutex::new(InputHead::default())),
             cfg,
             srt_supported,
             fps,
@@ -610,9 +639,84 @@ impl Session {
 
     fn write_input(&self, data: Vec<u8>) {
         self.rx_bytes.fetch_add(data.len() as u64, Ordering::Relaxed);
-        if let Some(tx) = &self.st.lock().unwrap().encoder_tx {
+        let tx = self.st.lock().unwrap().encoder_tx.clone();
+        let mut data = data;
+        {
+            let mut h = self.input_head.lock().unwrap();
+            if !h.done {
+                if h.bytes.is_empty() && !data.starts_with(&EBML_MAGIC) {
+                    h.done = true; // ไม่ใช่ WebM — ตัวเข้ารหัสล่มแล้วจะปิดการเชื่อมต่อแบบเดิม
+                } else if let Some(i) = find_bytes(&data, &WEBM_CLUSTER) {
+                    h.bytes.extend_from_slice(&data[..i]);
+                    h.done = true;
+                    h.usable = true;
+                } else {
+                    h.bytes.extend_from_slice(&data);
+                    if h.bytes.len() > HEAD_MAX {
+                        h.bytes = Vec::new();
+                        h.done = true;
+                    }
+                }
+            }
+            if h.resync {
+                // ตัวเข้ารหัสตัวใหม่: ส่วนหัว + ข้อมูลตั้งแต่ Cluster ถัดไป (ก่อนหน้านั้นทิ้ง)
+                if tx.is_none() {
+                    return;
+                }
+                let Some(i) = find_bytes(&data, &WEBM_CLUSTER) else { return };
+                let mut v = h.bytes.clone();
+                v.extend_from_slice(&data[i..]);
+                data = v;
+                h.resync = false;
+            }
+        }
+        if let Some(tx) = tx {
             let _ = tx.send(data);
         }
+    }
+
+    /// ตัวเข้ารหัสล่มระหว่างไลฟ์ (เช่น Android เรียกตัวเข้ารหัสฮาร์ดแวร์คืนตอนแอปไปอยู่เบื้องหลัง):
+    /// เริ่มตัวใหม่ทันทีในการเชื่อมต่อเดิม แล้วเริ่มปลายทางใหม่ให้ได้ MPEG-TS ชุดใหม่ตั้งแต่ต้น
+    /// ล่มซ้ำ (หรือล่มภายใน 5 วินาทีหลังเริ่ม) กับตัวเข้ารหัสฮาร์ดแวร์ → ใช้ libx264 แทน
+    /// คืน false = เริ่มใหม่ไม่ได้ (ไม่ใช่ WebM / ล่มบ่อยเกิน) ให้ปิดการเชื่อมต่อแบบเดิม
+    fn restart_encoder(&self, ran: Duration) -> bool {
+        {
+            let mut h = self.input_head.lock().unwrap();
+            if !h.usable {
+                return false;
+            }
+            let now = Instant::now();
+            h.restarts.retain(|t| now.duration_since(*t) < Duration::from_secs(60));
+            if h.restarts.len() >= ENCODER_RESTARTS_PER_MIN {
+                return false;
+            }
+            h.restarts.push(now);
+            let mut enc = self.enc_cfg.lock().unwrap();
+            if !self.video_copy && enc.video_encoder != "libx264" && (h.restarts.len() >= 2 || ran < Duration::from_secs(5)) {
+                eprintln!("{} encoder {} failed again — switching to libx264", self.tag, enc.video_encoder);
+                let mut c = (**enc).clone();
+                c.video_encoder = "libx264".into();
+                *enc = Arc::new(c);
+            }
+            h.resync = true;
+        }
+        let ids: Vec<String> = {
+            let mut st = self.st.lock().unwrap();
+            if st.closed {
+                return true;
+            }
+            st.encoder_tx = None;
+            st.encoder_started = false;
+            st.verticals.clear(); // ตัวเข้ารหัสแนวตั้งปิดแล้วเริ่มใหม่เอง (มีปลายทางแนวตั้งรออยู่)
+            st.dests.iter().filter(|d| d.wanted && d.tx.is_some()).map(|d| d.id.clone()).collect()
+        };
+        eprintln!("{} restarting encoder ({} destination(s))", self.tag, ids.len());
+        self.start_encoder();
+        for id in ids {
+            self.spawn_dest(&id);
+        }
+        self.report();
+        true
     }
 
     /// ตัวเข้ารหัสกลาง: WebM จากเบราว์เซอร์ → H.264/AAC MPEG-TS (ส่ง SPS/PPS ซ้ำทุกคีย์เฟรม ปลายทางที่เริ่มกลางคันจึงต่อได้)
@@ -625,13 +729,14 @@ impl Session {
             st.encoder_started = true;
         }
         let (fps, kbps) = (self.fps.to_string(), self.kbps);
+        let cfg = self.enc_cfg.lock().unwrap().clone();
         let mut args: Vec<String> = ["-hide_banner", "-loglevel", "warning", "-stats", "-stats_period", "2", "-i", "pipe:0"].iter().map(|s| s.to_string()).collect();
         if self.video_copy {
             args.extend(["-c:v", "copy"].iter().map(|s| s.to_string()));
         } else {
-            args.extend(video_args(&self.cfg, self.height));
+            args.extend(video_args(&cfg, self.height));
             for a in [
-                "-pix_fmt", pix_fmt(&self.cfg.video_encoder), "-r", &fps, "-g", &(self.fps * 2).to_string(), "-keyint_min", &(self.fps * 2).to_string(), "-sc_threshold", "0",
+                "-pix_fmt", pix_fmt(&cfg.video_encoder), "-r", &fps, "-g", &(self.fps * 2).to_string(), "-keyint_min", &(self.fps * 2).to_string(), "-sc_threshold", "0",
                 "-b:v", &format!("{kbps}k"), "-maxrate", &format!("{kbps}k"), "-bufsize", &format!("{}k", kbps * 2),
             ] {
                 args.push(a.to_string());
@@ -642,7 +747,7 @@ impl Session {
         ] {
             args.push(a.to_string());
         }
-        let venc = if self.video_copy { "copy (H.264 จากเบราว์เซอร์)" } else { self.cfg.video_encoder.as_str() };
+        let venc = if self.video_copy { "copy (H.264 จากเบราว์เซอร์)" } else { cfg.video_encoder.as_str() };
         eprintln!("{} encoder start {}p{} {}kbps {}", self.tag, self.height, self.fps, kbps, venc);
         let child = quiet(Command::new(&self.cfg.ffmpeg).args(&args)).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn();
         let mut child = match child {
@@ -727,12 +832,14 @@ impl Session {
             });
         }
         let s = self.clone();
+        let started = Instant::now();
         tokio::spawn(async move {
             let code = child.wait().await.ok().and_then(|c| c.code());
             eprintln!("{} encoder exited ({code:?})", s.tag);
-            if !s.st.lock().unwrap().closed {
-                let _ = s.out.send(Message::Close(Some(CloseFrame { code: CloseCode::Error, reason: format!("encoder exited ({code:?})").into() })));
+            if s.st.lock().unwrap().closed || s.restart_encoder(started.elapsed()) {
+                return;
             }
+            let _ = s.out.send(Message::Close(Some(CloseFrame { code: CloseCode::Error, reason: format!("encoder exited ({code:?})").into() })));
         });
     }
 
@@ -753,9 +860,10 @@ impl Session {
         .map(|s| s.to_string())
         .collect();
         args.push(vertical_filter(mode, w, h));
-        args.extend(video_args(&self.cfg, h));
+        let cfg = self.enc_cfg.lock().unwrap().clone();
+        args.extend(video_args(&cfg, h));
         for a in [
-            "-pix_fmt", pix_fmt(&self.cfg.video_encoder), "-r", &fps.to_string(), "-g", &(fps * 2).to_string(), "-keyint_min", &(fps * 2).to_string(), "-sc_threshold", "0",
+            "-pix_fmt", pix_fmt(&cfg.video_encoder), "-r", &fps.to_string(), "-g", &(fps * 2).to_string(), "-keyint_min", &(fps * 2).to_string(), "-sc_threshold", "0",
             "-b:v", &format!("{kbps}k"), "-maxrate", &format!("{kbps}k"), "-bufsize", &format!("{}k", kbps * 2),
             "-c:a", "copy", "-f", "mpegts", "-mpegts_flags", "+resend_headers", "pipe:1",
         ] {
@@ -1039,11 +1147,13 @@ impl Session {
                     }
                 }
             };
+            let was_live;
             let retry = {
                 let mut st = s.st.lock().unwrap();
                 let closed = st.closed;
                 let Some(d) = st.dests.iter_mut().find(|d| d.id == id && d.generation == generation) else { return };
                 d.tx = None;
+                was_live = d.state == "live";
                 if !d.wanted || closed {
                     d.state = "stopped";
                     false
@@ -1057,7 +1167,7 @@ impl Session {
             };
             s.report();
             if retry {
-                tokio::time::sleep(RETRY).await;
+                tokio::time::sleep(if was_live { RETRY_LIVE } else { RETRY }).await;
                 let again = {
                     let st = s.st.lock().unwrap();
                     !st.closed && st.dests.iter().any(|d| d.id == id && d.wanted && d.tx.is_none() && d.generation == generation)
