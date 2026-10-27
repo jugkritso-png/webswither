@@ -40,16 +40,27 @@ const results = []; const ok = (n, c, x = '') => results.push(`${c ? 'PASS' : 'F
 
   // ตรวจทีละจุดโดยหยุดวิดีโอไว้ (เครื่องทดสอบถอดรหัสวิดีโอช้า เฟรมจึงกระตุก — ความคืบหน้าอิงเวลาวิดีโอ)
   await p.evaluate(() => { window.webmix.stinger.stallMs = 60000; });
-  const at = async t => { await p.evaluate(t => { const v = window.webmix.stinger.el; v.pause(); v.currentTime = t; }, t); await p.waitForTimeout(500); return px(0.25); };
+  // เลื่อนไปเวลา t รอให้ seek เสร็จและเฟรมถูกวาด แล้วอ่านพิกเซลซ้ำจนตรงที่คาด (เครื่อง CI ถอดรหัส/วาดช้าไม่แน่นอน)
+  const at = async (t, want) => {
+    await p.evaluate(t => new Promise(res => {
+      const v = window.webmix.stinger.el; v.pause();
+      const done = () => (v.requestVideoFrameCallback ? v.requestVideoFrameCallback(() => res()) : res());
+      v.addEventListener('seeked', done, { once: true }); setTimeout(res, 3000);
+      v.currentTime = t;
+    }), t);
+    let c;
+    for (let i = 0; i < 20; i++) { await p.waitForTimeout(150); c = await px(0.25); if (!want || want(c)) break; }
+    return c;
+  };
   for (const mode of ['cpu', 'gpu']) {
     await p.evaluate(m => window.webmix.setRenderer(m), mode);
     await setAB(); await p.waitForTimeout(300);
     await p.evaluate(() => window.webmix.autoTransition());
-    const c1 = await at(0.3), p1 = await p.evaluate(() => window.webmix.tr.progress);
+    const c1 = await at(0.3, black), p1 = await p.evaluate(() => window.webmix.tr.progress);
     ok(`${mode}: before the cut point: old picture, stinger still clear`, black(c1) && p1 > 0.1 && p1 < 0.2, JSON.stringify({ c1, p1 }));
-    const c2 = await at(1.0);
+    const c2 = await at(1.0, magenta);
     ok(`${mode}: stinger covers the screen mid-way`, magenta(c2), JSON.stringify(c2));
-    const c3 = await at(1.6);
+    const c3 = await at(1.6, green);
     ok(`${mode}: after the cut point: new picture under a clear stinger`, green(c3) && await p.evaluate(() => window.webmix.tr.auto), JSON.stringify(c3));
     const t0 = Date.now();
     await p.evaluate(() => window.webmix.stinger.el.play());
