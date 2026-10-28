@@ -1428,6 +1428,326 @@
     renderInputs();
   }
 
+  /* ---------------------------------------------- ป้ายกลุ่ม + ค้นหา + ลากเรียงลำดับแหล่งภาพ (แบบ vMix)
+     ป้าย = ชื่อ + สี เก็บในโชว์ · แหล่งภาพหนึ่งติดได้หลายป้าย · แถบเหนือการ์ดกรองตามป้ายและคำค้น
+     ลากการ์ดไปวางระหว่างการ์ดอื่น = เรียงลำดับใหม่ (เลขบนการ์ด = ปุ่มลัด 1–9 เปลี่ยนตาม) · วางบนป้าย = ติดป้ายนั้น */
+  const TAG_COLORS = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#06b6d4', '#3b82f6', '#a855f7', '#ec4899'];
+  const tagDefs = [];
+  const srcFilter = { q: '', tag: '' };
+  const tagById = id => tagDefs.find(t => t.id === id) || null;
+  const inputTags = inp => (inp.tags || []).map(tagById).filter(Boolean);
+  const okColor = c => /^#[0-9a-f]{6}$/i.test(c || '');
+  function sanitizeTags(list) {
+    const seen = new Set();
+    return (Array.isArray(list) ? list : []).filter(t => t && typeof t.id === 'string' && t.id && !seen.has(t.id) && seen.add(t.id)).slice(0, 24)
+      .map((t, i) => ({ id: t.id.slice(0, 40), name: String(t.name || `ป้าย ${i + 1}`).trim().slice(0, 24) || `ป้าย ${i + 1}`, color: okColor(t.color) ? t.color.toLowerCase() : TAG_COLORS[i % TAG_COLORS.length] }));
+  }
+  const sanitizeInputTags = ids => [...new Set((Array.isArray(ids) ? ids : []).filter(id => typeof id === 'string' && tagById(id)))];
+  function newTag(name) {
+    if (tagDefs.length >= 24) { toast('มีป้ายได้สูงสุด 24 ป้าย', 'warn'); return null; }
+    const used = new Set(tagDefs.map(t => t.color));
+    const t = { id: uid(), name: String(name || '').trim().slice(0, 24) || `ป้าย ${tagDefs.length + 1}`, color: TAG_COLORS.find(c => !used.has(c)) || TAG_COLORS[tagDefs.length % TAG_COLORS.length] };
+    tagDefs.push(t);
+    return t;
+  }
+  function toggleInputTag(inp, id, on) {
+    const has = (inp.tags || []).includes(id);
+    if (on === undefined) on = !has;
+    if (on === has) return;
+    inp.tags = on ? [...(inp.tags || []), id] : inp.tags.filter(x => x !== id);
+    renderInputs();
+    show.autosave();
+  }
+  function removeTag(id) {
+    const i = tagDefs.findIndex(t => t.id === id);
+    if (i < 0) return;
+    tagDefs.splice(i, 1);
+    for (const inp of inputs) if (inp.tags) inp.tags = inp.tags.filter(x => x !== id);
+    if (srcFilter.tag === id) srcFilter.tag = '';
+  }
+  // ย้ายแหล่งภาพไปลำดับใหม่ (index ใน inputs หลังย้าย)
+  function moveInput(inp, to) {
+    const from = inputs.indexOf(inp);
+    to = clamp(to, 0, inputs.length - 1);
+    if (from < 0 || from === to) return false;
+    inputs.splice(from, 1);
+    inputs.splice(to, 0, inp);
+    renderInputs();
+    refreshSourceSelects();
+    show.autosave();
+    return true;
+  }
+  const searchText = inp => `${inp.name} ${TYPE_META[inp.type]?.label || ''} ${cardSub(inp)} ${inputTags(inp).map(t => t.name).join(' ')}`.toLowerCase();
+  const matchesFilter = inp => (!srcFilter.tag || (inp.tags || []).includes(srcFilter.tag))
+    && (!srcFilter.q || srcFilter.q.toLowerCase().split(/\s+/).filter(Boolean).every(w => searchText(inp).includes(w)));
+
+  // ช่องค้นหา + ปุ่มป้ายอยู่ในหัวแผง · แถวป้าย (ทั้งหมด / แต่ละป้ายพร้อมจำนวน) ขึ้นเมื่อมีป้ายแล้วเท่านั้น — ไม่กินที่การ์ด
+  function renderSourceBar() {
+    const bar = $('#src-bar'), row = $('#src-chips');
+    if (!bar || !row) return;
+    bar.hidden = !inputs.length && !tagDefs.length;
+    if (!$('#src-search', bar)) {
+      bar.innerHTML = `<label class="src-search" title="ค้นหาแหล่งภาพ (ปุ่มลัด /)">${icon('search')}<input id="src-search" type="search" placeholder="ค้นหาแหล่งภาพ" aria-label="ค้นหาแหล่งภาพ (ปุ่มลัด /)" autocomplete="off"><kbd>/</kbd></label>`
+        + `<button type="button" class="btn btn-sm btn-icon src-tagbtn">${icon('tag')}</button>`;
+    }
+    const tb = $('.src-tagbtn', bar);
+    tb.dataset.tagact = tagDefs.length ? 'manage' : 'new';
+    tb.title = tagDefs.length ? 'จัดการป้าย — ตั้งชื่อ / สี / ลบ' : 'สร้างป้ายเพื่อจัดกลุ่มแหล่งภาพ (แบบ vMix)';
+    tb.setAttribute('aria-label', tb.title);
+    // มือถือแนวตั้ง: หัวแผงไม่มีที่ให้ปุ่มป้าย — แสดงแถวป้ายเสมอ (ยังไม่มีป้าย = มีแค่ปุ่ม + ป้าย)
+    const phone = matchMedia('(max-width: 760px)').matches;
+    row.hidden = !tagDefs.length && (!phone || !inputs.length);
+    if (row.hidden) { row.innerHTML = ''; return; }
+    const count = id => inputs.filter(i => (i.tags || []).includes(id)).length;
+    row.innerHTML = (tagDefs.length ? `<button type="button" class="src-chip ${srcFilter.tag ? '' : 'is-on'}" data-tag="" aria-pressed="${!srcFilter.tag}">ทั้งหมด <small>${inputs.length}</small></button>` : '')
+      + tagDefs.map(t => `<button type="button" class="src-chip ${srcFilter.tag === t.id ? 'is-on' : ''}" data-tag="${t.id}" aria-pressed="${srcFilter.tag === t.id}" style="--tag:${t.color}" title="กรองเฉพาะป้าย “${esc(t.name)}” · ลากการ์ดมาวางเพื่อติดป้ายนี้"><i></i>${esc(t.name)} <small>${count(t.id)}</small></button>`).join('')
+      + `<button type="button" class="src-chip src-chip-add" data-tagact="new" title="สร้างป้ายใหม่">${icon('plus')}ป้าย</button>`;
+  }
+  function applySourceFilter() {
+    const grid = $('#inputs-grid');
+    let shown = 0;
+    for (const card of $$('.card', grid)) {
+      const inp = byId(card.dataset.id);
+      const hit = !inp || matchesFilter(inp);
+      card.hidden = !hit;
+      if (hit) shown++;
+    }
+    let none = $('.src-none', grid);
+    const filtering = (srcFilter.q || srcFilter.tag) && inputs.length;
+    if (filtering && !shown) {
+      if (!none) { none = document.createElement('div'); none.className = 'src-none'; grid.appendChild(none); }
+      const tag = tagById(srcFilter.tag);
+      none.innerHTML = `<p>ไม่พบแหล่งภาพ${srcFilter.q ? ` ที่ตรงกับ “${esc(srcFilter.q)}”` : ''}${tag ? ` ในป้าย “${esc(tag.name)}”` : ''}</p><button type="button" class="btn btn-sm" data-srcclear>ล้างตัวกรอง</button>`;
+    } else none?.remove();
+    $('#input-count').textContent = filtering ? `${shown}/${inputs.length}` : inputs.length;
+  }
+  function clearSourceFilter() {
+    srcFilter.q = ''; srcFilter.tag = '';
+    const s = $('#src-search'); if (s) s.value = '';
+    renderSourceBar(); applySourceFilter();
+  }
+  async function createTagFlow(inp) {
+    const r = await dialog({ title: 'ป้ายใหม่', body: `<label class="field"><span>ชื่อป้าย</span><input name="name" class="input" maxlength="24" placeholder="เช่น กล้อง, เวที, กราฟิก, ผู้พูด" required></label>`,
+      actions: [{ label: 'ยกเลิก' }, { label: 'สร้างป้าย', primary: true, value: 'ok' }] });
+    if (!r || r.value !== 'ok') return null;
+    const t = newTag(r.form.name.value);
+    if (!t) return null;
+    if (inp) inp.tags = [...(inp.tags || []), t.id];
+    renderInputs();
+    show.autosave();
+    toast(inp ? `ติดป้าย “${t.name}” ให้ “${inp.name}” แล้ว` : `สร้างป้าย “${t.name}” แล้ว — ลากการ์ดมาวางบนป้ายเพื่อติดป้าย`, 'success', 4000);
+    return t;
+  }
+  function openTagManager() {
+    const row = t => `<div class="tag-row" data-id="${t.id}">
+        <span class="tag-swatches" role="radiogroup" aria-label="สีของป้าย">${TAG_COLORS.map(c => `<button type="button" class="${c === t.color ? 'is-on' : ''}" data-color="${c}" style="--tag:${c}" role="radio" aria-checked="${c === t.color}" aria-label="สี ${c}"></button>`).join('')}<input type="color" value="${t.color}" aria-label="เลือกสีเอง" title="เลือกสีเอง"></span>
+        <input class="input tag-name" value="${esc(t.name)}" maxlength="24" aria-label="ชื่อป้าย">
+        <small class="tag-count">${inputs.filter(i => (i.tags || []).includes(t.id)).length} แหล่ง</small>
+        <button type="button" class="btn btn-ghost btn-sm btn-icon" data-del title="ลบป้าย (แหล่งภาพไม่ถูกลบ)">${icon('x')}</button></div>`;
+    dialog({
+      title: 'จัดการป้าย',
+      body: `<p class="note">ตั้งชื่อและสีของป้ายเพื่อจัดกลุ่มแหล่งภาพ — กดที่ป้ายเหนือการ์ดเพื่อดูเฉพาะกลุ่มนั้น</p><div class="tag-rows"></div>
+        <button type="button" class="btn btn-sm" data-add>${icon('plus')} เพิ่มป้าย</button>`,
+      actions: [{ label: 'เสร็จ', primary: true }],
+      onOpen(modal) {
+        const box = $('.tag-rows', modal);
+        const paint = () => { box.innerHTML = tagDefs.length ? tagDefs.map(row).join('') : '<p class="note">ยังไม่มีป้าย</p>'; };
+        const changed = () => { renderInputs(); show.autosave(); };
+        paint();
+        const tagOf = el => tagById(el.closest('.tag-row')?.dataset.id);
+        const setColor = (row, c) => { const t = tagOf(row); if (!t || !okColor(c)) return; t.color = c.toLowerCase();
+          $$('[data-color]', row.closest('.tag-row')).forEach(b => { const on = b.dataset.color === t.color; b.classList.toggle('is-on', on); b.setAttribute('aria-checked', on); });
+          $('input[type=color]', row.closest('.tag-row')).value = t.color; changed(); };
+        box.addEventListener('click', e => {
+          const c = e.target.closest('[data-color]');
+          if (c) { setColor(c, c.dataset.color); return; }
+          if (e.target.closest('[data-del]')) { const t = tagOf(e.target); if (t) { removeTag(t.id); paint(); changed(); } }
+        });
+        box.addEventListener('input', e => {
+          if (e.target.type === 'color') { setColor(e.target, e.target.value); return; }
+          if (e.target.classList.contains('tag-name')) { const t = tagOf(e.target); if (t) { t.name = e.target.value.trim().slice(0, 24) || t.name; changed(); } }
+        });
+        $('[data-add]', modal).addEventListener('click', () => { const t = newTag(); if (t) { paint(); changed(); $(`.tag-row[data-id="${t.id}"] .tag-name`, box)?.select(); } });
+      }
+    }).then(() => { renderInputs(); show.autosave(); });
+  }
+  // เมนูป้ายของการ์ด: ติด/เอาป้ายออก (ไม่ปิดเมนู) · ป้ายใหม่ · เลื่อนลำดับ (สำหรับจอสัมผัส/คีย์บอร์ด)
+  function openTagMenu(inp, anchor) {
+    closeMenu();
+    const menu = document.createElement('div');
+    menu.className = 'menu tag-menu';
+    menu.setAttribute('role', 'menu');
+    const paint = () => {
+      const at = inputs.indexOf(inp);
+      menu.innerHTML = `<div class="menu-label">ป้ายของ “${esc(inp.name)}”</div>`
+        + (tagDefs.length ? tagDefs.map(t => { const on = (inp.tags || []).includes(t.id); return `<button role="menuitemcheckbox" aria-checked="${on}" data-tg="${t.id}" style="--tag:${t.color}"><i class="tag-dot"></i>${esc(t.name)}<small>${on ? '✓' : ''}</small></button>`; }).join('') : '<p class="note tag-empty">ยังไม่มีป้าย — สร้างป้ายแรกด้านล่าง</p>')
+        + `<button role="menuitem" data-tm="new">${icon('plus')}ป้ายใหม่…</button>`
+        + (tagDefs.length ? `<button role="menuitem" data-tm="manage">${icon('edit')}จัดการป้าย…</button>` : '')
+        + `<div class="menu-sep"></div><div class="menu-label">ลำดับ (ตอนนี้ ${at + 1} จาก ${inputs.length})</div>`
+        + `<button role="menuitem" data-tm="up" ${at ? '' : 'disabled'}>‹ เลื่อนไปก่อนหน้า</button><button role="menuitem" data-tm="down" ${at < inputs.length - 1 ? '' : 'disabled'}>เลื่อนไปถัดไป ›</button>`;
+    };
+    paint();
+    document.body.appendChild(menu);
+    const r = anchor.getBoundingClientRect();
+    menu.style.left = `${clamp(r.left, 8, innerWidth - menu.offsetWidth - 8)}px`;
+    menu.style.top = `${r.bottom + 6 + menu.offsetHeight > innerHeight ? Math.max(8, r.top - menu.offsetHeight - 6) : r.bottom + 6}px`;
+    menu.addEventListener('click', e => {
+      const t = e.target.closest('[data-tg]');
+      if (t) { toggleInputTag(inp, t.dataset.tg); paint(); return; }
+      const b = e.target.closest('[data-tm]');
+      if (!b) return;
+      const act = b.dataset.tm;
+      if (act === 'up' || act === 'down') { moveInput(inp, inputs.indexOf(inp) + (act === 'up' ? -1 : 1)); paint(); return; }
+      closeMenu();
+      if (act === 'new') createTagFlow(inp);
+      else if (act === 'manage') openTagManager();
+    });
+    menu.querySelector('button')?.focus({ preventScroll: true });
+    setTimeout(() => document.addEventListener('pointerdown', outsideMenu, true));
+  }
+  function bindSourceBar() {
+    const bar = $('#src-bar');
+    if (!bar) return;
+    renderSourceBar();
+    bar.addEventListener('input', e => {
+      if (e.target.id !== 'src-search') return;
+      srcFilter.q = e.target.value.trim();
+      applySourceFilter();
+    });
+    bar.addEventListener('keydown', e => {
+      if (e.target.id !== 'src-search') return;
+      if (e.key === 'Escape') { e.stopPropagation(); clearSourceFilter(); e.target.blur(); }
+      // Enter = ใส่แหล่งแรกที่พบใน Preview (Shift+Enter = ตัดขึ้น Program)
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        const inp = inputs.find(matchesFilter);
+        if (!inp) return;
+        audio.ensure();
+        if (e.shiftKey) { if (inp.id !== state.programId) { state.previewId = inp.id; cut(); } }
+        else if (inp.id !== state.programId) setPreview(inp.id);
+      }
+    });
+    const onClick = e => {
+      const c = e.target.closest('.src-chip[data-tag]');
+      if (c) { srcFilter.tag = srcFilter.tag === c.dataset.tag ? '' : c.dataset.tag; renderSourceBar(); applySourceFilter(); return; }
+      const a = e.target.closest('[data-tagact]');
+      if (a?.dataset.tagact === 'new') createTagFlow();
+      else if (a?.dataset.tagact === 'manage') openTagManager();
+    };
+    bar.addEventListener('click', onClick);
+    $('#src-chips')?.addEventListener('click', onClick);
+    $('#inputs-grid').addEventListener('click', e => { if (e.target.closest('[data-srcclear]')) clearSourceFilter(); });
+  }
+
+  // ลากการ์ดเพื่อเรียงลำดับ: เมาส์ = กดแล้วลากเกิน 6 px · จอสัมผัส = กดค้าง 0.4 วินาทีแล้วลาก (แตะ/ปัดตามปกติไม่เป็นการลาก)
+  function bindCardDrag(grid) {
+    let st = null, suppressAt = 0;
+    const SKIP = 'button, input, select, a, .card-vcrop, .card-ovl';
+    const clear = () => {
+      $$('.drop-before, .drop-after, .is-dragging', grid).forEach(c => c.classList.remove('drop-before', 'drop-after', 'is-dragging'));
+      $$('.src-chip.is-drop').forEach(c => c.classList.remove('is-drop'));
+    };
+    const end = () => {
+      if (!st) return;
+      clearTimeout(st.timer);
+      st.ghost?.remove();
+      clear();
+      document.documentElement.classList.remove('is-card-drag');
+      removeEventListener('pointermove', move, true);
+      removeEventListener('pointerup', up, true);
+      removeEventListener('pointercancel', end, true);
+      removeEventListener('keydown', key, true);
+      st = null;
+    };
+    const key = e => { if (e.key === 'Escape' && st?.on) { e.preventDefault(); e.stopPropagation(); suppressAt = performance.now(); end(); } };
+    const begin = () => {
+      if (!st || st.on) return;
+      st.on = true;
+      const inp = byId(st.id);
+      if (!inp) { end(); return; }
+      const g = document.createElement('div');
+      const tag = inputTags(inp)[0];
+      g.className = 'card-ghost';
+      if (tag) g.style.setProperty('--tag', tag.color);
+      g.innerHTML = `<b>${inputs.indexOf(inp) + 1}</b>${esc(inp.name)}`;
+      document.body.appendChild(g);
+      st.ghost = g;
+      document.documentElement.classList.add('is-card-drag');
+      grid.querySelector(`.card[data-id="${st.id}"]`)?.classList.add('is-dragging');
+      navigator.vibrate?.(15);
+      track(st.x, st.y);
+    };
+    const track = (x, y) => {
+      st.x = x; st.y = y;
+      st.ghost.style.transform = `translate(${x + 12}px, ${y + 12}px)`;
+      clear();
+      grid.querySelector(`.card[data-id="${st.id}"]`)?.classList.add('is-dragging');
+      st.target = null; st.chip = null;
+      const el = document.elementFromPoint(x, y);
+      const chip = el?.closest('.src-chip[data-tag]');
+      if (chip && chip.dataset.tag) { st.chip = chip.dataset.tag; chip.classList.add('is-drop'); return; }
+      const card = el?.closest('.card');
+      if (card && grid.contains(card) && card.dataset.id !== st.id) {
+        const r = card.getBoundingClientRect();
+        st.target = card.dataset.id;
+        st.after = x > r.left + r.width / 2;
+        card.classList.add(st.after ? 'drop-after' : 'drop-before');
+      }
+      // ลากใกล้ขอบบน/ล่างของแผง = เลื่อนรายการ
+      const gr = grid.getBoundingClientRect();
+      if (y < gr.top + 36) grid.scrollTop -= 14;
+      else if (y > gr.bottom - 36) grid.scrollTop += 14;
+    };
+    const move = e => {
+      if (!st || e.pointerId !== st.pid) return;
+      const d = Math.hypot(e.clientX - st.x0, e.clientY - st.y0);
+      if (!st.on) {
+        st.x = e.clientX; st.y = e.clientY;
+        if (st.touch) { if (d > 10) end(); return; }
+        if (d > 6) begin();
+        return;
+      }
+      e.preventDefault();
+      track(e.clientX, e.clientY);
+    };
+    const up = e => {
+      if (!st || e.pointerId !== st.pid) return;
+      if (st.on) {
+        // ปล่อยบนการ์ด = เบราว์เซอร์ส่ง click ตามมาหนึ่งครั้ง — ไม่ให้นับเป็นการแตะ (ไม่เปลี่ยน Preview)
+        if (grid.contains(document.elementFromPoint(e.clientX, e.clientY))) suppressAt = performance.now();
+        const inp = byId(st.id);
+        if (inp && st.chip) {
+          const t = tagById(st.chip);
+          if (t && !(inp.tags || []).includes(t.id)) { toggleInputTag(inp, t.id, true); toast(`ติดป้าย “${t.name}” ให้ “${inp.name}” แล้ว`, 'success', 3000); }
+        } else if (inp && st.target) {
+          const tgt = byId(st.target);
+          if (tgt) {
+            let to = inputs.indexOf(tgt) + (st.after ? 1 : 0);
+            if (inputs.indexOf(inp) < to) to--;
+            moveInput(inp, to);
+          }
+        }
+      }
+      end();
+    };
+    grid.addEventListener('pointerdown', e => {
+      if (st || (e.pointerType === 'mouse' && e.button !== 0) || e.target.closest(SKIP)) return;
+      const card = e.target.closest('.card');
+      if (!card || !byId(card.dataset.id)) return;
+      st = { id: card.dataset.id, pid: e.pointerId, x0: e.clientX, y0: e.clientY, x: e.clientX, y: e.clientY, touch: e.pointerType === 'touch', on: false };
+      if (st.touch) st.timer = setTimeout(begin, 400);
+      addEventListener('pointermove', move, true);
+      addEventListener('pointerup', up, true);
+      addEventListener('pointercancel', end, true);
+      addEventListener('keydown', key, true);
+    });
+    // จอสัมผัส: ระหว่างลาก ห้ามเลื่อนหน้า และไม่ให้กดค้างเปิดเมนูของระบบ
+    grid.addEventListener('touchmove', e => { if (st?.on) e.preventDefault(); }, { passive: false });
+    grid.addEventListener('contextmenu', e => { if (st) e.preventDefault(); });
+    // ปล่อยหลังลาก ไม่นับเป็นการแตะการ์ด (ไม่เปลี่ยน Preview)
+    grid.addEventListener('click', e => { if (performance.now() - suppressAt < 400) { suppressAt = 0; e.stopPropagation(); e.preventDefault(); } }, true);
+  }
+
   function renderInputs() {
     queueMicrotask(renderQuickGfx);
     const grid = $('#inputs-grid');
@@ -1463,14 +1783,18 @@
     const [tw, th] = THUMB_SIZE[cardSize()];
     // จอสัมผัส: ปุ่มแก้ไข/ลบ อยู่แถวชื่อใต้ภาพ — แตะตรงภาพได้ทั้งภาพโดยไม่โดนปุ่ม
     const touch = matchMedia('(hover: none)').matches;
+    // ปุ่มป้าย/ลำดับอยู่แถวชื่อ (ไม่อยู่กลางภาพ — แตะกลางการ์ดต้องโดนภาพ ไม่ใช่ปุ่ม) · คลิกขวาที่การ์ดก็เปิดได้
+    const tagBtn = `<button class="mini card-tagbtn" data-card="tags" title="ป้ายกลุ่ม / ลำดับ (คลิกขวาที่การ์ดก็ได้)">${icon('tag')}</button>`;
     const editBtns = `<button class="mini" data-card="rename" title="แก้ไขชื่อ / ข้อความ">${icon('edit')}</button><button class="mini danger" data-card="remove" title="ลบแหล่งภาพ">${icon('x')}</button>`;
     inputs.forEach((inp, i) => {
       const meta = TYPE_META[inp.type];
       const isMedia = inp.type === 'media' && !inp.missing;
       const canRelink = ['camera', 'screen', 'media', 'image', 'slides'].includes(inp.type) && (inp.missing || inp.status !== 'live');
       const card = document.createElement('div');
-      card.className = 'card' + (inp.status !== 'live' ? ' no-signal' : '');
+      const tags = inputTags(inp);
+      card.className = 'card' + (inp.status !== 'live' ? ' no-signal' : '') + (tags.length ? ' has-tag' : '');
       card.dataset.id = inp.id;
+      if (tags.length) card.style.setProperty('--tag', tags[0].color);
       card.innerHTML = `
         <div class="card-thumb">
           <canvas width="${tw}" height="${th}"></canvas>
@@ -1510,13 +1834,15 @@
             ${touch ? '' : editBtns}
           </div>
         </div>
-        <div class="card-foot">${icon(meta.icon)}<span class="card-name">${esc(inp.name)}</span><span class="card-sub">${esc(cardSub(inp))}</span><span class="card-afv" hidden>AFV</span><button type="button" class="card-mute" data-card="mute" hidden title="ปิด / เปิดเสียงแหล่งนี้"><svg class="i"><use href="#i-vol"/></svg><span></span></button>${touch ? `<span class="foot-actions">${editBtns}</span>` : ''}</div>
+        <div class="card-foot">${icon(meta.icon)}<span class="card-name">${esc(inp.name)}</span>${tags.length ? `<button type="button" class="card-tags" data-card="tags" title="ป้าย: ${esc(tags.map(t => t.name).join(', '))} — แตะเพื่อแก้">${tags.map(t => `<i style="--tag:${t.color}"></i>`).join('')}</button>` : ''}<span class="card-sub">${esc(cardSub(inp))}</span><span class="card-afv" hidden>AFV</span><button type="button" class="card-mute" data-card="mute" hidden title="ปิด / เปิดเสียงแหล่งนี้"><svg class="i"><use href="#i-vol"/></svg><span></span></button>${touch ? `<span class="foot-actions">${tagBtn}${editBtns}</span>` : tagBtn}</div>
         <div class="card-ovl">${ovl.map((c, k) => `<button type="button" data-card-ovl="${k}" title="ซ้อนเข้า Overlay ${c.n}">${c.n}</button>`).join('')}<button type="button" class="ovl-pos ${inp.layout ? 'is-set' : ''}" data-card="layout" title="ตำแหน่ง / ขนาด / ครอป / คีย์ฉาก">⧉</button></div>`;
       grid.appendChild(card);
       const ctx = card.querySelector('canvas').getContext('2d');
       thumbs.set(inp.id, ctx);
       drawSource(ctx, inp, tw, th);
     });
+    renderSourceBar();
+    applySourceFilter();
     cardVu.sync();
     placeVcrops();
     updateTally();
@@ -1579,6 +1905,7 @@
       if (act === 'mute') cardVu.toggleMute(inp.id);
       else if (act === 'remove') removeInput(inp.id);
       else if (act === 'rename') renameInput(inp);
+      else if (act === 'tags') openTagMenu(inp, actionBtn);
       else if (act === 'relink') relinkInput(inp);
       else if (act === 'layout') openLayoutDialog(inp);
       else if (act === 'invite') showGuestInvite(inp);
@@ -1960,6 +2287,7 @@
     inputs.splice(inputs.indexOf(made), 1);
     inputs.splice(Math.min(was.at, inputs.length), 0, made);
     if (raw.layout) made.layout = sanitizeLayout(raw.layout);
+    if (raw.tags) made.tags = sanitizeInputTags(raw.tags);
     if (raw.color) made.color = sanitizeColor(raw.color);
     if (raw.bg) made.bg = sanitizeBg(raw.bg);
     if (was.data) made.data = { ...was.data };
@@ -10660,7 +10988,7 @@ onmessage = async e => {
   // ข้อความคู่มือและคีย์ลัดอยู่ใน assets/js/manual.js
 
   // คู่มือและคีย์ลัด: สารบัญซ้าย · ค้นหา · คีย์ลัดเป็นกลุ่มพร้อมปุ่มแบบคีย์บอร์ด · พิมพ์ใบคีย์ลัด
-  const KEY_GROUPS = [['ตัดภาพ', /^(Space|Enter|1 – 9|Shift \+ 1 – 9|F)$/], ['กราฟิกและรีเพลย์', /^(T|P|K|Q W E R|Shift \+ Q W E R|I)$/], ['อื่น ๆ', /./]];
+  const KEY_GROUPS = [['ตัดภาพ', /^(Space|Enter|1 – 9|Shift \+ 1 – 9|F|\/)$/], ['กราฟิกและรีเพลย์', /^(T|P|K|Q W E R|Shift \+ Q W E R|I)$/], ['อื่น ๆ', /./]];
   const kbdHtml = k => k.split(/\s*\+\s*/).map(part => part.split(/\s+(?=\S)/).length > 1 && !/–/.test(part) ? part.split(/\s+/).map(x => `<kbd>${esc(x)}</kbd>`).join('') : `<kbd>${esc(part)}</kbd>`).join('<span class="kb-plus">+</span>');
   function openHelp(section) {
     const groups = KEY_GROUPS.map(([g]) => [g, []]);
@@ -10983,6 +11311,14 @@ onmessage = async e => {
     }));
 
     bindVcropDrag($('#inputs-grid'));
+    bindCardDrag($('#inputs-grid'));
+    bindSourceBar();
+    $('#inputs-grid').addEventListener('contextmenu', e => {
+      const card = e.target.closest('.card'), inp = card && byId(card.dataset.id);
+      if (!inp || e.target.closest('input, textarea')) return;
+      e.preventDefault();
+      openTagMenu(inp, { getBoundingClientRect: () => ({ left: e.clientX, right: e.clientX, top: e.clientY, bottom: e.clientY }) });
+    });
     $('#inputs-grid').addEventListener('click', onGridClick);
     $('#seg-orient').addEventListener('click', e => { const b = e.target.closest('[data-value]'); if (b) setOrient(b.dataset.value); });
     syncOrientSeg();
@@ -11058,6 +11394,7 @@ onmessage = async e => {
       }
       if (e.target.closest('input, textarea, select, [contenteditable], .vfader') || $('.modal-backdrop') || $('.menu')) return;
       if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.key === '/' && $('#src-search') && !$('#src-bar').hidden) { e.preventDefault(); $('#src-search').focus(); return; }
       const digit = /^(Digit|Numpad)([1-9])$/.exec(e.code);
       if (digit) {
         const inp = inputs[+digit[2] - 1];
@@ -11116,8 +11453,10 @@ onmessage = async e => {
         app: 'webmix', version: 1, name: this.name,
         output: { resolution: settings.resolution, fps: settings.fps, videoKbps: settings.videoKbps, transition: settings.transition, duration: settings.duration },
         graphics: { title: { ...settings.title }, titlePresets: settings.titlePresets.map(t => ({ ...t })), pip: { ...settings.pip }, key: { ...settings.key } },
+        tags: tagDefs.map(t => ({ ...t })),
         inputs: inputs.map(i => {
           const o = { id: i.id, type: i.type, name: i.name };
+          if (i.tags?.length) o.tags = [...i.tags];
           if (i.text) o.text = i.text;
           if (i.type === 'camera' && i.cam) o.cam = { ...i.cam };
           if (i.type === 'media') { o.file = i.fileName || ''; o.loop = !!i.el.loop; if (i.mark) o.mark = { ...i.mark }; }
@@ -11176,6 +11515,7 @@ onmessage = async e => {
       const ids = new Set();
       const loading = [];
       let waitingMics = 0;
+      tagDefs.splice(0, tagDefs.length, ...sanitizeTags(data.tags));
       for (const raw of data.inputs) {
         if (!raw || !SHOW_TYPES.includes(raw.type)) continue;
         const id = typeof raw.id === 'string' && raw.id && !ids.has(raw.id) ? raw.id : uid();
@@ -11185,6 +11525,7 @@ onmessage = async e => {
         try { const job = this.restoreInput(raw, base); if (job) loading.push(job); } catch (e) { console.warn('restore input', e); }
         const made = byId(id);
         if (made && raw.layout) made.layout = sanitizeLayout(raw.layout);
+        if (made && raw.tags) made.tags = sanitizeInputTags(raw.tags);
         if (made && raw.color) made.color = sanitizeColor(raw.color);
         if (made && typeof raw.vx === 'number') made.vx = clamp(raw.vx, 0, 1);
         if (made && raw.bg) made.bg = sanitizeBg(raw.bg);

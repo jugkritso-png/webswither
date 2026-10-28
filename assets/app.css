@@ -2894,3 +2894,104 @@ button.stat-disk.bad { border-color: #E5484D; background: rgba(229,72,77,.12); }
 [data-action=settings].has-update::after { content: ''; position: absolute; top: 5px; right: 5px; width: 8px; height: 8px; border-radius: 50%; background: #f0b44c; box-shadow: 0 0 0 2px var(--panel, #12161c); }
 .set-ver small { margin-left: 6px; color: var(--muted); font-size: 12px; }
 .up-apk { width: 100%; }
+
+/* ---- ป้ายกลุ่ม + ค้นหา + ลากเรียงลำดับแหล่งภาพ ---- */
+/* ช่องค้นหา + ปุ่มป้ายอยู่ในหัวแผง (แทนคำแนะนำ) · แผงแคบ: ช่องค้นหาย่อเป็นไอคอน กดแล้วขยายทับหัวแผง */
+/* วัดความกว้างของแผงเอง เฉพาะจอใหญ่ (บนมือถือ container-type ทำให้หน้ากว้างเกินจอ — ใช้ media query แทน) */
+@media (min-width: 761px) and (not ((pointer: coarse) and (orientation: landscape) and (max-height: 500px))) { .inputs-panel { container-type: inline-size; } }
+.inputs-panel .panel-head { position: relative; }
+.inputs-panel .panel-head:has(.src-bar:not([hidden])) .hint { display: none; }
+.src-bar { display: flex; align-items: center; gap: 6px; flex: 1 1 auto; min-width: 0; }
+.src-bar[hidden] { display: none; }
+.src-search { display: flex; align-items: center; gap: 6px; height: 30px; padding: 0 8px; flex: 0 1 240px; min-width: 0; cursor: text;
+  border: 1px solid var(--line-2); border-radius: 6px; background: #07090c; color: var(--muted); }
+.src-search:focus-within { border-color: #4f86f0; box-shadow: 0 0 0 3px rgba(59, 130, 246, .2); }
+.src-search .i { width: 15px; height: 15px; flex: none; }
+.src-search input { flex: 1; min-width: 0; height: 100%; border: 0; padding: 0; background: none; color: var(--text); font: inherit; font-size: 13px; outline: none; }
+.src-search kbd { font: 700 11px/1 var(--mono); color: var(--muted); border: 1px solid var(--line-2); border-radius: 4px; padding: 2px 5px; }
+.src-search:focus-within kbd, .src-search:has(input:not(:placeholder-shown)) kbd { display: none; }
+.src-tagbtn { flex: none; width: 30px; height: 30px; }
+@container (max-width: 760px) {
+  .src-bar { flex: 0 0 auto; }
+  .src-search { flex: 0 0 30px; width: 30px; padding: 0; justify-content: center; }
+  .src-search kbd { display: none; }
+  /* ยังโฟกัสได้ (ปุ่ม / และการแตะไอคอน) แค่ไม่มีความกว้าง */
+  .src-search input { flex: 0 0 0; width: 0; opacity: 0; }
+  .src-search:focus-within, .src-search:has(input:not(:placeholder-shown)) { position: absolute; left: 8px; right: 8px; top: 4px; z-index: 6; width: auto; padding: 0 8px; justify-content: flex-start; background: #07090c; }
+  .src-search:focus-within input, .src-search:has(input:not(:placeholder-shown)) input { flex: 1 1 auto; width: auto; opacity: 1; }
+}
+@media (max-width: 760px), (pointer: coarse) and (orientation: landscape) and (max-height: 500px) {
+  .src-bar { flex: 0 0 auto; }
+  /* หัวแผงบนมือถือเต็มแล้ว — สร้าง/จัดการป้ายจากปุ่มป้ายบนการ์ด หรือปุ่ม + ป้าย ในแถวป้ายแทน */
+  .src-tagbtn { display: none; }
+  .src-search { flex: 0 0 30px; width: 30px; padding: 0; justify-content: center; }
+  .src-search kbd { display: none; }
+  /* ยังโฟกัสได้ (ปุ่ม / และการแตะไอคอน) แค่ไม่มีความกว้าง */
+  .src-search input { flex: 0 0 0; width: 0; opacity: 0; }
+  .src-search:focus-within, .src-search:has(input:not(:placeholder-shown)) { position: absolute; left: 8px; right: 8px; top: 4px; z-index: 6; width: auto; padding: 0 8px; justify-content: flex-start; background: #07090c; }
+  .src-search:focus-within input, .src-search:has(input:not(:placeholder-shown)) input { flex: 1 1 auto; width: auto; opacity: 1; }
+}
+.src-chips { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; flex: none; padding: 8px 10px 0; }
+.src-chips[hidden] { display: none; }
+.src-chips::-webkit-scrollbar { display: none; }
+.src-chip { display: inline-flex; align-items: center; gap: 6px; flex: none; height: 28px; padding: 0 10px; border-radius: 99px; cursor: pointer;
+  border: 1px solid var(--line-2); background: var(--panel-2); color: var(--text); font: 600 12px/1 var(--font); white-space: nowrap; }
+.src-chip:hover { border-color: #4a5366; }
+.src-chip:focus-visible { outline: 2px solid #4f86f0; outline-offset: 2px; }
+.src-chip i { width: 10px; height: 10px; border-radius: 50%; background: var(--tag); flex: none; }
+.src-chip small { font: 700 11px/1 var(--mono); color: var(--muted); }
+.src-chip.is-on { background: var(--text); color: var(--bg); border-color: var(--text); }
+.src-chip.is-on small { color: #3d4454; }
+.src-chip[data-tag]:not([data-tag=""]).is-on { background: color-mix(in srgb, var(--tag) 24%, var(--panel-2)); color: var(--text); border-color: var(--tag); }
+.src-chip[data-tag]:not([data-tag=""]).is-on small { color: var(--text); }
+.src-chip.is-drop { border-color: var(--tag); box-shadow: 0 0 0 3px color-mix(in srgb, var(--tag) 45%, transparent); transform: scale(1.06); }
+.src-chip-add { color: var(--muted); background: transparent; border-style: dashed; }
+.src-chip-add .i { width: 13px; height: 13px; }
+.src-none { grid-column: 1 / -1; display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 28px 12px; color: var(--muted); font-size: 13px; text-align: center; }
+.src-none p { margin: 0; }
+.card[hidden] { display: none; }
+.card.has-tag .card-foot { box-shadow: inset 4px 0 0 var(--tag); }
+.card-tags { display: inline-flex; align-items: center; gap: 3px; flex: none; padding: 4px; margin: -4px 0; border: 0; border-radius: 6px; background: none; cursor: pointer; }
+.card-tags:hover, .card-tags:focus-visible { background: var(--panel-3); outline: none; }
+@media (hover: none) { .card-tags { padding: 10px 6px; margin: -10px 0; } }
+.card-tags i { width: 8px; height: 8px; border-radius: 50%; background: var(--tag); }
+.card { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+.card.is-dragging { opacity: .35; }
+.card.drop-before { box-shadow: -5px 0 0 -1px #4f86f0; }
+.card.drop-after { box-shadow: 5px 0 0 -1px #4f86f0; }
+html.is-card-drag, html.is-card-drag * { cursor: grabbing !important; }
+.card-ghost { position: fixed; left: 0; top: 0; z-index: 200; pointer-events: none; display: flex; align-items: center; gap: 8px; max-width: 240px;
+  padding: 8px 12px; border-radius: 8px; background: var(--panel-2); border: 1px solid #4f86f0; box-shadow: 0 12px 32px rgba(0, 0, 0, .55), inset 4px 0 0 var(--tag, transparent);
+  color: var(--text); font: 600 13px/1.3 var(--font); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.card-ghost b { font: 700 12px/1 var(--mono); padding: 3px 6px; border-radius: 4px; background: var(--bg); }
+.card-foot > .card-tagbtn { margin-left: auto; flex: none; width: 26px; height: 26px; visibility: hidden; background: transparent; }
+.card-foot > .card-tagbtn .i { width: 14px; height: 14px; }
+.card:hover > .card-foot > .card-tagbtn, .card-foot > .card-tagbtn:focus-visible { visibility: visible; }
+.tag-menu { min-width: 220px; }
+.tag-menu button[data-tg] { gap: 8px; }
+.tag-menu .tag-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--tag); flex: none; }
+.tag-menu button[aria-checked=true] small { color: var(--text); font-size: 13px; }
+.tag-menu button:disabled { opacity: .4; cursor: default; }
+.tag-menu .tag-empty { padding: 4px 10px; margin: 0; }
+.tag-rows { display: flex; flex-direction: column; gap: 8px; margin: 10px 0 12px; }
+.tag-row { display: grid; grid-template-columns: 1fr auto auto; grid-template-areas: "name count del" "sw sw sw"; align-items: center; gap: 6px 8px;
+  padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+.tag-row:last-child { border-bottom: 0; }
+.tag-row .tag-name { grid-area: name; min-width: 0; }
+.tag-row .tag-count { grid-area: count; }
+.tag-row [data-del] { grid-area: del; }
+.tag-row .tag-swatches { grid-area: sw; flex-wrap: wrap; }
+.tag-count { color: var(--muted); font-size: 12px; min-width: 44px; }
+.tag-swatches { display: inline-flex; align-items: center; gap: 4px; }
+.tag-swatches button { width: 22px; height: 22px; border-radius: 50%; border: 2px solid transparent; background: var(--tag); cursor: pointer; padding: 0; }
+.tag-swatches button.is-on { border-color: var(--text); box-shadow: 0 0 0 2px var(--bg) inset; }
+.tag-swatches input[type=color] { width: 26px; height: 26px; padding: 0; border: 1px solid var(--line-2); border-radius: 6px; background: none; cursor: pointer; }
+@media (hover: none) {
+  .src-search, .src-tagbtn { height: 40px; }
+  .src-tagbtn, .inputs-panel .src-search:not(:focus-within) { min-width: 40px; }
+  .src-chip { height: 36px; padding: 0 12px; font-size: 13px; }
+  .tag-swatches button { width: 30px; height: 30px; }
+}
+/* มือถือแนวนอน: พื้นที่สูงไม่พอ — ซ่อนแถวป้าย (ค้นหา/ติดป้าย/เรียงลำดับยังใช้ได้) */
+@media (pointer: coarse) and (orientation: landscape) and (max-height: 500px) { .src-chips { display: none !important; } }
+@media (max-width: 760px) { .foot-actions .card-tagbtn { display: none; } }
