@@ -203,7 +203,7 @@ body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-a
 
 /* ---------------- what's new ---------------- */
 .news { margin-top: 48px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 48px; }
-.news-item { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 18px; padding: 22px 0; border-top: 1px solid var(--line); }
+.news-item { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 18px; padding: 22px 0; border-top: 1px solid var(--line); }
 .news-item .k { font-family: var(--f-mono); font-size: 0.75rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); padding-top: 4px; }
 .news-item h3 { font-family: var(--f-body); font-size: 1.05rem; font-weight: 600; }
 .news-item p { margin-top: 4px; color: var(--muted); font-size: 0.95rem; }
@@ -277,7 +277,7 @@ footer a { color: var(--muted); }
 <main id="top">
   <section class="hero">
     <div class="wrap">
-      <a class="pill" href="#new"><b>ใหม่</b><span>WebMix Pro 1.1.13 พร้อมให้ดาวน์โหลดแล้ว</span><span>→</span></a>
+      <a class="pill" href="#new"><b>ใหม่</b><span>WebMix Pro <span class="js-ver">1.1.14</span> พร้อมให้ดาวน์โหลดแล้ว</span><span>→</span></a>
       <h1><span class="nw">ห้องควบคุมรายการสด</span><br><span class="grad"><span class="nw">ทั้งห้อง</span> <span class="nw">ในโปรแกรมเดียว</span></span></h1>
       <p class="sub">สลับกล้อง ซ้อนกราฟิก มิกซ์เสียง บันทึก และไลฟ์ไปหลายแพลตฟอร์มพร้อมกัน จากคอมพิวเตอร์หรือมือถือเครื่องเดียว ไม่ต้องเช่าเซิร์ฟเวอร์</p>
       <div class="cta">
@@ -409,16 +409,18 @@ footer a { color: var(--muted); }
   <section class="sec" id="new">
     <div class="wrap">
       <div class="head">
-        <span class="eyebrow">เวอร์ชัน 1.1.13</span>
+        <span class="eyebrow">เวอร์ชัน <span class="js-ver">1.1.14</span></span>
         <h2>มีอะไรใหม่</h2>
       </div>
       <div class="news">
-        <div class="news-item"><span class="k">ไลฟ์</span><div><h3>ทดสอบก่อนขึ้นไลฟ์จริง</h3><p>ตรวจรหัสสตรีมทุกปลายทางโดยไม่ส่งภาพ และซ้อม 30 วินาทีเพื่อวัดความเร็วอัปโหลด</p></div></div>
-        <div class="news-item"><span class="k">บันทึก</span><div><h3>เตือนก่อนดิสก์เต็ม</h3><p>บอกเวลาที่ยังบันทึกได้ หยุดไฟล์แยกกล้องให้เอง และปิดไฟล์หลักให้เรียบร้อยก่อนเต็ม</p></div></div>
-        <div class="news-item"><span class="k">ผู้ชม</span><div><h3>คอมเมนต์จากเพจ Facebook</h3><p>เลือกเพจที่กำลังไลฟ์ แล้วคอมเมนต์เข้าแชตพร้อม YouTube และ Twitch</p></div></div>
-        <div class="news-item"><span class="k">คำบรรยาย</span><div><h3>แปลภาษาในเครื่อง</h3><p>แสดงต้นฉบับคู่คำแปล ใช้ตัวแปลในตัวของ Chrome ข้อความไม่ออกนอกเครื่อง</p></div></div>
-        <div class="news-item"><span class="k">เครือข่าย</span><div><h3>ค้นหา NDI และ OMT</h3><p>แท็บใหม่ในหน้าตั้งค่า ค้นหาทั้งสองแบบพร้อมกันและเพิ่มเป็นแหล่งภาพได้ทันที</p></div></div>
-        <div class="news-item"><span class="k">อัปเดต</span><div><h3>ตรวจเวอร์ชันใหม่ทุกช่องทาง</h3><p>แอปคอมพิวเตอร์อัปเดตตัวเอง Android บอกลิงก์ APK ตรงรุ่นเครื่อง เว็บแจ้งให้โหลดหน้าใหม่</p></div></div>
+        <div class="news-item"><span class="k">1.1.14 · ไลฟ์</span><div><h3>ไลฟ์ไม่หยุดแม้ตัวเข้ารหัสล่ม</h3><p>ตัวเข้ารหัสภาพล่มกลางรายการ แอปเริ่มตัวใหม่เองภายในไม่กี่วินาทีโดยไม่ต้องเชื่อมต่อใหม่ และเปลี่ยนไปใช้ CPU เมื่อชิปของเครื่องล่มซ้ำ</p></div></div>
+        <div class="news-item"><span class="k">1.1.14 · ไลฟ์</span><div><h3>ปลายทางที่หลุดกลับมาเร็วขึ้น</h3><p>ช่องที่หลุดระหว่างไลฟ์กลับมาออกอากาศในราว 5 วินาที จากเดิมราว 9 วินาที ช่องอื่นไม่สะดุด</p></div></div>
+        <div class="news-item"><span class="k">1.1.13 · ไลฟ์</span><div><h3>ทดสอบก่อนขึ้นไลฟ์จริง</h3><p>ตรวจรหัสสตรีมทุกปลายทางโดยไม่ส่งภาพ และซ้อม 30 วินาทีเพื่อวัดความเร็วอัปโหลด</p></div></div>
+        <div class="news-item"><span class="k">1.1.13 · บันทึก</span><div><h3>เตือนก่อนดิสก์เต็ม</h3><p>บอกเวลาที่ยังบันทึกได้ หยุดไฟล์แยกกล้องให้เอง และปิดไฟล์หลักให้เรียบร้อยก่อนเต็ม</p></div></div>
+        <div class="news-item"><span class="k">1.1.13 · ผู้ชม</span><div><h3>คอมเมนต์จากเพจ Facebook</h3><p>เลือกเพจที่กำลังไลฟ์ แล้วคอมเมนต์เข้าแชตพร้อม YouTube และ Twitch</p></div></div>
+        <div class="news-item"><span class="k">1.1.13 · คำบรรยาย</span><div><h3>แปลภาษาในเครื่อง</h3><p>แสดงต้นฉบับคู่คำแปล ใช้ตัวแปลในตัวของ Chrome ข้อความไม่ออกนอกเครื่อง</p></div></div>
+        <div class="news-item"><span class="k">1.1.13 · เครือข่าย</span><div><h3>ค้นหา NDI และ OMT</h3><p>แท็บใหม่ในหน้าตั้งค่า ค้นหาทั้งสองแบบพร้อมกันและเพิ่มเป็นแหล่งภาพได้ทันที</p></div></div>
+        <div class="news-item"><span class="k">1.1.13 · อัปเดต</span><div><h3>ตรวจเวอร์ชันใหม่ทุกช่องทาง</h3><p>แอปคอมพิวเตอร์อัปเดตตัวเอง Android บอกลิงก์ APK ตรงรุ่นเครื่อง เว็บแจ้งให้โหลดหน้าใหม่</p></div></div>
       </div>
     </div>
   </section>
@@ -428,7 +430,7 @@ footer a { color: var(--muted); }
       <div class="head">
         <span class="eyebrow">ดาวน์โหลด</span>
         <h2>ดาวน์โหลด WebMix Pro</h2>
-        <p>เวอร์ชัน 1.1.13 · 25 ต.ค. 2569 · ติดตั้งครั้งเดียว ครั้งต่อไปแอปแจ้งและอัปเดตตัวเอง</p>
+        <p>เวอร์ชัน <span class="js-ver">1.1.14</span> · <span id="js-date">28 ต.ค. 2569</span> · ติดตั้งครั้งเดียว ครั้งต่อไปแอปแจ้งและอัปเดตตัวเอง</p>
       </div>
 
       <div class="dl">
@@ -436,7 +438,7 @@ footer a { color: var(--muted); }
           <span class="k" id="dl-k">แนะนำ</span>
           <h3 id="dl-name">เลือกระบบของคุณ</h3>
           <p class="meta" id="dl-meta">ดาวน์โหลดได้ทั้ง Windows, macOS, Linux และ Android หรือใช้งานบนเว็บโดยไม่ต้องติดตั้ง</p>
-          <a class="btn btn-primary" id="dl-btn" href="https://github.com/jugkritso-png/webswither/releases/tag/v1.1.13" target="_blank" rel="noopener"><svg aria-hidden="true"><use href="#i-down"/></svg><span id="dl-btn-t">ดูไฟล์ทั้งหมด</span></a>
+          <a class="btn btn-primary" id="dl-btn" href="https://github.com/jugkritso-png/webswither/releases/latest" target="_blank" rel="noopener"><svg aria-hidden="true"><use href="#i-down"/></svg><span id="dl-btn-t">ดูไฟล์ทั้งหมด</span></a>
           <a class="btn btn-ghost" href="https://jugkritso-png.github.io/webswither/" target="_blank" rel="noopener" style="justify-self:start"><svg aria-hidden="true"><use href="#i-globe"/></svg>ใช้บนเว็บแทน</a>
         </div>
 
@@ -444,26 +446,26 @@ footer a { color: var(--muted); }
           <article class="os" data-os="windows">
             <header><svg aria-hidden="true"><use href="#i-win"/></svg><h4>Windows</h4></header>
             <p class="req">Windows 10 / 11 · 64 บิต</p>
-            <a class="file" href="https://github.com/jugkritso-png/webswither/releases/download/v1.1.13/WebMix-Pro_1.1.13_x64-setup.exe"><div><b>ตัวติดตั้ง .exe</b><span>WebMix-Pro_1.1.13_x64-setup.exe</span></div><em>6.2 MB<svg aria-hidden="true"><use href="#i-down"/></svg></em></a>
-            <a class="file" href="https://github.com/jugkritso-png/webswither/releases/download/v1.1.13/WebMix-Pro_1.1.13_x64_en-US.msi"><div><b>แพ็กเกจ .msi</b><span>WebMix-Pro_1.1.13_x64_en-US.msi</span></div><em>8.1 MB<svg aria-hidden="true"><use href="#i-down"/></svg></em></a>
+            <a class="file" data-asset="x64-setup.exe" href="https://github.com/jugkritso-png/webswither/releases/download/v1.1.14/WebMix-Pro_1.1.14_x64-setup.exe"><div><b>ตัวติดตั้ง .exe</b><span>WebMix-Pro_1.1.14_x64-setup.exe</span></div><em>6.2 MB<svg aria-hidden="true"><use href="#i-down"/></svg></em></a>
+            <a class="file" data-asset="x64_en-US.msi" href="https://github.com/jugkritso-png/webswither/releases/download/v1.1.14/WebMix-Pro_1.1.14_x64_en-US.msi"><div><b>แพ็กเกจ .msi</b><span>WebMix-Pro_1.1.14_x64_en-US.msi</span></div><em>8.1 MB<svg aria-hidden="true"><use href="#i-down"/></svg></em></a>
           </article>
           <article class="os" data-os="mac">
             <header><svg aria-hidden="true"><use href="#i-mac"/></svg><h4>macOS</h4></header>
             <p class="req">macOS 11 ขึ้นไป · ชิป Apple และ Intel</p>
-            <a class="file" href="https://github.com/jugkritso-png/webswither/releases/download/v1.1.13/WebMix-Pro_1.1.13_universal.dmg"><div><b>ไฟล์ .dmg</b><span>WebMix-Pro_1.1.13_universal.dmg</span></div><em>15.9 MB<svg aria-hidden="true"><use href="#i-down"/></svg></em></a>
+            <a class="file" data-asset="universal.dmg" href="https://github.com/jugkritso-png/webswither/releases/download/v1.1.14/WebMix-Pro_1.1.14_universal.dmg"><div><b>ไฟล์ .dmg</b><span>WebMix-Pro_1.1.14_universal.dmg</span></div><em>15.9 MB<svg aria-hidden="true"><use href="#i-down"/></svg></em></a>
           </article>
           <article class="os" data-os="linux">
             <header><svg aria-hidden="true"><use href="#i-linux"/></svg><h4>Linux</h4></header>
             <p class="req">64 บิต · แพ็กเกจติดตั้ง ffmpeg ให้เอง</p>
-            <a class="file" href="https://github.com/jugkritso-png/webswither/releases/download/v1.1.13/WebMix-Pro_1.1.13_amd64.deb"><div><b>Ubuntu / Debian</b><span>WebMix-Pro_1.1.13_amd64.deb</span></div><em>4.1 MB<svg aria-hidden="true"><use href="#i-down"/></svg></em></a>
-            <a class="file" href="https://github.com/jugkritso-png/webswither/releases/download/v1.1.13/WebMix-Pro-1.1.13-1.x86_64.rpm"><div><b>Fedora / openSUSE</b><span>WebMix-Pro-1.1.13-1.x86_64.rpm</span></div><em>4.1 MB<svg aria-hidden="true"><use href="#i-down"/></svg></em></a>
-            <a class="file" href="https://github.com/jugkritso-png/webswither/releases/download/v1.1.13/WebMix-Pro_1.1.13_amd64.AppImage"><div><b>AppImage</b><span>WebMix-Pro_1.1.13_amd64.AppImage</span></div><em>82.6 MB<svg aria-hidden="true"><use href="#i-down"/></svg></em></a>
+            <a class="file" data-asset="amd64.deb" href="https://github.com/jugkritso-png/webswither/releases/download/v1.1.14/WebMix-Pro_1.1.14_amd64.deb"><div><b>Ubuntu / Debian</b><span>WebMix-Pro_1.1.14_amd64.deb</span></div><em>4.1 MB<svg aria-hidden="true"><use href="#i-down"/></svg></em></a>
+            <a class="file" data-asset="x86_64.rpm" href="https://github.com/jugkritso-png/webswither/releases/download/v1.1.14/WebMix-Pro-1.1.14-1.x86_64.rpm"><div><b>Fedora / openSUSE</b><span>WebMix-Pro-1.1.14-1.x86_64.rpm</span></div><em>4.1 MB<svg aria-hidden="true"><use href="#i-down"/></svg></em></a>
+            <a class="file" data-asset="amd64.AppImage" href="https://github.com/jugkritso-png/webswither/releases/download/v1.1.14/WebMix-Pro_1.1.14_amd64.AppImage"><div><b>AppImage</b><span>WebMix-Pro_1.1.14_amd64.AppImage</span></div><em>82.6 MB<svg aria-hidden="true"><use href="#i-down"/></svg></em></a>
           </article>
           <article class="os" data-os="android">
             <header><svg aria-hidden="true"><use href="#i-android"/></svg><h4>Android</h4></header>
             <p class="req">Android 7 ขึ้นไป · ไลฟ์ได้ในตัว</p>
-            <a class="file" href="https://github.com/jugkritso-png/webswither/releases/download/v1.1.13/WebMix-Pro_1.1.13_android-arm64.apk"><div><b>มือถือ / แท็บเล็ต</b><span>WebMix-Pro_1.1.13_android-arm64.apk</span></div><em>11.9 MB<svg aria-hidden="true"><use href="#i-down"/></svg></em></a>
-            <a class="file" href="https://github.com/jugkritso-png/webswither/releases/download/v1.1.13/WebMix-Pro_1.1.13_android-x86_64.apk"><div><b>Chromebook</b><span>WebMix-Pro_1.1.13_android-x86_64.apk</span></div><em>11.9 MB<svg aria-hidden="true"><use href="#i-down"/></svg></em></a>
+            <a class="file" data-asset="android-arm64.apk" href="https://github.com/jugkritso-png/webswither/releases/download/v1.1.14/WebMix-Pro_1.1.14_android-arm64.apk"><div><b>มือถือ / แท็บเล็ต</b><span>WebMix-Pro_1.1.14_android-arm64.apk</span></div><em>11.9 MB<svg aria-hidden="true"><use href="#i-down"/></svg></em></a>
+            <a class="file" data-asset="android-x86_64.apk" href="https://github.com/jugkritso-png/webswither/releases/download/v1.1.14/WebMix-Pro_1.1.14_android-x86_64.apk"><div><b>Chromebook</b><span>WebMix-Pro_1.1.14_android-x86_64.apk</span></div><em>11.9 MB<svg aria-hidden="true"><use href="#i-down"/></svg></em></a>
           </article>
         </div>
       </div>
@@ -533,6 +535,32 @@ footer a { color: var(--muted); }
     : /Linux/i.test(plat) ? 'linux' : '';
   var NAMES = { windows: 'Windows', mac: 'macOS', linux: 'Linux', android: 'Android' };
   var REQ = { windows: 'Windows 10 / 11 · 64 บิต', mac: 'macOS 11 ขึ้นไป · ชิป Apple และ Intel', linux: 'Ubuntu / Debian 64 บิต · มีแพ็กเกจอื่นด้านข้าง', android: 'Android 7 ขึ้นไป · มือถือและแท็บเล็ต' };
+  pick();
+  // ดึงข้อมูลเวอร์ชันล่าสุดจาก GitHub — ออกเวอร์ชันใหม่แล้วหน้านี้อัปเดตลิงก์ ขนาด และวันที่เอง (ไม่ได้ = ใช้ลิงก์ที่เขียนไว้)
+  fetch('https://api.github.com/repos/jugkritso-png/webswither/releases/latest', { headers: { Accept: 'application/vnd.github+json' } })
+    .then(function (r) { return r.ok ? r.json() : null; })
+    .then(function (rel) {
+      if (!rel || !rel.tag_name || !rel.assets) return;
+      var ver = rel.tag_name.replace(/^v/, '');
+      document.querySelectorAll('.js-ver').forEach(function (el) { el.textContent = ver; });
+      if (rel.published_at) {
+        var d = new Date(rel.published_at), M = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
+        document.getElementById('js-date').textContent = d.getDate() + ' ' + M[d.getMonth()] + ' ' + (d.getFullYear() + 543);
+      }
+      document.querySelectorAll('.file[data-asset]').forEach(function (a) {
+        var suf = a.getAttribute('data-asset');
+        var asset = rel.assets.filter(function (x) { return x.name.slice(-suf.length) === suf; })[0];
+        if (!asset) return;
+        a.href = asset.browser_download_url;
+        a.querySelector('span').textContent = asset.name;
+        var em = a.querySelector('em');
+        em.firstChild.nodeValue = (asset.size / 1e6).toFixed(1) + ' MB';
+      });
+      pick();
+    })
+    .catch(function () {});
+
+  function pick() {
   if (!os) return;
   var card = document.querySelector('.os[data-os="' + os + '"]');
   if (!card) return;
@@ -548,6 +576,7 @@ footer a { color: var(--muted); }
   var hero = document.getElementById('hero-dl');
   hero.href = first.href;
   document.getElementById('hero-os').textContent = NAMES[os] + ' · ' + size;
+  }
 })();
 </script>
 </body>
