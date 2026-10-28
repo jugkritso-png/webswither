@@ -78,6 +78,8 @@
     guest: 'รอแขกเปิดลิงก์เชิญ — กดปุ่ม 🔗 บนการ์ดเพื่อดูลิงก์'
   };
 
+  // ข้อความระบบที่วาดลงภาพ — ตามภาษาหน้าจอ
+  const tr = s => (s && WM.i18n ? WM.i18n.t(s) : s);
   function drawNoSignal(ctx, w, h, inp) {
     ctx.fillStyle = '#0b0c10'; ctx.fillRect(0, 0, w, h);
     const s = h / 720;
@@ -91,7 +93,7 @@
     ctx.fillStyle = '#8b94a7';
     fitFont(ctx, inp.name, 500, 22 * s, FONT, w * 0.8);
     ctx.fillText(inp.name, w / 2, h * 0.56);
-    const relink = RELINK_HINT[inp.type];
+    const relink = tr(RELINK_HINT[inp.type]);
     if (relink && inp.missing) {
       ctx.fillStyle = '#f5a524';
       fitFont(ctx, relink, 500, 18 * s, FONT, w * 0.85);
@@ -99,7 +101,7 @@
     }
     if (inp.type === 'srt') {
       const c = inp.srt;
-      const hint = c.mode === 'listener' ? `UDP ${c.port} · ${c.latency} ms` : c.mode === 'rtmp' ? `RTMP · พอร์ต ${c.port} · รอผู้ส่ง` : String(c.url || '').replace(/\?.*$/, '');
+      const hint = c.mode === 'listener' ? `UDP ${c.port} · ${c.latency} ms` : c.mode === 'rtmp' ? tr(`RTMP · พอร์ต ${c.port} · รอผู้ส่ง`) : String(c.url || '').replace(/\?.*$/, '');
       ctx.fillStyle = '#5d6578';
       fitFont(ctx, hint, 500, 18 * s, MONO, w * 0.8);
       ctx.fillText(hint, w / 2, h * 0.64);

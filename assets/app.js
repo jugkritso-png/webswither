@@ -10,6 +10,8 @@
     fillBlack, drawFit, fitFont, drawBars, drawSlate, drawClock, RELINK_HINT, drawNoSignal, drawTitle, TITLE_STYLES, drawTitleInput, titleAnim,
     createKeyer, createGpu, idb, canUseOpfs, mediaStore, createMultiview, SHORTCUTS, MANUAL,
     TIMER_MODES, TIMER_STYLES, timerText, drawTimer, drawScore, TICKER_BAR, drawTickerBar, drawTicker, sheetCsvUrl, parseCsv, desktop, chat: chatLib } = window.WebMix;
+  // ข้อความเริ่มต้นที่เป็นเนื้อหา (วาดลงภาพ Program) — สร้างตามภาษาที่เลือกตอนสร้างแหล่งภาพ ผู้ใช้แก้ได้ภายหลัง
+  const defText = s => (window.WebMix.i18n ? window.WebMix.i18n.t(s) : s);
   /* ====================================================================== */
   /*  PHONE CAMERA MODE (?call=<studio id>)                                  */
   /* ====================================================================== */
@@ -69,7 +71,7 @@
     autoRec: false, isoRec: false,
     // ลดบิตเรตเองเมื่อเน็ตส่งไม่ทัน (ข้อมูลค้างส่ง) แทนที่ภาพจะค้าง/หลุด
     abr: true,
-    title: { headline: 'BREAKING NEWS', subtitle: 'รายงานสดจากสตูดิโอ WebMix Pro', color: '#ef4444' },
+    title: { headline: 'BREAKING NEWS', subtitle: defText('รายงานสดจากสตูดิโอ WebMix Pro'), color: '#ef4444' },
     pip: { position: 'br', size: 0.32 },
     key: { color: 'green', tolerance: 60 },
     srtInputs: [], titlePresets: [],
@@ -789,7 +791,7 @@
     const sec = Math.floor(Date.now() / 1000);
     const GW = Math.min(W, 1920), GH = Math.round(GW * H / W);
     const noSignal = () => transparent ? null
-      : { e: genTexture('ns:' + inp.id, `${inp.name}|${inp.srtState}|${inp.missing}|${inp.status}`, GW, GH, (c, w, h) => drawNoSignal(c, w, h, inp)), full: true };
+      : { e: genTexture('ns:' + inp.id, `${inp.name}|${inp.srtState}|${inp.missing}|${inp.status}|${window.WebMix.i18n?.lang}`, GW, GH, (c, w, h) => drawNoSignal(c, w, h, inp)), full: true };
     switch (inp.type) {
       case 'black': return transparent ? { solid: [0, 0, 0, 1] } : { solid: [0, 0, 0, 1] };
       case 'bars': return { e: genTexture('g:' + inp.id, 'bars', GW, GH, drawBars), full: true };
@@ -1240,7 +1242,7 @@
     }
     o.on = on;
     $(`#btn-${name}`).classList.toggle('is-on', on);
-    $(`#btn-${name}`).firstChild.textContent = `${on ? 'CLEAR' : 'TAKE'} ${name.toUpperCase()}`;
+    $(`#btn-${name}`).firstChild.textContent = `${on ? 'เอาออก' : 'ขึ้น'}${{ title: 'ป้ายชื่อ', pip: 'ภาพซ้อน', key: 'ฉากเขียว' }[name]}`;
     $(`.tab[data-tab="${name}"]`).classList.toggle('is-live', on);
   }
 
@@ -1318,7 +1320,7 @@
     const defs = {
       bars: { name: 'COLOR BARS' },
       black: { name: 'BLACK' },
-      slate: { name: 'SLATE', text: 'กลับมาพบกันในอีกสักครู่' },
+      slate: { name: 'SLATE', text: defText('กลับมาพบกันในอีกสักครู่') },
       clock: { name: 'CLOCK', text: 'WEBMIX PRO STUDIO' }
     };
     return addInput({ type, ...defs[type] });
@@ -1834,7 +1836,7 @@
             ${touch ? '' : editBtns}
           </div>
         </div>
-        <div class="card-foot">${icon(meta.icon)}<span class="card-name">${esc(inp.name)}</span>${tags.length ? `<button type="button" class="card-tags" data-card="tags" title="ป้าย: ${esc(tags.map(t => t.name).join(', '))} — แตะเพื่อแก้">${tags.map(t => `<i style="--tag:${t.color}"></i>`).join('')}</button>` : ''}<span class="card-sub">${esc(cardSub(inp))}</span><span class="card-afv" hidden>AFV</span><button type="button" class="card-mute" data-card="mute" hidden title="ปิด / เปิดเสียงแหล่งนี้"><svg class="i"><use href="#i-vol"/></svg><span></span></button>${touch ? `<span class="foot-actions">${tagBtn}${editBtns}</span>` : tagBtn}</div>
+        <div class="card-foot">${icon(meta.icon)}<span class="card-name" translate="no">${esc(inp.name)}</span>${tags.length ? `<button type="button" class="card-tags" data-card="tags" title="ป้าย: ${esc(tags.map(t => t.name).join(', '))} — แตะเพื่อแก้">${tags.map(t => `<i style="--tag:${t.color}"></i>`).join('')}</button>` : ''}<span class="card-sub">${esc(cardSub(inp))}</span><span class="card-afv" hidden>AFV</span><button type="button" class="card-mute" data-card="mute" hidden title="ปิด / เปิดเสียงแหล่งนี้"><svg class="i"><use href="#i-vol"/></svg><span></span></button>${touch ? `<span class="foot-actions">${tagBtn}${editBtns}</span>` : tagBtn}</div>
         <div class="card-ovl">${ovl.map((c, k) => `<button type="button" data-card-ovl="${k}" title="ซ้อนเข้า Overlay ${c.n}">${c.n}</button>`).join('')}<button type="button" class="ovl-pos ${inp.layout ? 'is-set' : ''}" data-card="layout" title="ตำแหน่ง / ขนาด / ครอป / คีย์ฉาก">⧉</button></div>`;
       grid.appendChild(card);
       const ctx = card.querySelector('canvas').getContext('2d');
@@ -2144,7 +2146,7 @@
         remEl.dataset.level = warn;
         remEl.parentElement.dataset.level = warn;
         remEl.parentElement.hidden = !dur;
-        $('.tp-dur-l', box).textContent = marked ? 'IN–OUT' : 'DURATION';
+        $('.tp-dur-l', box).textContent = marked ? 'IN–OUT' : 'ความยาว';
         box.dataset.level = bus === 'pgm' ? warn : '';
       }
     },
@@ -2159,7 +2161,7 @@
         return;
       }
       if (c.slides) {
-        box.innerHTML = `<div class="tp-ctl"><div class="tp-grp">${b('prev', icon('skip-back'), 'หน้าก่อนหน้า')}${b('next', icon('skip-fwd'), 'หน้าถัดไป')}</div><span class="tp-src">SLIDES</span><div class="tp-tc"><span class="tc-label">PAGE</span><span class="tp-pos tc-value"></span></div></div>`;
+        box.innerHTML = `<div class="tp-ctl"><div class="tp-grp">${b('prev', icon('skip-back'), 'หน้าก่อนหน้า')}${b('next', icon('skip-fwd'), 'หน้าถัดไป')}</div><span class="tp-src">สไลด์</span><div class="tp-tc"><span class="tc-label">หน้า</span><span class="tp-pos tc-value"></span></div></div>`;
         return;
       }
       box.innerHTML = `<div class="tp-seek"><div class="tp-track" role="slider" aria-label="ตำแหน่งในคลิป" tabindex="0"><div class="tp-range" hidden></div><div class="tp-fill"></div><i class="tp-mk tp-in" hidden></i><i class="tp-mk tp-out" hidden></i><div class="tp-head"></div></div></div>
@@ -2170,11 +2172,11 @@
         + (c.replay ? '' : b('loop', icon('repeat'), 'เล่นวนซ้ำ (Loop)'))
         + '</div>'
         + (c.marks ? '<div class="tp-grp tp-marks">' + b('in', 'IN', 'Mark In — ตั้งจุดเริ่มที่ตำแหน่งนี้ (คลิกแถบแล้วกด I)', 'tp-txt') + b('out', 'OUT', 'Mark Out — ตั้งจุดจบที่ตำแหน่งนี้ (คลิกแถบแล้วกด O)', 'tp-txt') + b('clear', icon('x'), 'ล้าง In / Out') + '</div>' : '')
-        + (c.pl ? '<div class="tp-tc"><span class="tc-label">ITEM</span><span class="tp-pos tc-value"></span></div>' : '')
+        + (c.pl ? '<div class="tp-tc"><span class="tc-label">รายการ</span><span class="tp-pos tc-value"></span></div>' : '')
         + '<div class="tp-tcs">'
-        + tc('POSITION', 'tp-cur', 'ตำแหน่ง (ชั่วโมง:นาที:วินาที:เฟรม)')
-        + tc('<span class="tp-dur-l">DURATION</span>', 'tp-dur', 'ความยาวคลิป')
-        + tc('REMAIN', 'tp-rem', 'เวลาที่เหลือ')
+        + tc('ตำแหน่ง', 'tp-cur', 'ตำแหน่ง (ชั่วโมง:นาที:วินาที:เฟรม)')
+        + tc('<span class="tp-dur-l">ความยาว</span>', 'tp-dur', 'ความยาวคลิป')
+        + tc('เหลือ', 'tp-rem', 'เวลาที่เหลือ')
         + '</div></div>';
     },
     act(bus, k) {
@@ -2914,7 +2916,7 @@
   // ปุ่ม “แสดงบน Program / ซ่อนจาก Program” ในหน้าต่างแก้ไข — ใช้ช่อง Overlay ว่าง ไม่ปิดหน้าต่าง
   const onAirLabel = inp => ovl.some(c => c.inputId === inp.id && c.on) ? 'ซ่อนจาก Program' : 'แสดงบน Program';
   function bindOnAirButton(modal, inp) {
-    const btn = [...$$('.modal-foot .btn', modal)].find(b => b.textContent === 'แสดงบน Program' || b.textContent === 'ซ่อนจาก Program');
+    const btn = [...$$('.modal-foot .btn', modal)].find(b => b.dataset.label === 'แสดงบน Program' || b.dataset.label === 'ซ่อนจาก Program');
     if (!btn) return;
     const clone = btn.cloneNode(true);
     btn.replaceWith(clone);
@@ -3035,7 +3037,7 @@
         $('.cap-txt', modal).addEventListener('click', () => { if (!log().length) return toast('ยังไม่มีข้อความ', 'warn'); downloadBlob(new Blob([log().map(e => `[${new Date(e.at).toLocaleTimeString('th-TH')}] ${e.text}`).join('\n')], { type: 'text/plain' }), `webmix-captions-${stamp()}.txt`); });
         $('.cap-clear', modal).addEventListener('click', () => { log().length = 0; sig = ''; });
         bindOnAirButton(modal, inp);
-        const rb = [...$$('.modal-foot .btn', modal)].find(b => b.textContent === 'เริ่มฟัง' || b.textContent === 'หยุดฟัง');
+        const rb = [...$$('.modal-foot .btn', modal)].find(b => b.dataset.label === 'เริ่มฟัง' || b.dataset.label === 'หยุดฟัง');
         const rc = rb.cloneNode(true); rb.replaceWith(rc);
         rc.addEventListener('click', () => {
           if (inp.capRun?.on) captionStop(inp);
@@ -3080,7 +3082,7 @@
   function chatAdd(m) {
     if (!m || !m.text && !m.amount || chatFeed.list.some(x => x.id === m.id)) return;
     const text = String(m.text || '').slice(0, 300);
-    chatFeed.list.push({ ...m, name: String(m.name || 'ผู้ชม').slice(0, 40), text: chatFeed.clean ? cleanWords(text) : text });
+    chatFeed.list.push({ ...m, name: String(m.name || defText('ผู้ชม')).slice(0, 40), text: chatFeed.clean ? cleanWords(text) : text });
     if (chatFeed.list.length > 300) chatFeed.list.splice(0, chatFeed.list.length - 300);
     renderChatSoon();
   }
@@ -3138,12 +3140,12 @@
     if (!list) return;
     const sh = chatFeed.shown && !chatFeed.hideAt ? chatFeed.shown : null;
     $('#chat-now').innerHTML = sh
-      ? `<span class="chat-now-txt"><b>บนจอ:</b> ${esc(sh.name)} — ${esc(sh.text)}</span><button type="button" class="btn btn-sm btn-danger" data-chat="hide">ซ่อน</button>`
+      ? `<span class="chat-now-txt"><b>บนจอ:</b> <span translate="no">${esc(sh.name)} — ${esc(sh.text)}</span></span><button type="button" class="btn btn-sm btn-danger" data-chat="hide">ซ่อน</button>`
       : '<span class="note">กดคอมเมนต์เพื่อขึ้นจอ (ขึ้นผ่านแหล่งภาพ COMMENTS บน Overlay)</span>';
     const items = chatFeed.list.slice(-80).reverse();
     list.innerHTML = items.map(m => `<button type="button" class="chat-item ${sh && sh.id === m.id ? 'is-shown' : ''}" data-id="${esc(m.id)}" title="กดเพื่อขึ้นจอ">
         <i style="background:${m.amount ? '#f5a524' : (chatLib.PLATFORMS[m.platform] || chatLib.PLATFORMS.manual).color}"></i>
-        <b>${esc(m.name)}</b>${m.amount ? `<em>${esc(m.amount)}</em>` : ''}<span>${esc(m.text)}</span></button>`).join('')
+        <b translate="no">${esc(m.name)}</b>${m.amount ? `<em>${esc(m.amount)}</em>` : ''}<span translate="no">${esc(m.text)}</span></button>`).join('')
       || '<p class="note">คอมเมนต์ใหม่จะขึ้นที่นี่</p>';
     $('.tab[data-tab="chat"]')?.classList.toggle('is-live', !!sh);
   }
@@ -3299,7 +3301,7 @@
           $$('.fb-mode [data-mode]', modal).forEach(b => b.classList.toggle('is-on', b.dataset.mode === fb.mode));
           $('.fb-video', modal).hidden = fb.mode !== 'link';
           const ms = chatFeed.list.filter(m => m.platform === 'facebook').slice(-8).reverse();
-          $('.fb-list', modal).innerHTML = ms.map(m => `<div class="fb-c"><span class="fb-tag">FB</span><span><b>${esc(m.name)}</b><span>${esc(m.text)}</span></span><small>${esc(fbAgo(m.at))}</small></div>`).join('')
+          $('.fb-list', modal).innerHTML = ms.map(m => `<div class="fb-c"><span class="fb-tag">FB</span><span translate="no"><b>${esc(m.name)}</b><span>${esc(m.text)}</span></span><small>${esc(fbAgo(m.at))}</small></div>`).join('')
             || `<p class="note">${on ? 'รอคอมเมนต์แรก…' : 'ยังไม่เชื่อม — คอมเมนต์จะขึ้นที่นี่และในแชท'}</p>`;
           const poll = $('.fb-poll', modal);
           poll.textContent = on ? (st === 'error' ? 'ผิดพลาด' : text) : 'ยังไม่เชื่อม';
@@ -3367,7 +3369,7 @@
   async function openChatInputDialog(inp) {
     const before = inp.chat.style;
     const demo = !chatFeed.shown;
-    if (demo) { chatFeed.shown = { id: 'demo', platform: 'youtube', name: 'ตัวอย่างผู้ชม', text: 'สวัสดีครับ ติดตามรายการทุกสัปดาห์เลย' }; chatFeed.at = performance.now() - 400; chatFeed.hideAt = 0; }
+    if (demo) { chatFeed.shown = { id: 'demo', platform: 'youtube', name: defText('ตัวอย่างผู้ชม'), text: defText('สวัสดีครับ ติดตามรายการทุกสัปดาห์เลย') }; chatFeed.at = performance.now() - 400; chatFeed.hideAt = 0; }
     const view = { filter: 'all', paused: false, frozen: null };
     const LABEL = { live: 'เชื่อมแล้ว', connecting: 'กำลังเชื่อมต่อ…', error: 'ผิดพลาด', off: 'ยังไม่เชื่อม' };
     const r = await dialog({
@@ -3410,7 +3412,7 @@
           const items = src.filter(m => view.filter === 'all' || (view.filter === 'q' ? isQuestion(m.text) : (m.platform || 'manual') === view.filter)).slice(-120).reverse();
           list.innerHTML = items.map(m => `<div class="ct-item ${sh && sh.id === m.id ? 'is-on' : ''}" role="listitem">
               <span class="ct-pf" style="background:${(chatLib.PLATFORMS[m.platform] || chatLib.PLATFORMS.manual).color}">${esc((chatLib.PLATFORMS[m.platform] || chatLib.PLATFORMS.manual).label.slice(0, 2).toUpperCase())}</span>
-              <div><b>${esc(m.name)}</b>${m.amount ? `<em>${esc(m.amount)}</em>` : ''}${isQuestion(m.text) ? '<small class="ct-q">คำถาม</small>' : ''}<p>${esc(m.text)}</p></div>
+              <div><b translate="no">${esc(m.name)}</b>${m.amount ? `<em>${esc(m.amount)}</em>` : ''}${isQuestion(m.text) ? '<small class="ct-q">คำถาม</small>' : ''}<p translate="no">${esc(m.text)}</p></div>
               ${sh && sh.id === m.id ? '<span class="ct-on">บนจอ</span>' : `<button type="button" class="btn btn-sm" data-show="${esc(m.id)}">แสดง</button>`}</div>`).join('')
             || '<p class="note">ยังไม่มีคอมเมนต์ — เชื่อม YouTube / Twitch หรือพิมพ์เองด้านล่าง</p>';
           const newer = view.paused ? chatFeed.list.length - view.frozen.length : 0;
@@ -3435,7 +3437,7 @@
         const addManual = () => {
           const text = f.ctText.value.trim();
           if (!text) return;
-          chatAdd({ id: 'm' + uid(), platform: 'manual', name: f.ctName.value.trim() || 'ผู้ชม', text });
+          chatAdd({ id: 'm' + uid(), platform: 'manual', name: f.ctName.value.trim() || defText('ผู้ชม'), text });
           f.ctText.value = ''; f.ctText.focus();
         };
         f.ctText.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); addManual(); } });
@@ -3451,7 +3453,7 @@
           else if (act === 'add') addManual();
         });
         // “ซ่อนคอมเมนต์จากจอ” ไม่ปิดหน้าต่าง
-        const hb = [...$$('.modal-foot .btn', modal)].find(b => b.textContent === 'ซ่อนคอมเมนต์จากจอ');
+        const hb = [...$$('.modal-foot .btn', modal)].find(b => b.dataset.label === 'ซ่อนคอมเมนต์จากจอ');
         const clone = hb.cloneNode(true); hb.replaceWith(clone);
         clone.addEventListener('click', () => chatHide());
       }
@@ -3478,7 +3480,7 @@
       e.preventDefault();
       const f = e.target, text = f.text.value.trim();
       if (!text) return;
-      chatAdd({ id: 'm-' + uid(), platform: 'manual', name: f.who.value.trim() || 'ผู้ชม', text, at: Date.now() });
+      chatAdd({ id: 'm-' + uid(), platform: 'manual', name: f.who.value.trim() || defText('ผู้ชม'), text, at: Date.now() });
       f.text.value = '';
     });
     setInterval(() => {
@@ -4612,7 +4614,7 @@
           setTimeout(tick, 66);
         };
         tick();
-        const rb = [...$$('.modal-foot .btn', modal)].find(b => b.textContent === 'รีเซ็ต');
+        const rb = [...$$('.modal-foot .btn', modal)].find(b => b.dataset.label === 'รีเซ็ต');
         const rc = rb.cloneNode(true); rb.replaceWith(rc);
         rc.addEventListener('click', () => { const d = sanitizeBg({ mode: f.mode.value }); f.feather.value = d.feather; f.sensUi.value = Math.round((0.65 - d.sens) / 0.6 * 100); $$('[name=quality]', modal).forEach(x => { x.checked = x.value === d.quality; }); apply(); });
       }
@@ -5011,7 +5013,7 @@
         cutIn.addEventListener('input', () => { $('.st-cut', modal).textContent = cutIn.value + '%'; });
         $('[data-st-pick]', modal).addEventListener('click', () => pickFiles('video/*', files => { stPicked = files[0] || null; if (stPicked) $('.st-name', modal).textContent = stPicked.name; }));
         // “ล้างคลิป” ไม่ปิดหน้าต่าง
-        const cb = [...$$('.modal-foot .btn', modal)].find(b => b.textContent === 'ล้างคลิป');
+        const cb = [...$$('.modal-foot .btn', modal)].find(b => b.dataset.label === 'ล้างคลิป');
         const cc = cb.cloneNode(true); cb.replaceWith(cc);
         cc.addEventListener('click', () => { for (const c of inp.clips || []) if (c.url !== inp.url) URL.revokeObjectURL(c.url); inp.clips = (inp.clips || []).filter(c => c.url === inp.url).slice(0, 1); paintClips(); });
       }
@@ -5176,7 +5178,7 @@
 
   function addTitleInput() {
     const n = inputs.filter(i => i.type === 'title').length + 1;
-    const inp = addInput({ type: 'title', name: `TITLE ${n}`, title: { headline: 'ชื่อ นามสกุล', subtitle: 'ตำแหน่ง / หน่วยงาน', color: TITLE_COLORS[0], style: 'lower' } });
+    const inp = addInput({ type: 'title', name: `TITLE ${n}`, title: { headline: defText('ชื่อ นามสกุล'), subtitle: defText('ตำแหน่ง / หน่วยงาน'), color: TITLE_COLORS[0], style: 'lower' } });
     openTitleDialog(inp);
     return inp;
   }
@@ -5450,7 +5452,7 @@
         const chip = { now: '<em class="pl-chip now">กำลังเล่น</em>', cur: '<em class="pl-chip now">รายการปัจจุบัน</em>', next: '<em class="pl-chip next">ถัดไป</em>', done: '<em class="pl-chip done">เล่นแล้ว</em>' }[st] || '';
         return `<div class="pl-row ${i === L.index ? 'is-current' : ''} ${st === 'next' ? 'is-next' : ''}" data-i="${i}" draggable="true">
           <span class="pl-grip" aria-hidden="true">⋮⋮</span><span class="pl-num">${i + 1}</span><span class="pl-thumb">${icon(it.kind === 'image' ? 'image' : 'film')}</span>
-          <span class="pl-name">${esc(it.name)}</span>${chip}<span class="pl-dur mono">${tc(durOf(it))}</span>
+          <span class="pl-name" translate="no">${esc(it.name)}</span>${chip}<span class="pl-dur mono">${tc(durOf(it))}</span>
           <button type="button" class="mini" data-pl="up" title="เลื่อนขึ้น">▲</button><button type="button" class="mini" data-pl="down" title="เลื่อนลง">▼</button>
           <button type="button" class="mini" data-pl="play" title="เล่นรายการนี้">${icon('play')}</button><button type="button" class="mini danger" data-pl="del" title="ลบออกจากรายการ">${icon('x')}</button>
         </div>`;
@@ -5605,7 +5607,7 @@
           const other = inputs.find(i => i.type === k);
           setTimeout(() => other ? renameInput(other) : ({ score: addScoreInput, timer: addTimerInput, ticker: addTickerInput })[k](), 0);
         });
-        const btn = [...$$('.modal-foot .btn', modal)].find(b => b.textContent === 'แสดงบน Program' || b.textContent === 'ซ่อนจาก Program');
+        const btn = [...$$('.modal-foot .btn', modal)].find(b => b.dataset.label === 'แสดงบน Program' || b.dataset.label === 'ซ่อนจาก Program');
         const clone = btn.cloneNode(true);
         btn.replaceWith(clone);
         clone.addEventListener('click', () => {
@@ -5623,7 +5625,7 @@
 
   function addTimerInput() {
     const n = inputs.filter(i => i.type === 'timer').length + 1;
-    const inp = addInput({ type: 'timer', name: `TIMER ${n}`, timer: { mode: 'down', duration: 300, target: '19:00', label: 'เริ่มรายการใน', style: 'center', color: '#f5a524', base: 0, running: false, since: 0 } });
+    const inp = addInput({ type: 'timer', name: `TIMER ${n}`, timer: { mode: 'down', duration: 300, target: '19:00', label: defText('เริ่มรายการใน'), style: 'center', color: '#f5a524', base: 0, running: false, since: 0 } });
     openTimerDialog(inp);
   }
   async function openTimerDialog(inp) {
@@ -5665,7 +5667,7 @@
 
   function addScoreInput() {
     const n = inputs.filter(i => i.type === 'score').length + 1;
-    const inp = addInput({ type: 'score', name: n > 1 ? `SCORE ${n}` : 'SCORE', score: { teamA: 'ทีม A', teamB: 'ทีม B', scoreA: 0, scoreB: 0, colorA: '#ef4444', colorB: '#3b82f6', period: 'ครึ่งแรก',
+    const inp = addInput({ type: 'score', name: n > 1 ? `SCORE ${n}` : 'SCORE', score: { teamA: defText('ทีม A'), teamB: defText('ทีม B'), scoreA: 0, scoreB: 0, colorA: '#ef4444', colorB: '#3b82f6', period: defText('ครึ่งแรก'),
       clock: { mode: 'none', duration: 2700, base: 0, running: false, since: 0 } } });
     openScoreDialog(inp);
   }
@@ -5914,7 +5916,7 @@
       onOpen(modal, close) {
         modal.classList.add('mc-modal');
         // ทดลองรัน: ทำตามขั้นตอนที่แก้อยู่ (ยังไม่บันทึก) — หน้าต่างไม่ปิด
-        const tb = [...$$('.modal-foot .btn', modal)].find(x => x.textContent.includes('ทดลองรัน')), tc = tb.cloneNode(true);
+        const tb = [...$$('.modal-foot .btn', modal)].find(x => (x.dataset.label || '').includes('ทดลองรัน')), tc = tb.cloneNode(true);
         tb.replaceWith(tc);
         tc.addEventListener('click', () => { const [x] = sanitizeMacros([{ ...draft, name: draft.name }]); if (x) runMacro(x); });
         // เลือก Macro อื่นจากรายการ = บันทึกอันนี้แล้วเปิดอันนั้น
@@ -6184,7 +6186,7 @@
 
   function addTickerInput() {
     const n = inputs.filter(i => i.type === 'ticker').length + 1;
-    const inp = addInput({ type: 'ticker', name: n > 1 ? `TICKER ${n}` : 'TICKER', ticker: { label: 'ข่าวด่วน', items: ['พิมพ์ข้อความข่าวบรรทัดละหนึ่งเรื่อง', 'ตัววิ่งจะเลื่อนต่อกันไปเรื่อย ๆ'], speed: 90, color: '#ef4444' } });
+    const inp = addInput({ type: 'ticker', name: n > 1 ? `TICKER ${n}` : 'TICKER', ticker: { label: defText('ข่าวด่วน'), items: [defText('พิมพ์ข้อความข่าวบรรทัดละหนึ่งเรื่อง'), defText('ตัววิ่งจะเลื่อนต่อกันไปเรื่อย ๆ')], speed: 90, color: '#ef4444' } });
     openTickerDialog(inp);
   }
   async function openTickerDialog(inp) {
@@ -6793,7 +6795,7 @@
     const el = document.createElement('div');
     el.className = 'strip' + (isMaster ? ' master' : '') + (!isMaster && ch.src ? ' has-src' : '');
     el.innerHTML = `
-      <div class="strip-name" title="${esc(ch.name)}">${esc(ch.name)}</div>
+      <div class="strip-name" translate="no" title="${esc(ch.name)}">${esc(ch.name)}</div>
       <div class="strip-body">
         <div class="meter"><div class="meter-cover"></div><div class="meter-peak"></div></div>
         <div class="vfader"></div>
@@ -7594,7 +7596,7 @@
               <span class="rt-dot"></span><b>${esc(m.name)}</b>
               <select class="select" data-f="role" aria-label="ตำแหน่ง">${Object.entries(REMOTE_ROLES).map(([k, v]) => `<option value="${k}" ${k === m.role ? 'selected' : ''}>${esc(v.label)}</option>`).join('')}</select>
               <button type="button" class="btn btn-sm" data-f="unpair">ถอด</button></div>`).join('') : '<p class="note">ยังไม่มีเครื่องจับคู่</p>';
-            $('#remote-msgs', modal).innerHTML = this.msgs.slice(-6).map(x => `<div><b>${esc(x.from)}</b> ${esc(x.text)}</div>`).join('');
+            $('#remote-msgs', modal).innerHTML = this.msgs.slice(-6).map(x => `<div translate="no"><b>${esc(x.from)}</b> ${esc(x.text)}</div>`).join('');
           };
           this.renderList();
           $('#remote-team', modal).addEventListener('change', e => { const row = e.target.closest('[data-i]'); if (row && e.target.dataset.f === 'role') this.setRole(this.team()[+row.dataset.i], e.target.value); });
@@ -9365,6 +9367,7 @@ onmessage = async e => {
         b.type = 'button';
         b.className = `btn ${a.primary ? 'btn-primary' : ''} ${a.danger ? 'btn-danger' : ''}`;
         b.textContent = a.label;
+        b.dataset.label = a.label;   // ป้ายต้นฉบับ (ภาษาไทย) — โค้ดหาปุ่มจากค่านี้ ไม่ใช่จากข้อความที่แปลแล้ว
         b.addEventListener('click', () => close(a.value));
         foot.appendChild(b);
       });
@@ -9935,7 +9938,9 @@ onmessage = async e => {
       ['sliders', 'ตั้งค่า', () => openSettings()],
       ['sliders', 'ควบคุมด้วย MIDI / Stream Deck', () => openSettings('control')],
       ['broadcast', 'เริ่มต้นใช้งาน (ตั้งค่าไลฟ์ทีละขั้น)', openOnboarding],
-      ['help', 'คู่มือ', openHelp]
+      ['help', 'คู่มือ', openHelp],
+      // สลับภาษาได้ทันที (ไม่โหลดหน้าใหม่ — ระหว่างไลฟ์ก็ได้)
+      ['globe', window.WebMix.i18n?.lang === 'en' ? 'ภาษาไทย' : 'English', () => window.WebMix.i18n?.setLang(window.WebMix.i18n.lang === 'en' ? 'th' : 'en')]
     ];
     const menu = document.createElement('div');
     menu.className = 'menu';
@@ -10151,7 +10156,7 @@ onmessage = async e => {
       actions: [{ label: 'ภายหลัง' }, { label: 'ติดตั้งเมื่อปิดแอป', value: 'later' }, { label: 'รีสตาร์ทและติดตั้ง', primary: true, value: 'now' }],
       onOpen(modal, close) {
         modal.classList.add('up-modal');
-        const now = [...$$('.modal-foot .btn', modal)].find(b => b.textContent === 'รีสตาร์ทและติดตั้ง');
+        const now = [...$$('.modal-foot .btn', modal)].find(b => b.dataset.label === 'รีสตาร์ทและติดตั้ง');
         const nowC = now.cloneNode(true); now.replaceWith(nowC);
         const tick = () => {
           if (!modal.isConnected) return;
@@ -10224,7 +10229,8 @@ onmessage = async e => {
         ${sw('keepAwake', settings.keepAwake !== false, 'ป้องกันจอดับระหว่างไลฟ์ / บันทึก')}
         ${row('ขนาดแผงต่าง ๆ', '<button type="button" class="btn btn-sm" data-x-act="layout">คืนขนาดเริ่มต้น</button>')}
         ${row('ปุ่มลัดคีย์บอร์ด', '<button type="button" class="btn btn-sm" data-x-act="help">ดูคู่มือและคีย์ลัด</button>')}
-        <p class="note">ภาษา: ไทย · ธีม: มืด (ออกแบบมาให้อ่านง่ายในห้องสตูดิโอ)</p>
+        ${row('<span translate="no">ภาษา · Language</span>', `<div class="set-seg" translate="no">${[['th', 'ไทย'], ['en', 'English']].map(([v, n]) => `<button type="button" data-x-seg="lang" data-v="${v}" class="${v === (window.WebMix.i18n?.lang || 'th') ? 'is-active' : ''}">${n}</button>`).join('')}</div>`)}
+        <p class="note">ธีม: มืด (ออกแบบมาให้อ่านง่ายในห้องสตูดิโอ)</p>
       </div>
       <div class="modal-pane" data-mpane="audio">
         <h3 class="set-h">เสียง</h3>
@@ -10249,6 +10255,7 @@ onmessage = async e => {
         const k = b.dataset.xSeg, v = b.dataset.v;
         $$(`[data-x-seg="${k}"]`, modal).forEach(x => x.classList.toggle('is-active', x === b));
         if (k === 'cardSize') setCardSize(v);
+        if (k === 'lang') window.WebMix.i18n?.setLang(v);
         if (k === 'lufs') { lufs.target = +v; store.set('lufsTarget', v); lufs.render(); }
         return;
       }
@@ -11026,7 +11033,7 @@ onmessage = async e => {
           for (const c of $$('.hp-card', modal)) c.hidden = !!q && !$$('[data-q]', c).some(x => !x.hidden);
           $('.hp-none', modal).hidden = any;
         });
-        const pb = [...$$('.modal-foot .btn', modal)].find(b => b.textContent === 'พิมพ์ใบคีย์ลัด');
+        const pb = [...$$('.modal-foot .btn', modal)].find(b => b.dataset.label === 'พิมพ์ใบคีย์ลัด');
         const pc = pb.cloneNode(true); pb.replaceWith(pc);
         pc.addEventListener('click', printShortcuts);
         if (section != null) setTimeout(() => go(section), 50);

@@ -2995,3 +2995,6 @@ html.is-card-drag, html.is-card-drag * { cursor: grabbing !important; }
 /* มือถือแนวนอน: พื้นที่สูงไม่พอ — ซ่อนแถวป้าย (ค้นหา/ติดป้าย/เรียงลำดับยังใช้ได้) */
 @media (pointer: coarse) and (orientation: landscape) and (max-height: 500px) { .src-chips { display: none !important; } }
 @media (max-width: 760px) { .foot-actions .card-tagbtn { display: none; } }
+
+/* ป้ายหัวข้อเล็ก: ภาษาอังกฤษเป็นตัวพิมพ์ใหญ่ตามแบบเดิม (ภาษาไทยไม่มีผล) */
+.tc-label, .opt-label { text-transform: uppercase; }

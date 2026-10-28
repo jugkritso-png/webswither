@@ -17,6 +17,8 @@
   <link rel="apple-touch-icon" href="assets/icons/icon-180.png">
   <meta name="apple-mobile-web-app-title" content="WebMix">
   <link rel="stylesheet" href="assets/app.css">
+  <script src="assets/js/i18n-en.js"></script>
+  <script src="assets/js/i18n.js"></script>
   <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js" defer></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js" defer></script>
   <script src="assets/js/core.js" defer></script>
@@ -57,6 +59,7 @@
     <symbol id="i-vol" viewBox="0 0 24 24"><path d="M11 5 6 9H2v6h4l5 4V5zM15.5 8.5a5 5 0 0 1 0 7"/></symbol>
     <symbol id="i-vol-off" viewBox="0 0 24 24"><path d="M11 5 6 9H2v6h4l5 4V5zM16 9l6 6M22 9l-6 6"/></symbol>
     <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></symbol>
+    <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></symbol>
     <symbol id="i-tag" viewBox="0 0 24 24"><path d="M3 12V4a1 1 0 0 1 1-1h8l9 9-9 9z"/><circle cx="7.5" cy="7.5" r="1.5"/></symbol>
     <symbol id="i-mic-off" viewBox="0 0 24 24"><path d="m2 2 20 20M18.89 13.23A7 7 0 0 0 19 12v-2M5 10v2a7 7 0 0 0 12 5M15 9.34V5a3 3 0 0 0-5.68-1.33M9 9v3a3 3 0 0 0 5.12 2.12M12 19v3"/></symbol>
     <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></symbol>
@@ -95,7 +98,7 @@
       </div>
 
       <div class="topbar-center">
-        <div class="timecode tc-clock"><span class="tc-label">TIME</span><span id="clock" class="tc-value">00:00:00</span></div>
+        <div class="timecode tc-clock"><span class="tc-label">เวลา</span><span id="clock" class="tc-value">00:00:00</span></div>
         <div class="timecode"><span class="tc-label">ON AIR</span><span id="onair-timer" class="tc-value tc-amber">00:00:00</span></div>
         <div id="tally-lamp" class="tally-lamp">OFF AIR</div>
         <div class="seg orient-seg" id="seg-orient" role="group" aria-label="รูปแบบภาพ Program" title="รูปแบบภาพ: แนวนอน 16:9 หรือแนวตั้ง 9:16 (TikTok / Reels / Shorts)"><button type="button" data-value="h">16:9</button><button type="button" data-value="v">9:16</button></div>
@@ -110,7 +113,7 @@
         </button>
         <span class="divider"></span>
         <button class="btn btn-icon" data-action="snapshot" title="บันทึกภาพนิ่งจาก Program (PNG)"><svg class="i"><use href="#i-camera"/></svg></button>
-        <button class="btn btn-talk" id="btn-talk" hidden title="ทอล์กแบ็ก — กดค้างเพื่อพูดกับทีมงานทุกตำแหน่ง (เสียงไม่เข้า Program)"><svg class="i"><use href="#i-mic"/></svg><span>TALK</span><em class="talk-who"></em></button>
+        <button class="btn btn-talk" id="btn-talk" hidden title="ทอล์กแบ็ก — กดค้างเพื่อพูดกับทีมงานทุกตำแหน่ง (เสียงไม่เข้า Program)"><svg class="i"><use href="#i-mic"/></svg><span>คุยทีม</span><em class="talk-who"></em></button>
         <button class="btn btn-remote" data-action="remote" title="รีโมต / ทีมงาน — สวิตเชอร์ · เสียง · CG · อินเสิร์ต · มอนิเตอร์ ใช้เครื่องของตัวเอง"><svg class="i"><use href="#i-users"/></svg><span>รีโมต</span></button>
         <button class="btn btn-icon" data-action="multiview" title="Multiview — ทุกแหล่งภาพ + Preview/Program พร้อม tally (สำหรับจอที่สอง)"><svg class="i"><use href="#i-grid"/></svg></button>
         <button class="btn btn-icon" data-action="output-window" title="เปิดหน้าต่าง Program Output (ต่อจอ/โปรเจกเตอร์)"><svg class="i"><use href="#i-external"/></svg></button>
@@ -125,7 +128,7 @@
       <div class="panel monitor-panel pvw">
         <div class="panel-head">
           <span class="tag tag-pvw">PREVIEW</span>
-          <span id="pvw-name" class="src-name">—</span>
+          <span id="pvw-name" class="src-name" translate="no">—</span>
         </div>
         <div class="monitor-wrap">
           <div class="monitor">
@@ -148,7 +151,7 @@
           </div>
           <div class="deck-options">
             <div>
-              <span class="opt-label">EFFECT</span>
+              <span class="opt-label">เอฟเฟกต์</span>
               <div class="seg" id="seg-transition">
                 <button data-value="mix" title="ผสมภาพ (Dissolve)">MIX</button>
                 <button data-value="dip" title="จางผ่านสีดำ">DIP</button>
@@ -158,7 +161,7 @@
               </div>
             </div>
             <div>
-              <span class="opt-label">DURATION</span>
+              <span class="opt-label">ระยะเวลา</span>
               <div class="seg" id="seg-duration">
                 <button data-value="500">0.5s</button>
                 <button data-value="1000">1s</button>
@@ -168,7 +171,7 @@
             <button id="btn-ftb" class="key key-ftb" data-action="ftb" title="Fade to Black — จางภาพ Program เป็นสีดำ">FTB<kbd>F</kbd></button>
           </div>
           <div class="deck-ovl">
-            <span class="opt-label">OVERLAY</span>
+            <span class="opt-label">ซ้อนภาพ</span>
             <div id="ovl-keys" class="ovl-keys"></div>
           </div>
         </div>
@@ -177,7 +180,7 @@
       <div class="panel monitor-panel pgm">
         <div class="panel-head">
           <span class="tag tag-pgm">PROGRAM</span>
-          <span id="pgm-name" class="src-name">—</span>
+          <span id="pgm-name" class="src-name" translate="no">—</span>
           <button class="btn btn-ghost btn-sm btn-icon ml-auto" data-action="fullscreen" title="เต็มจอ"><svg class="i"><use href="#i-maximize"/></svg></button>
         </div>
         <div class="monitor-wrap">
@@ -233,7 +236,7 @@
           <div class="field"><span>Preset ป้ายชื่อ <small class="muted">(แตะเพื่อใช้)</small></span>
             <div id="title-presets" class="presets"></div>
           </div>
-          <button id="btn-title" class="btn btn-take" data-action="title">TAKE TITLE<kbd>T</kbd></button>
+          <button id="btn-title" class="btn btn-take" data-action="title">ขึ้นป้ายชื่อ<kbd>T</kbd></button>
         </div>
 
         <div class="pane" data-pane="pip">
@@ -246,7 +249,7 @@
               <div class="seg" id="seg-pip-size"><button data-value="0.25">S</button><button data-value="0.32">M</button><button data-value="0.42">L</button></div>
             </div>
           </div>
-          <button id="btn-pip" class="btn btn-take" data-action="pip">TAKE PIP<kbd>P</kbd></button>
+          <button id="btn-pip" class="btn btn-take" data-action="pip">ขึ้นภาพซ้อน<kbd>P</kbd></button>
         </div>
 
         <div class="pane" data-pane="chat">
@@ -271,7 +274,7 @@
             <div class="seg" id="seg-key-color"><button data-value="green">GREEN</button><button data-value="blue">BLUE</button></div>
           </div>
           <label class="field"><span>ความไว (Tolerance): <b id="key-tol-val" class="mono"></b></span><input id="key-tolerance" class="range" type="range" min="10" max="150" step="1"></label>
-          <button id="btn-key" class="btn btn-take" data-action="key">TAKE KEY<kbd>K</kbd></button>
+          <button id="btn-key" class="btn btn-take" data-action="key">ขึ้นฉากเขียว<kbd>K</kbd></button>
         </div>
       </div>
 
@@ -290,12 +293,12 @@
     </section>
 
     <footer class="statusbar">
-      <span id="st-engine" class="stat ok"><i class="dot"></i>ENGINE <b>-- fps</b></span>
-      <span id="st-output" class="stat"><i class="dot"></i>OUT <b>1280×720p30</b></span>
-      <span id="st-stream" class="stat"><i class="dot"></i>STREAM <b>OFF</b></span>
-      <span id="st-rec" class="stat"><i class="dot"></i>REC <b>OFF</b></span>
-      <span id="st-wireless" class="stat"><i class="dot"></i>WIRELESS <b>--</b></span>
-      <span id="st-audio" class="stat"><i class="dot"></i>AUDIO <b>--</b></span>
+      <span id="st-engine" class="stat ok"><i class="dot"></i>ประมวลผล <b>-- fps</b></span>
+      <span id="st-output" class="stat"><i class="dot"></i>เอาต์พุต <b>1280×720p30</b></span>
+      <span id="st-stream" class="stat"><i class="dot"></i>สตรีม <b>OFF</b></span>
+      <span id="st-rec" class="stat"><i class="dot"></i>การบันทึก <b>OFF</b></span>
+      <span id="st-wireless" class="stat"><i class="dot"></i>มือถือ <b>--</b></span>
+      <span id="st-audio" class="stat"><i class="dot"></i>เสียง <b>--</b></span>
       <button type="button" id="st-disk" class="stat stat-disk" hidden aria-haspopup="dialog" title="พื้นที่บันทึก"><i class="dot"></i>ดิสก์ <b></b></button>
     </footer>
     <section id="disk-pop" class="disk-pop" aria-label="รายละเอียดพื้นที่บันทึก" hidden></section>

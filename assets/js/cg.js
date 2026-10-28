@@ -11,22 +11,24 @@
   const MOTIONS = ['cut', 'fade', 'zoom', 'slide-left', 'slide-right', 'slide-up', 'slide-down', 'wipe'];
   const LEGACY_TEMPLATES = ['lower-third', 'top-banner', 'live-bug', 'ticker', 'score-card', 'full-screen'];
   const uid = () => `cg-${Math.random().toString(36).slice(2, 10)}`;
+  // ข้อความตัวอย่างของแบบใหม่ — ตามภาษาหน้าจอตอนสร้าง (ผู้ใช้แก้เองได้)
+  const tr = s => (root.WebMix && root.WebMix.i18n ? root.WebMix.i18n.t(s) : s);
   const sanitizedCache = new WeakMap();
   let assetRevision = 0;
   const clamp = (value, min, max, fallback) => Number.isFinite(+value) ? Math.max(min, Math.min(max, +value)) : fallback;
   const cleanText = (value, max, fallback = '') => String(value ?? fallback).replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '').slice(0, max);
   const color = (value, fallback) => /^(#[\da-f]{3,8}|rgba?\([\d\s.,%]+\))$/i.test(String(value || '')) ? String(value) : fallback;
   const defaults = () => ({
-    schemaVersion: SCHEMA_VERSION, id: uid(), name: 'กราฟิกใหม่', output: { width: 1920, height: 1080 }, activeSceneId: 'scene-main', playback: { in: 'fade', out: 'fade', durationMs: 500 },
-    scenes: [{ id: 'scene-main', name: 'Lower Third', elements: templateElements('lower-third', { headline: 'ชื่อผู้พูด', subtitle: 'หัวข้อ / ตำแหน่ง', accent: '#ef4444', secondary: '#111827', text: '#ffffff' }) }]
+    schemaVersion: SCHEMA_VERSION, id: uid(), name: tr('กราฟิกใหม่'), output: { width: 1920, height: 1080 }, activeSceneId: 'scene-main', playback: { in: 'fade', out: 'fade', durationMs: 500 },
+    scenes: [{ id: 'scene-main', name: 'Lower Third', elements: templateElements('lower-third', { headline: tr('ชื่อผู้พูด'), subtitle: tr('หัวข้อ / ตำแหน่ง'), accent: '#ef4444', secondary: '#111827', text: '#ffffff' }) }]
   });
   function makeElement(type, name, x, y, width, height, style = {}, content = {}) {
     return { id: uid(), type, name, visible: true, locked: false, transform: { x, y, width, height, rotation: 0 }, style, content };
   }
   function templateElements(template, v = {}) {
     const accent = color(v.accent, '#ef4444'), secondary = color(v.secondary, '#111827'), text = color(v.text, '#ffffff');
-    const headline = cleanText(v.headline, 100, 'ชื่อผู้พูด'), subtitle = cleanText(v.subtitle, 140, 'หัวข้อ / ตำแหน่ง');
-    const label = cleanText(v.label, 24, 'LIVE'), ticker = cleanText(v.ticker, 240, 'ข้อความวิ่งสำหรับไลฟ์');
+    const headline = cleanText(v.headline, 100, tr('ชื่อผู้พูด')), subtitle = cleanText(v.subtitle, 140, tr('หัวข้อ / ตำแหน่ง'));
+    const label = cleanText(v.label, 24, 'LIVE'), ticker = cleanText(v.ticker, 240, tr('ข้อความวิ่งสำหรับไลฟ์'));
     const shape = (name, x, y, width, height, fill, radius = 10) => makeElement('shape', name, x, y, width, height, { fill, radius });
     const txt = (name, value, x, y, width, height, size, fill = text, weight = 700, align = 'left') => makeElement('text', name, x, y, width, height, { color: fill, fontFamily: 'IBM Plex Sans Thai', fontSize: size, fontWeight: weight, align, lineHeight: 1.15 }, { value });
     if (template === 'top-banner') return [shape('แถบพื้นหลัง', 0, 0, 1920, 132, secondary, 0), shape('เส้นเน้น', 0, 125, 1920, 7, accent, 0), txt('หัวข้อ', headline, 64, 24, 1300, 58, 42), txt('ข้อความรอง', subtitle, 64, 78, 1200, 42, 26, text, 500), shape('ป้าย', 1640, 28, 210, 58, accent, 24), txt('คำกำกับ', label, 1645, 33, 200, 48, 24, text, 800, 'center')];
