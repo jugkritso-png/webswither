@@ -310,7 +310,9 @@ jobs:
             'linux-x86_64': entry(pick(/\.AppImage$/))
           }).filter(([, v]) => v));
           if (!Object.keys(platforms).length) { console.log('::warning::ไม่มีไฟล์ .sig — Release นี้ไม่มีอัปเดตอัตโนมัติ (ตั้ง Secret TAURI_SIGNING_PRIVATE_KEY ก่อน)'); process.exit(0); }
-          const manifest = { version: tag.replace(/^v/, ''), notes: `WebMix Pro ${tag} — ดูรายละเอียดที่หน้า Release`, pub_date: new Date().toISOString(), platforms };
+          // สิ่งใหม่ของเวอร์ชันนี้ (desktop/RELEASE_NOTES.md) — หน้าต่างอัปเดตในแอปแสดงรายการนี้
+          const notes = fs.existsSync('desktop/RELEASE_NOTES.md') ? fs.readFileSync('desktop/RELEASE_NOTES.md', 'utf8').trim() : `WebMix Pro ${tag} — ดูรายละเอียดที่หน้า Release`;
+          const manifest = { version: tag.replace(/^v/, ''), notes, pub_date: new Date().toISOString(), platforms };
           fs.writeFileSync('release/latest.json', JSON.stringify(manifest, null, 2));
           console.log(JSON.stringify(manifest, null, 2));
           JS
@@ -337,5 +339,7 @@ jobs:
           รายละเอียดและข้อจำกัด: ดู README หัวข้อ “แอปเดสก์ท็อป”
           NOTES
           sed -i 's/^          //' notes.md
+          # สิ่งใหม่ของเวอร์ชันนี้ขึ้นก่อนตารางดาวน์โหลด
+          if [ -s desktop/RELEASE_NOTES.md ]; then { printf '## มีอะไรใหม่\n\n'; cat desktop/RELEASE_NOTES.md; printf '\n'; cat notes.md; } > notes-full.md && mv notes-full.md notes.md; fi
           # กดรันเอง: สร้าง tag ให้ที่ commit นี้ (ถ้ามี Release เวอร์ชันนี้แล้วจะหยุด — ให้เพิ่มเลขเวอร์ชันก่อน)
           gh release create "$TAG" release/* --repo "$GITHUB_REPOSITORY" --title "WebMix Pro $TAG" --notes-file notes.md --target "$GITHUB_SHA"
