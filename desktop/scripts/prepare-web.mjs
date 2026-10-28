@@ -9,5 +9,6 @@ const dist = join(here, '..', 'dist');
 rmSync(dist, { recursive: true, force: true });
 mkdirSync(dist, { recursive: true });
 cpSync(join(root, 'index.html'), join(dist, 'index.html'));
-cpSync(join(root, 'assets'), join(dist, 'assets'), { recursive: true });
+// ภาพของหน้าเปิดตัว (launch.html บน GitHub Pages) ไม่ต้องอยู่ในแอป
+cpSync(join(root, 'assets'), join(dist, 'assets'), { recursive: true, filter: src => !src.includes(join('assets', 'launch')) });
 console.log('web UI copied to', dist);
