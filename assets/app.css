@@ -2998,3 +2998,16 @@ html.is-card-drag, html.is-card-drag * { cursor: grabbing !important; }
 
 /* ป้ายหัวข้อเล็ก: ภาษาอังกฤษเป็นตัวพิมพ์ใหญ่ตามแบบเดิม (ภาษาไทยไม่มีผล) */
 .tc-label, .opt-label { text-transform: uppercase; }
+
+/* มือถือแนวตั้ง: เอฟเฟกต์ได้แถวเต็ม (MIX DIP WIPE PUSH STING ไม่เบียดกัน) · ระยะเวลา + FTB แถวถัดไป · ชื่อแผงไม่ตัดบรรทัด */
+@media (max-width: 760px) {
+  .deck-options { grid-template-columns: minmax(0, 1fr) auto; }
+  .deck-options > div:first-child { grid-column: 1 / -1; }
+  #seg-transition { display: flex; }
+  #seg-transition button { flex: 1 1 0; min-width: 0; padding: 0 2px; }
+  .panel-title { white-space: nowrap; }
+}
+/* จอแคบ (≤ 400px): ปุ่มขนาดการ์ดย้ายไปอยู่ในตั้งค่า → ทั่วไป ให้หัวแผงแหล่งภาพพอดีจอ */
+@media (max-width: 400px) {
+  .inputs-panel .head-actions .seg-cardsize { display: none; }
+}
