@@ -10,6 +10,9 @@
 
   /* ------------------------------------------------------------------ EBML */
   const te = new TextEncoder();
+  // ตัวเข้ารหัสของมือถือ (MediaCodec) บางรุ่นไม่ตอบเลยเมื่อค้าง — ทุกการรอตัวเข้ารหัสมีเวลาหมด ไม่ให้แอปค้างตาม
+  const within = (p, ms, fallback) => Promise.race([p, new Promise(r => setTimeout(() => r(fallback), ms))]);
+  const sameBytes = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
   function concat(parts) {
     let n = 0;
     for (const p of parts) n += p.length;
@@ -156,7 +159,7 @@
       const base = { codec: c.codec, width, height, bitrate, framerate: fps, latencyMode: 'realtime', ...(c.avc ? { avc: c.avc } : {}) };
       // สตรีม: บิตเรตคงที่ช่วยให้ปลายทาง (RTMP) ไม่ล้นบัฟเฟอร์ — ถ้าตัวเข้ารหัสไม่รองรับใช้แบบปกติ
       for (const cfg of constantBitrate ? [{ ...base, bitrateMode: 'constant' }, base] : [base]) {
-        try { if ((await VideoEncoder.isConfigSupported(cfg)).supported) return { cfg, codecId: c.codecId, mime: c.mime }; } catch (e) {}
+        try { if ((await within(VideoEncoder.isConfigSupported(cfg), 3000, {})).supported) return { cfg, codecId: c.codecId, mime: c.mime }; } catch (e) {}
       }
     }
     return null;
@@ -229,14 +232,14 @@
     if (actx) {
       for (const sr of [actx.sampleRate, 48000]) {
         const cfg = { codec: 'opus', sampleRate: sr, numberOfChannels: 2, bitrate: audioBitsPerSecond };
-        try { if ((await AudioEncoder.isConfigSupported(cfg)).supported) { acfg = cfg; break; } } catch (e) {}
+        try { if ((await within(AudioEncoder.isConfigSupported(cfg), 3000, {})).supported) { acfg = cfg; break; } } catch (e) {}
       }
     }
 
     const rec = {
       mimeType: `video/webm;codecs=${vsel.mime}${acfg ? ',opus' : ''}`,
       state: 'inactive', ondataavailable: null, onstop: null, onerror: null,
-      videoCodec: vsel.cfg.codec, droppedFrames: 0, encodedFrames: 0
+      videoCodec: vsel.cfg.codec, droppedFrames: 0, encodedFrames: 0, encoderRestarts: 0, onrestart: null
     };
     const vinfo = { codecId: vsel.codecId, width, height, priv: null, ready: vsel.codecId === 'V_VP8' };
     const ainfo = acfg ? { codecId: 'A_OPUS', sampleRate: acfg.sampleRate, channels: 2, priv: opusHead(2, acfg.sampleRate) } : null;
@@ -255,20 +258,44 @@
     };
     const mux = createMuxer({ video: vinfo, audio: ainfo, onData: d => { buf.push(d); bufBytes += d.length; } });
 
-    const venc = new VideoEncoder({
-      output: (chunk, meta) => {
-        if (meta && meta.decoderConfig && meta.decoderConfig.description && !vinfo.priv) {
-          vinfo.priv = new Uint8Array(meta.decoderConfig.description instanceof ArrayBuffer ? meta.decoderConfig.description : meta.decoderConfig.description.buffer.slice(0));
-        }
-        if (vinfo.codecId !== 'V_VP8') vinfo.ready = !!vinfo.priv;
-        rec.encodedFrames++;
-        const data = new Uint8Array(chunk.byteLength);
-        chunk.copyTo(data);
-        mux.add(1, Math.round(chunk.timestamp / 1000), chunk.type === 'key', data);
-      },
-      error: fail
-    });
-    venc.configure(vsel.cfg);
+    const onVideo = (chunk, meta) => {
+      const d = meta && meta.decoderConfig && meta.decoderConfig.description;
+      if (d) {
+        const desc = new Uint8Array(d instanceof ArrayBuffer ? d.slice(0) : d.buffer.slice(d.byteOffset, d.byteOffset + d.byteLength));
+        if (!vinfo.priv) vinfo.priv = desc;
+        // ตัวเข้ารหัสที่สร้างใหม่ให้ SPS/PPS ต่างจากเดิม — ใส่กลางไฟล์ WebM ไม่ได้ ให้หยุดแล้วแอปเชื่อมต่อใหม่ทั้งสตรีม
+        else if (!sameBytes(vinfo.priv, desc)) { fail(new Error('ตัวเข้ารหัสใหม่ให้ค่า H.264 ต่างจากเดิม')); return; }
+      }
+      if (vinfo.codecId !== 'V_VP8') vinfo.ready = !!vinfo.priv;
+      lastOut = performance.now();
+      rec.encodedFrames++;
+      const data = new Uint8Array(chunk.byteLength);
+      chunk.copyTo(data);
+      mux.add(1, Math.round(chunk.timestamp / 1000), chunk.type === 'key', data);
+    };
+    // ตัวเข้ารหัสวิดีโอ: ถ้าค้างหรือถูกระบบเอาคืน (Android ตอนแอปไปอยู่เบื้องหลัง) สร้างใหม่ในที่เดิมแล้วเริ่มด้วยคีย์เฟรม
+    // สตรีมจึงเดินต่อในการเชื่อมต่อเดิม · เกิน 3 ครั้งในหนึ่งนาที = หยุด (แอปเชื่อมต่อใหม่ตามเดิม)
+    let venc = null, lastOut = 0, restarts = [];
+    const makeVenc = () => {
+      const e = new VideoEncoder({ output: onVideo, error: err => { if (e === venc) restartVideo(err); } });
+      e.configure(vsel.cfg);
+      return e;
+    };
+    const restartVideo = err => {
+      if (failed) return;
+      const now = performance.now();
+      restarts = restarts.filter(t => now - t < 60000);
+      if (rec.state !== 'recording' || restarts.length >= 3) { fail(err || new Error('ตัวเข้ารหัสวิดีโอค้าง')); return; }
+      restarts.push(now);
+      const old = venc;
+      try { venc = makeVenc(); } catch (e) { fail(e); return; }
+      try { old.close(); } catch (e) {}
+      lastKey = -Infinity;
+      lastOut = now;
+      rec.encoderRestarts++;
+      if (rec.onrestart) rec.onrestart(err);
+    };
+    venc = makeVenc();
 
     let aenc = null, proc = null, sink = null;
     let aNext = null;
@@ -338,7 +365,13 @@
       const slot = Math.round((performance.now() - t0) / frameMs);
       if (slot <= lastSlot) return;
       lastSlot = slot;
-      if (venc.encodeQueueSize > 2) { rec.droppedFrames++; return; }
+      if (venc.state === 'closed') { restartVideo(new Error('ตัวเข้ารหัสวิดีโอถูกปิด')); return; }
+      if (venc.encodeQueueSize > 2) {
+        rec.droppedFrames++;
+        // ส่งเข้าไปแล้วแต่ไม่มีอะไรออกมาเลยเกิน 4 วินาที = ตัวเข้ารหัสค้าง
+        if (performance.now() - lastOut > 4000) restartVideo(new Error('ตัวเข้ารหัสวิดีโอไม่ตอบเกิน 4 วินาที'));
+        return;
+      }
       const ts = Math.round(slot * frameMs * 1000);
       let frame;
       try { frame = new VideoFrame(canvas, { timestamp: ts }); } catch (err) { return; }
@@ -356,6 +389,7 @@
       if (rec.state !== 'inactive') return;
       rec.state = 'recording';
       t0 = performance.now();
+      lastOut = t0;
       lastSlot = -1;
       stopFrames = every(grab, Math.max(4, frameMs / 4));
       grab();
@@ -366,8 +400,8 @@
       rec.state = 'inactive';
       if (stopFrames) stopFrames();
       if (stopSlice) stopSlice();
-      try { await venc.flush(); } catch (e) {}
-      if (aenc) { try { await aenc.flush(); } catch (e) {} }
+      try { await within(venc.flush(), 2000); } catch (e) {}
+      if (aenc) { try { await within(aenc.flush(), 2000); } catch (e) {} }
       mux.drain(true);
       emit();
       try { venc.close(); } catch (e) {}
@@ -385,6 +419,8 @@
       mimeType: 'video/webm', state: 'inactive', ondataavailable: null, onstop: null, onerror: null,
       get droppedFrames() { return inner ? inner.droppedFrames : 0; },
       get encodedFrames() { return inner ? inner.encodedFrames : 0; },
+      get encoderRestarts() { return inner ? inner.encoderRestarts : 0; },
+      onrestart: null,
       start(timeslice) {
         if (rec.state !== 'inactive') return;
         rec.state = 'recording';
@@ -393,6 +429,7 @@
           rec.mimeType = r.mimeType;
           r.ondataavailable = e => rec.ondataavailable && rec.ondataavailable(e);
           r.onerror = e => rec.onerror && rec.onerror(e);
+          r.onrestart = e => rec.onrestart && rec.onrestart(e);
           r.onstop = () => { rec.state = 'inactive'; if (rec.onstop) rec.onstop(); };
           if (stopRequested) { rec.state = 'inactive'; if (rec.onstop) rec.onstop(); return; }
           r.start(timeslice);

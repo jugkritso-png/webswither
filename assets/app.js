@@ -8662,13 +8662,17 @@ onmessage = async e => {
     };
     if (vcopy) {
       r.onerror = e => fallback('ไม่สำเร็จ: ' + (e.error?.message || ''));
-      // ทิ้งเฟรมเกิน 20% ในช่วง 6 วินาที = ชิปเข้ารหัสไม่ทัน (เช่นเครื่องร้อนจนลดความเร็ว) → ให้ Gateway เข้ารหัส
-      let last = { d: 0, e: 0 };
+      // ชิปเข้ารหัสค้าง (เช่นตอนกดโฮม) แล้วตัวบันทึกสร้างตัวเข้ารหัสใหม่เอง — สตรีมเดินต่อในการเชื่อมต่อเดิม ไม่ต้องเชื่อมต่อใหม่
+      r.onrestart = () => toast('ตัวเข้ารหัสวิดีโอค้าง — เริ่มใหม่แล้ว สตรีมยังต่อเนื่อง', 'warn', 4000);
+      // ทิ้งเฟรมเกิน 20% สองช่วงติดกัน (12 วินาที) = ชิปเข้ารหัสไม่ทันจริง (เช่นเครื่องร้อนจนลดความเร็ว) → ให้ Gateway เข้ารหัส
+      // ช่วงที่ตัวเข้ารหัสเพิ่งเริ่มใหม่ไม่นับ (เฟรมที่ทิ้งตอนค้างไม่ได้แปลว่าชิปช้า) · สะดุดสั้น ๆ ตอนสลับแอปไม่ทำให้สตรีมหลุด
+      let last = { d: 0, e: 0, x: 0 }, bad = 0;
       const watch = setInterval(() => {
         if (streamer.recorder !== r || r.state === 'inactive') { clearInterval(watch); return; }
-        const d = r.droppedFrames - last.d, e = r.encodedFrames - last.e;
-        last = { d: r.droppedFrames, e: r.encodedFrames };
-        if (d + e > settings.fps && d / (d + e) > 0.2) { clearInterval(watch); fallback('ไม่ทัน (ทิ้งเฟรม)'); }
+        const d = r.droppedFrames - last.d, e = r.encodedFrames - last.e, restarted = r.encoderRestarts !== last.x;
+        last = { d: r.droppedFrames, e: r.encodedFrames, x: r.encoderRestarts };
+        bad = !restarted && d + e > settings.fps && d / (d + e) > 0.2 ? bad + 1 : 0;
+        if (bad >= 2) { clearInterval(watch); fallback('ไม่ทัน (ทิ้งเฟรม)'); }
       }, 6000);
     }
 

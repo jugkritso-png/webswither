@@ -40,7 +40,7 @@ kill "$RECV" 2>/dev/null || true
 wait "$RECV" 2>/dev/null || true
 
 if [ -z "$REPORT" ]; then
-  echo "แอปไม่ส่งผลทดสอบภายใน 180 วินาที"; tail -60 "$OUT/logcat.txt"; exit 1
+  echo "แอปไม่ส่งผลทดสอบภายใน 180 วินาที"; grep -vE "glBindAttrib|s_gl|Non-monotonic|backward in time" "$OUT/logcat.txt" | tail -60; exit 1
 fi
 echo "${REPORT#WEBMIX_SELFTEST }" > "$OUT/android-selftest.json"
 node -e '

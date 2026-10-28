@@ -66,9 +66,11 @@
   /* ---- โหมดทดสอบตัวเอง (WEBMIX_SELFTEST=1) — ใช้ใน CI ของทุกระบบปฏิบัติการ ----
      ตรวจว่าหน้า WebMix เปิดได้ เรียก Rust ได้ เชื่อม Gateway ในเครื่องได้ เขียนไฟล์ได้
      และรายงานความสามารถของ webview (WebGL / MediaRecorder / WebRTC) แล้วแอปปิดตัวเอง */
+  // ขั้นที่กำลังทำ — ถ้าค้าง รายงานบอกได้ว่าค้างที่ไหน (ดูท้ายไฟล์)
+  const progress = { step: 'เริ่ม', checks: [] };
   async function selfTest(info) {
-    const checks = [];
-    const add = (name, ok, detail = '', required = true) => checks.push({ name, ok: !!ok, detail: String(detail), required });
+    const checks = progress.checks;
+    const add = (name, ok, detail = '', required = true) => { checks.push({ name, ok: !!ok, detail: String(detail), required }); progress.step = `หลัง ${name}`; };
     const wait = ms => new Promise(r => setTimeout(r, ms));
 
     for (let i = 0; i < 50 && !window.webmix; i++) await wait(200);
@@ -160,7 +162,10 @@
           : new MediaRecorder(src.captureStream(30), { mimeType: mrType });
         const parts = []; r.ondataavailable = e => { parts.push(e.data); };
         const stopped = new Promise(res => { r.onstop = res; });
-        r.start(500); await wait(2000); r.stop(); await stopped; clearInterval(tick);
+        r.start(500); await wait(2000); r.stop();
+        const stoppedOk = await Promise.race([stopped.then(() => true), wait(8000).then(() => false)]);
+        clearInterval(tick);
+        if (!stoppedOk) throw new Error('ตัวบันทึกไม่หยุดภายใน 8 วินาที');
         // ไฟล์ต้องเปิดเล่นได้จริง (ไม่ใช่แค่มีข้อมูล) — webview ถอดรหัสและเลื่อนหาตำแหน่ง
         const blob = new Blob(parts, { type: r.mimeType });
         const v = document.createElement('video'); v.muted = true; v.src = URL.createObjectURL(blob);
@@ -176,7 +181,7 @@
     add('getUserMedia', !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia), '', false);
     add('webaudio', typeof (window.AudioContext || window.webkitAudioContext) === 'function', '', false);
     add('encoder', !!info.encoder, (info.encoder || 'ไม่ทราบ') + (info.encoderNote ? ` · ฮาร์ดแวร์ใช้ไม่ได้: ${info.encoderNote}` : ''), false);
-    if (info.selftestStream && info.gateway) await streamTest(info, add, wait);
+    if (info.selftestStream && info.gateway) { progress.step = 'สตรีม'; await streamTest(info, add, wait); }
 
     return { ok: checks.every(c => c.ok || !c.required), ua: navigator.userAgent, checks };
   }
@@ -231,7 +236,7 @@
       let rec = null;
       const ws = new WebSocket(url);
       const finish = () => {
-        if (rec) mimeUsed = rec.mimeType + (rec.droppedFrames ? ` · ทิ้ง ${rec.droppedFrames} เฟรม` : '');
+        if (rec) mimeUsed = rec.mimeType + (rec.droppedFrames ? ` · ทิ้ง ${rec.droppedFrames} เฟรม` : '') + (rec.encoderRestarts ? ` · เริ่มตัวเข้ารหัสใหม่ ${rec.encoderRestarts} ครั้ง` : '');
         try { rec && rec.state !== 'inactive' && rec.stop(); } catch (e) {}
         try { ws.send(JSON.stringify({ type: 'stop', id: 'selftest' })); } catch (e) {}
         setTimeout(() => { try { ws.close(); } catch (e) {} resolve(); }, 1500);
@@ -245,6 +250,7 @@
           ? WM.wcrec.recorder({ canvas, audioNode: osc, fps: 30, videoBitsPerSecond: 2500000, audioBitsPerSecond: 128000, preferAvc: true, requireAvc: vcopy, constantBitrate: vcopy })
           : new MediaRecorder(stream, { mimeType: type, videoBitsPerSecond: 2500000 });
         rec.ondataavailable = e => { if (e.data.size && ws.readyState === 1) { ws.send(e.data); lastSend = performance.now(); sentBytes += e.data.size; } };
+        rec.onrestart = e => note('encoder restart ' + (e && e.message || ''));
         if (rec.addEventListener) { rec.addEventListener('stop', () => note('recorder stop')); rec.addEventListener('error', ev => note('recorder error ' + (ev.error && ev.error.message || ''))); }
         rec.start(1000);
       };
@@ -287,7 +293,9 @@
     if (!info || !info.selftest) return;
     if (document.readyState !== 'complete') await new Promise(r => window.addEventListener('load', r, { once: true }));
     let report;
-    try { report = await selfTest(info); } catch (e) { report = { ok: false, error: String(e) }; }
+    // ค้างเกิน 150 วินาที (ตัวเข้ารหัส/ไฟล์ไม่ตอบ): ส่งผลเท่าที่ได้พร้อมขั้นที่ค้าง แทนที่ CI จะไม่ได้อะไรเลย
+    const stuck = new Promise(r => setTimeout(() => r({ ok: false, error: `ค้างที่ขั้น "${progress.step}" เกิน 150 วินาที`, ua: navigator.userAgent, checks: progress.checks }), 150000));
+    try { report = await Promise.race([selfTest(info), stuck]); } catch (e) { report = { ok: false, error: String(e), checks: progress.checks }; }
     invoke('selftest_report', { report });
   });
 
