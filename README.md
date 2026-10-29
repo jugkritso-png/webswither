@@ -384,6 +384,8 @@ NDI® เป็นเครื่องหมายการค้าจดท�
 | `assets/js/caller.js` | หน้ากล้องมือถือและหน้าแขกรับเชิญ |
 | `assets/js/graphics.js` | กราฟิกข้อมูล (นาฬิกา, ป้ายคะแนน, ตัววิ่ง) และตัวอ่าน Google Sheets/CSV |
 | `assets/js/multiview.js` · `assets/js/manual.js` | Multiview · คู่มือและคีย์ลัดในแอป |
+| `assets/js/sources.js` | แหล่งภาพ: ป้ายกลุ่ม, ค้นหา/กรอง, ลากเรียงลำดับ, เลือกหลายแหล่งเพื่อติดป้าย |
+| `assets/js/i18n.js` · `assets/js/i18n-en.js` | สลับภาษาไทย / English · พจนานุกรมภาษาอังกฤษ |
 | `assets/webm-seek.js` | ทำให้ไฟล์ WebM ที่บันทึกมีความยาวและเลื่อนหาตำแหน่งได้ |
 | `assets/app.js` | สตูดิโอ: Input, การสลับภาพ, Overlay, เสียง, บันทึก, สตรีม, โชว์ |
 | `assets/js/wcrec.js` | บันทึก/สตรีมด้วย WebCodecs + ตัวเขียน WebM (ใช้แทน MediaRecorder ที่เสียใน WebKitGTK/Linux) |
