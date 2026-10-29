@@ -8991,7 +8991,21 @@ onmessage = async e => {
       if (streamer.ws === ws) { handleDisconnect(ws, 4002, 'สลับวิธีเข้ารหัส'); try { ws.close(); } catch (err) {} }
     };
     if (vcopy) {
-      r.onerror = e => fallback('ไม่สำเร็จ: ' + (e.error?.message || ''));
+      // ชิปค้างซ้ำหรือให้ค่า H.264 ใหม่ = เริ่มไฟล์ WebM ใหม่ได้ด้วยชิปเดิม → เชื่อมต่อใหม่ (ภาพสะดุด 2–3 วินาที) ไม่ต้องหลุดไลฟ์
+      // เกิน 3 ครั้งใน 5 นาทีถึงจะสลับให้ Gateway เข้ารหัส (ชิปมีปัญหาจริง)
+      r.onerror = e => {
+        const now = Date.now();
+        hwAvc.recoveries = (hwAvc.recoveries || []).filter(t => now - t < 300000);
+        if (e.recoverable && hwAvc.recoveries.length < 3 && streamer.ws === ws) {
+          hwAvc.recoveries.push(now);
+          streamer.abrSwitch = true; // ไม่ต้องแจ้ง "Gateway หลุด" ซ้ำ
+          toast('ตัวเข้ารหัสวิดีโอเริ่มใหม่ — เชื่อมต่อสตรีมใหม่อัตโนมัติ (ภาพสะดุดสั้น ๆ)', 'warn', 5000);
+          handleDisconnect(ws, 4004, 'เริ่มตัวเข้ารหัสใหม่');
+          try { ws.close(); } catch (err) {}
+          return;
+        }
+        fallback('ไม่สำเร็จ: ' + (e.error?.message || ''));
+      };
       // ชิปเข้ารหัสค้าง (เช่นตอนกดโฮม) แล้วตัวบันทึกสร้างตัวเข้ารหัสใหม่เอง — สตรีมเดินต่อในการเชื่อมต่อเดิม ไม่ต้องเชื่อมต่อใหม่
       r.onrestart = () => toast('ตัวเข้ารหัสวิดีโอค้าง — เริ่มใหม่แล้ว สตรีมยังต่อเนื่อง', 'warn', 4000);
       // ทิ้งเฟรมเกิน 20% สองช่วงติดกัน (12 วินาที) = ชิปเข้ารหัสไม่ทันจริง (เช่นเครื่องร้อนจนลดความเร็ว) → ให้ Gateway เข้ารหัส
@@ -9935,6 +9949,9 @@ onmessage = async e => {
       ['grid', 'Multiview — ดูทุกภาพ แตะเพื่อสลับ', () => multiview.open()],
       ['users', 'รีโมต / ทีมงาน — สวิตเชอร์ · เสียง · CG · อินเสิร์ต · มอนิเตอร์', () => remoteCtl.openDialog()],
       ...(desktop && desktop.mobile ? [] : [['external', 'หน้าต่าง Program Output', openOutputWindow]]),
+      // ปุ่มที่หัวแผงแหล่งภาพไม่มีที่วางบนจอมือถือ
+      ['tag', 'จัดการป้ายกลุ่มแหล่งภาพ', openTagManager],
+      ['grid', `ขนาดการ์ดแหล่งภาพ: ${{ s: 'เล็ก', m: 'กลาง', l: 'ใหญ่' }[cardSize()]} → ${{ s: 'กลาง', m: 'ใหญ่', l: 'เล็ก' }[cardSize()]}`, () => setCardSize({ s: 'm', m: 'l', l: 's' }[cardSize()])],
       ['sliders', 'ตั้งค่า', () => openSettings()],
       ['sliders', 'ควบคุมด้วย MIDI / Stream Deck', () => openSettings('control')],
       ['broadcast', 'เริ่มต้นใช้งาน (ตั้งค่าไลฟ์ทีละขั้น)', openOnboarding],
@@ -11400,6 +11417,8 @@ onmessage = async e => {
         return;
       }
       if (e.target.closest('input, textarea, select, [contenteditable], .vfader') || $('.modal-backdrop') || $('.menu')) return;
+      // Ctrl/⌘+F = ค้นหาแหล่งภาพ (แทนค้นหาในหน้าของเบราว์เซอร์ ซึ่งไม่มีประโยชน์ในแอปนี้)
+      if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.code === 'KeyF' && $('#src-search') && !$('#src-bar').hidden) { e.preventDefault(); $('#src-search').focus(); $('#src-search').select(); return; }
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       if (e.key === '/' && $('#src-search') && !$('#src-bar').hidden) { e.preventDefault(); $('#src-search').focus(); return; }
       const digit = /^(Digit|Numpad)([1-9])$/.exec(e.code);

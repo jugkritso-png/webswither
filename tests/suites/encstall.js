@@ -29,7 +29,11 @@ const maxGap = f => {
     window.VideoEncoder = class {
       constructor(init) {
         this.stalled = false; this.q = 0; this.init = init;
-        this.real = new Real({ output: (c, m) => init.output(c, m), error: e => init.error(e) });
+        // __altDesc: ตัวเข้ารหัสที่สร้างใหม่ให้ SPS/PPS ไม่เหมือนตัวแรก (บางชิปทำแบบนี้หลังถูกเอาคืน)
+        // (VP8 ไม่มี description — ใส่ค่าปลอมให้ทุกตัวเพื่อทดสอบได้ใน Chromium ที่ไม่มี H.264)
+        const alt = window.__altDesc ? (window.__encs.length > 0 ? 2 : 1) : 0;
+        const fix = m => (!alt || !m || !m.decoderConfig ? m : { ...m, decoderConfig: { ...m.decoderConfig, description: new Uint8Array([1, 100, 0, 31, alt]) } });
+        this.real = new Real({ output: (c, m) => init.output(c, fix(m)), error: e => init.error(e) });
         if (window.__stallNew > 0) { window.__stallNew--; this.stalled = true; }
         window.__encs.push(this);
       }
@@ -54,7 +58,7 @@ const maxGap = f => {
     const parts = [], events = [];
     rec.ondataavailable = e => parts.push(e.data);
     rec.onrestart = e => events.push('restart ' + (e && e.message || ''));
-    rec.onerror = e => events.push('error ' + (e.error && e.error.message || ''));
+    rec.onerror = e => events.push('error ' + (e.error && e.error.message || '') + (e.recoverable ? ' [recoverable]' : ''));
     const stopped = new Promise(r => { rec.onstop = r; });
     rec.start(500);
     const t0 = performance.now();
@@ -97,6 +101,14 @@ const maxGap = f => {
     const r3 = await run({ stallAt: 2000, stallNew: 99, preferAvc, total: 26000 });
     ok(`${tag}: gives up after 3 restarts in a minute`, r3.restarts === 3 && r3.events.some(e => e.startsWith('error')), JSON.stringify(r3.events));
     ok(`${tag}: stops even when flush never finishes`, r3.state === 'inactive', `state ${r3.state}`);
+    ok(`${tag}: giving up is marked recoverable (the app reconnects on the device chip)`, r3.events.some(e => /^error .*\[recoverable\]/.test(e)), JSON.stringify(r3.events));
+    {
+      // 4) ตัวเข้ารหัสใหม่ให้ค่า H.264 ต่างจากเดิม → หยุดแบบ recoverable (แอปเริ่มการเชื่อมต่อใหม่ด้วยชิปเดิม ไม่สลับไปเข้ารหัสด้วยซอฟต์แวร์)
+      await p.evaluate(() => { window.__altDesc = 1; });
+      const r4 = await run({ errorAt: 2500, preferAvc, total: 6000 });
+      await p.evaluate(() => { window.__altDesc = 0; });
+      ok(`${tag}: changed SPS/PPS after a restart stops with a recoverable error`, r4.events.some(e => /^error .*H\.264.*\[recoverable\]/.test(e)), JSON.stringify(r4.events));
+    }
   }
   if (!avc) console.log('INFO  WebCodecs H.264 not available in this Chromium — H.264 cases skipped');
 

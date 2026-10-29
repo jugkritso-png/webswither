@@ -33,6 +33,9 @@ const results = []; const ok = (n, c, x = '') => results.push(`${c ? 'PASS' : 'F
   await p.click('body', { position: { x: 5, y: 5 } }); await p.keyboard.press('/');
   ok('"/" focuses search', await p.evaluate(() => document.activeElement?.id === 'src-search'));
   await p.keyboard.press('Escape');
+  await p.click('body', { position: { x: 5, y: 5 } }); await p.keyboard.press('Control+f');
+  ok('Ctrl+F focuses search', await p.evaluate(() => document.activeElement?.id === 'src-search'));
+  await p.keyboard.press('Escape');
 
   // ---- สร้างป้าย + ลากการ์ดไปวางบนป้าย ----
   await p.click('[data-tagact=new]');
@@ -140,6 +143,15 @@ const results = []; const ok = (n, c, x = '') => results.push(`${c ? 'PASS' : 'F
   await ph.tap('#inputs-grid .card:nth-child(1) .card-tags'); await ph.waitForTimeout(200);
   await ph.tap('.tag-menu [data-tg="x1"]');
   ok('phone: tap tag dots → menu removes the tag', (await ph.evaluate(() => window.webmix.inputs[0].tags || [])).length === 0);
+  await ph.keyboard.press('Escape'); await ph.waitForTimeout(150);
+  // ปุ่มขนาดการ์ด/จัดการป้ายที่ไม่มีที่บนหัวแผง อยู่ในเมนู "เพิ่มเติม"
+  const size0 = await ph.evaluate(() => document.documentElement.dataset.cards || 'm');
+  await ph.tap('#m-tabs [data-mmore]'); await ph.waitForTimeout(200);
+  await ph.tap('.menu button:has-text("ขนาดการ์ดแหล่งภาพ")'); await ph.waitForTimeout(300);
+  ok('phone: More menu changes the card size', await ph.evaluate(s0 => (document.documentElement.dataset.cards || 'm') !== s0, size0));
+  await ph.tap('#m-tabs [data-mmore]'); await ph.waitForTimeout(200);
+  await ph.tap('.menu button:has-text("จัดการป้ายกลุ่มแหล่งภาพ")'); await ph.waitForTimeout(300);
+  ok('phone: More menu opens the tag manager', await ph.isVisible('.modal') && (await ph.inputValue('.modal .tag-name').catch(() => '')) === 'กล้อง');
   await pctx.close();
 
   ok('no page errors', errs.length === 0, JSON.stringify(errs));

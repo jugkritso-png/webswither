@@ -253,7 +253,8 @@
     const fail = e => {
       if (failed) return;
       failed = true;
-      if (rec.onerror) rec.onerror({ error: e instanceof Error ? e : new Error(String(e)) });
+      const err = e instanceof Error ? e : new Error(String(e));
+      if (rec.onerror) rec.onerror({ error: err, recoverable: !!err.recoverable });
       rec.stop();
     };
     const mux = createMuxer({ video: vinfo, audio: ainfo, onData: d => { buf.push(d); bufBytes += d.length; } });
@@ -264,7 +265,7 @@
         const desc = new Uint8Array(d instanceof ArrayBuffer ? d.slice(0) : d.buffer.slice(d.byteOffset, d.byteOffset + d.byteLength));
         if (!vinfo.priv) vinfo.priv = desc;
         // ตัวเข้ารหัสที่สร้างใหม่ให้ SPS/PPS ต่างจากเดิม — ใส่กลางไฟล์ WebM ไม่ได้ ให้หยุดแล้วแอปเชื่อมต่อใหม่ทั้งสตรีม
-        else if (!sameBytes(vinfo.priv, desc)) { fail(new Error('ตัวเข้ารหัสใหม่ให้ค่า H.264 ต่างจากเดิม')); return; }
+        else if (!sameBytes(vinfo.priv, desc)) { fail(recoverable(new Error('ตัวเข้ารหัสใหม่ให้ค่า H.264 ต่างจากเดิม'))); return; }
       }
       if (vinfo.codecId !== 'V_VP8') vinfo.ready = !!vinfo.priv;
       lastOut = performance.now();
@@ -285,7 +286,7 @@
       if (failed) return;
       const now = performance.now();
       restarts = restarts.filter(t => now - t < 60000);
-      if (rec.state !== 'recording' || restarts.length >= 3) { fail(err || new Error('ตัวเข้ารหัสวิดีโอค้าง')); return; }
+      if (rec.state !== 'recording' || restarts.length >= 3) { fail(recoverable(err || new Error('ตัวเข้ารหัสวิดีโอค้าง'))); return; }
       restarts.push(now);
       const old = venc;
       try { venc = makeVenc(); } catch (e) { fail(e); return; }
@@ -411,6 +412,9 @@
     };
     return rec;
   }
+
+  // ชิปยังใช้ได้ แค่ต่อในไฟล์/สตรีมเดิมไม่ได้ → แอปเริ่มไฟล์/การเชื่อมต่อใหม่ด้วยชิปเดิมได้ ไม่ต้องสลับไปเข้ารหัสด้วยซอฟต์แวร์
+  function recoverable(e) { try { e.recoverable = true; } catch (x) {} return e; }
 
   // สร้างแบบเดียวกับ new MediaRecorder(...) (ทันที) — เตรียมตัวเข้ารหัสจริงตอน start()
   function recorder(opts) {
