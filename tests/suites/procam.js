@@ -42,25 +42,25 @@ const until = async (fn, ms = 15000) => { const end = Date.now() + ms; while (Da
   await pctx.addInitScript(PROCAM);
   const ph = await pctx.newPage(); ph.on('pageerror', e => errs.push('phone ' + e.message));
   await ph.goto(link.replace(/^https?:\/\/[^/]+\/[^?]*/, 'http://localhost:8765/index.html'));
-  ok('phone shows the pro camera rail', await until(() => ph.isVisible('.pc-rail [data-pc=exp]'), 8000));
+  ok('phone shows the pro camera bar (lens / fps / shutter / ISO / WB / timecode)', await until(() => ph.isVisible('.pc-top [data-pc=shutter]'), 8000) && await ph.isVisible('.pc-top [data-pc=wb]') && /^\d\d:\d\d:\d\d:\d\d$/.test(await ph.textContent('.pc-tc span')));
   const connected = await until(() => host.evaluate(() => window.webmix.inputs.some(i => i.type === 'wireless' && i.status === 'live' && i.cam)));
   ok('studio gets the phone and its camera state', connected);
   const id = await host.evaluate(() => window.webmix.inputs.find(i => i.type === 'wireless').id);
   ok('card offers camera control', await until(() => host.isVisible(`.card[data-id="${id}"] [data-card=camctl]`), 5000));
 
   // ---- บนมือถือ: แสงแบบปรับเอง
-  await ph.tap('[data-pc=exp]'); await ph.waitForSelector('.pc-panel [data-seg=exposureMode]');
-  await ph.tap('.pc-panel [data-seg=exposureMode] [data-v=manual]'); await ph.waitForTimeout(300);
-  ok('MANUAL starts from the current ISO/shutter', await ph.evaluate(() => window.__applied.some(a => a.exposureMode === 'manual' && a.iso === 200 && a.exposureTime === 200)));
-  await ph.evaluate(() => { const r = document.querySelector('.pc-panel [data-k=iso]'); r.value = 800; r.dispatchEvent(new Event('input', { bubbles: true })); });
-  await ph.waitForTimeout(250);
+  await ph.tap('[data-pc=iso]'); await ph.waitForSelector('.pc-panel .pc-ruler[data-ruler=iso]');
+  ok('ISO opens a scale with presets and AUTO', await ph.isVisible('.pc-panel [data-seg=isoQuick] [data-v="800"]') && await ph.isVisible('.pc-panel [data-seg=exposureMode] [data-v=continuous].on'));
+  await ph.tap('.pc-panel [data-seg=isoQuick] [data-v="800"]'); await ph.waitForTimeout(300);
+  ok('picking ISO goes manual and keeps the current shutter', await ph.evaluate(() => window.__applied.some(a => a.exposureMode === 'manual' && a.iso === 800 && a.exposureTime === 200)));
+  await ph.tap('[data-pc=shutter]'); await ph.waitForSelector('.pc-panel .pc-ruler[data-ruler=exposureTime]');
   await ph.tap('.pc-panel [data-seg=shutterQuick] [data-v="200"]'); await ph.waitForTimeout(250);
-  const exp = await ph.textContent('[data-pc=exp] b');
-  ok('ISO 800 at 1/50 applied and shown on the rail', /ISO 800 1\/50/.test(exp), exp);
+  const exp = `${await ph.textContent('[data-pc=iso] b')} ${await ph.textContent('[data-pc=shutter] b')}`;
+  ok('ISO 800 at 1/50 applied and shown on the top bar', exp === '800 1/50' && await ph.evaluate(() => !document.querySelector('.pc-top [data-pc=iso]').classList.contains('is-auto')), exp);
   // WB
-  await ph.tap('[data-pc=wb]'); await ph.tap('.pc-panel [data-seg=whiteBalanceMode] [data-v=manual]'); await ph.waitForTimeout(200);
-  await ph.tap('.pc-panel [data-seg=wbPreset] [data-v="3200"]'); await ph.waitForTimeout(250);
-  ok('white balance preset 3200K', (await ph.textContent('[data-pc=wb] b')) === '3200K');
+  await ph.tap('[data-pc=wb]'); await ph.waitForSelector('.pc-panel .pc-ruler[data-ruler=colorTemperature]');
+  await ph.tap('.pc-panel [data-seg=wbPreset] [data-v="3200"]'); await ph.waitForTimeout(1900);
+  ok('white balance preset glides to 3200K (manual)', (await ph.textContent('[data-pc=wb] b')) === '3200K' && await ph.evaluate(() => window.__applied.some(a => a.whiteBalanceMode === 'manual')), await ph.textContent('[data-pc=wb] b'));
   // ตัวช่วยดูภาพ
   await ph.tap('[data-pc=assist]');
   for (const k of ['peaking', 'grid']) await ph.tap(`.pc-panel [data-tog=${k}]`);
@@ -75,7 +75,9 @@ const until = async (fn, ms = 15000) => { const end = Date.now() + ms; while (Da
   ok('tap on the picture focuses there', await ph.evaluate(() => window.__applied.some(a => a.pointsOfInterest && a.focusMode === 'single-shot')));
 
   // ---- วงแหวนซูม / โฟกัสแบบนุ่ม
-  await ph.tap('[data-pc=zoom]'); await ph.waitForSelector('.pc-panel .pc-ring[data-ring=zoom]');
+  await ph.tap('[data-pc=settings]'); await ph.waitForSelector('.pc-panel [data-seg=glide]');
+  await ph.tap('.pc-panel [data-seg=glide] [data-v="600"]');
+  await ph.tap('[data-pc=zoom]'); await ph.waitForSelector('.pc-panel .pc-ruler[data-ruler=zoom]');
   const ringDrag = async (sel, dx) => {
     const bb = await ph.locator(sel).boundingBox(), y = bb.y + bb.height / 2, x0 = bb.x + bb.width * 0.8;
     await ph.evaluate(() => { window.__applied = []; });
@@ -85,11 +87,10 @@ const until = async (fn, ms = 15000) => { const end = Date.now() + ms; while (Da
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
     await ph.waitForTimeout(900);
   };
-  await ringDrag('.pc-ring[data-ring=zoom] .pc-ring-band', -220);
+  await ringDrag('.pc-ruler[data-ruler=zoom]', -220);
   const zs = await ph.evaluate(() => window.__applied.filter(a => 'zoom' in a).map(a => a.zoom));
   ok('dragging the zoom ring zooms in smoothly (many small steps, only increasing)', zs.length >= 5 && zs.every((z, i) => !i || z >= zs[i - 1] - 1e-9) && zs[zs.length - 1] > 1.3, JSON.stringify(zs.map(z => +z.toFixed(2))));
-  ok('rail shows the new zoom', parseFloat(await ph.textContent('[data-pc=zoom] b')) > 1.3, await ph.textContent('[data-pc=zoom] b'));
-  await ph.tap('.pc-panel [data-seg=glide] [data-v="600"]');
+  ok('top bar shows the new zoom', parseFloat(await ph.textContent('[data-pc=zoom] b')) > 1.3, await ph.textContent('[data-pc=zoom] b'));
   await ph.evaluate(() => { window.__applied = []; });
   await ph.tap('.pc-panel [data-seg=zoomQuick] [data-v="5"]'); await ph.waitForTimeout(1100);
   const gz = await ph.evaluate(() => window.__applied.filter(a => 'zoom' in a).map(a => a.zoom));
@@ -110,11 +111,11 @@ const until = async (fn, ms = 15000) => { const end = Date.now() + ms; while (Da
   const pz = await ph.evaluate(() => window.__applied.filter(a => 'zoom' in a).map(a => a.zoom));
   ok('pinch out on the picture zooms in', pz.length && pz[pz.length - 1] > 5.5 && !(await ph.evaluate(() => window.__applied.some(a => a.pointsOfInterest))), JSON.stringify(pz.map(z => +z.toFixed(2))));
   // วงแหวนโฟกัสตอน AF → เปลี่ยนเป็น MF แล้วดึงโฟกัส
-  await ph.tap('[data-pc=focus]'); await ph.waitForSelector('.pc-panel .pc-ring[data-ring=focusDistance]');
-  await ringDrag('.pc-ring[data-ring=focusDistance] .pc-ring-band', -150);
+  await ph.tap('[data-pc=focus]'); await ph.waitForSelector('.pc-panel .pc-ruler[data-ruler=focusDistance]');
+  await ringDrag('.pc-ruler[data-ruler=focusDistance]', -150);
   const fs1 = await ph.evaluate(() => window.__applied.filter(a => 'focusDistance' in a));
   ok('focus ring in AF switches to MF and pulls focus smoothly', fs1.length >= 5 && fs1[0].focusMode === 'manual' && fs1[fs1.length - 1].focusDistance > 1.2, JSON.stringify(fs1.map(a => +a.focusDistance.toFixed(2))));
-  ok('rail shows MF and the panel follows', (await ph.textContent('[data-pc=focus] b')) === 'MF' && await ph.isVisible('.pc-panel [data-seg=focusMode] [data-v=manual].on'));
+  ok('top bar shows the focus distance and the panel follows', / m$/.test(await ph.textContent('[data-pc=focus] b')) && await ph.isVisible('.pc-panel [data-seg=focusMode] [data-v=continuous]:not(.on)'), await ph.textContent('[data-pc=focus] b'));
   await ph.screenshot({ path: process.env.WORK + '/procam-focus-ring.png' });
   await ph.tap('.pc-panel .pc-close');
 
@@ -139,7 +140,7 @@ const until = async (fn, ms = 15000) => { const end = Date.now() + ms; while (Da
   const d = await dl;
   ok('stopping saves a file on the phone', /^WebMix-Cam-\d{8}-\d{6}\.(webm|mp4)$/.test(d.suggestedFilename()), d.suggestedFilename());
   await host.click('.cam-ctl .cam-lock');
-  ok('studio locks AE/AWB/AF', await until(() => ph.evaluate(() => window.__applied.some(a => a.exposureMode === 'manual' && a.whiteBalanceMode === 'manual' && a.focusMode === 'manual')), 4000) && await until(async () => (await ph.textContent('[data-pc=lock] b')) === 'ON', 3000));
+  ok('studio locks AE/AWB/AF', await until(() => ph.evaluate(() => window.__applied.some(a => a.exposureMode === 'manual' && a.whiteBalanceMode === 'manual' && a.focusMode === 'manual')), 4000) && await until(async () => await ph.evaluate(() => document.querySelector('[data-pc=lock]').classList.contains('on')), 3000));
   ok('studio shows the live picture', await until(() => host.evaluate(() => document.querySelector('.cc-video video').videoWidth > 0), 4000));
   { const vb = await host.locator('.cc-video video').boundingBox(); await host.mouse.click(vb.x + vb.width * 0.3, vb.y + vb.height * 0.6); }
   ok('tapping the studio picture focuses the phone there', await until(() => ph.evaluate(() => window.__applied.some(a => a.pointsOfInterest && Math.abs(a.pointsOfInterest[0].x - 0.3) < 0.05)), 4000));
@@ -149,7 +150,7 @@ const until = async (fn, ms = 15000) => { const end = Date.now() + ms; while (Da
   await host.click('.cc-color .cc-reset'); await host.click('.cc-tabs [data-tab=cam]');
   await host.screenshot({ path: process.env.WORK + '/procam-studio.png' });
   await host.click('.modal-foot .btn-primary');
-  await ph.tap('[data-pc=exp]'); await ph.waitForTimeout(300);
+  await ph.tap('[data-pc=wb]'); await ph.waitForTimeout(400);
   await ph.screenshot({ path: process.env.WORK + '/procam-phone.png' });
   ok('no page errors', errs.length === 0, JSON.stringify(errs));
   console.log(results.join('\n'));
