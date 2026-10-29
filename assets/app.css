@@ -1511,18 +1511,10 @@ html[data-cards=l] .card-num, html[data-cards=l] .card-tally { font-size: 14px; 
 /* 5 แท็บในแผงกราฟิก: ไม่ให้ชื่อแท็บขึ้นสองบรรทัด */
 .tabs .tab { gap: 4px; letter-spacing: 0; white-space: nowrap; }
 
-/* ---------- กล้องมือถือแบบมืออาชีพ (procam.js) — แบบแอปกล้องภาพยนตร์ ----------
-   แนวนอน: [ภาพ + แถบค่าบน + การ์ดล่าง + แผงสเกลชิดขวา] [คอลัมน์ปุ่ม] [เมนู]
-   แนวตั้ง: แถบค่าบน · ภาพ · การ์ด · แถวปุ่ม · เมนูล่าง */
-.caller.procam { --pc-ctrl: 76px; --pc-nav: 84px; --pc-right: calc(var(--pc-ctrl) + var(--pc-nav) + env(safe-area-inset-right)); background: #000;
-  font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
-.caller.procam #caller-video { position: absolute; left: 0; top: 0; bottom: 0; right: var(--pc-right); width: auto; height: auto; }
-.caller.procam .caller-top, .caller.procam .caller-bottom, .caller.procam .caller-tally { display: none; }
-.caller.procam::after { right: var(--pc-right); }
-.caller.procam .caller-msg { right: calc(var(--pc-right) + 16px); z-index: 2; }
-.caller.procam .guest-bubble { left: calc((100% - var(--pc-right)) / 2); top: 78px; z-index: 6; }
-#caller-video { touch-action: none; }
-.pc-i { width: 26px; height: 26px; }
+/* ---------- กล้องมือถือแบบมืออาชีพ (procam.js) ---------- */
+.caller.procam .caller-bottom { gap: 18px; padding-top: 28px; padding-right: 76px; }
+.caller.procam .round { width: 50px; height: 50px; }
+.caller.procam .round.lg { width: 60px; height: 60px; }
 .pc-stage { position: absolute; pointer-events: none; }
 .pc-assist { position: absolute; inset: 0; width: 100%; height: 100%; }
 .pc-guides, .pc-guides i { position: absolute; }
@@ -1534,156 +1526,58 @@ html[data-cards=l] .card-num, html[data-cards=l] .card-tally { font-size: 14px; 
 .pc-focus { position: absolute; width: 72px; height: 72px; margin: -36px 0 0 -36px; border: 2px solid #f5a524; border-radius: 6px; }
 .pc-focus.pulse { animation: pcFocus .5s ease-out; }
 @keyframes pcFocus { from { transform: scale(1.5); opacity: .3; } to { transform: scale(1); opacity: 1; } }
-.pc-level { position: absolute; left: calc((100% - var(--pc-right)) / 2); top: 50%; width: 30%; max-width: 320px; transform: translate(-50%, -50%); pointer-events: none; }
+.pc-info { position: absolute; left: 16px; right: 80px; top: max(52px, calc(env(safe-area-inset-top) + 40px)); font: 600 11px/1.3 var(--mono, ui-monospace, monospace); color: rgba(255,255,255,.9); text-shadow: 0 1px 2px #000; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pc-info.warn { color: #fbbf24; }
+.pc-hist { position: absolute; left: 16px; top: max(74px, calc(env(safe-area-inset-top) + 62px)); width: 128px; height: 56px; border-radius: 4px; }
+.pc-meter { position: absolute; left: 6px; top: 34%; height: 32%; width: 6px; border-radius: 3px; background: rgba(255,255,255,.18); overflow: hidden; }
+.pc-meter i { position: absolute; left: 0; right: 0; bottom: 0; height: 0; background: #22c55e; }
+.pc-meter b { position: absolute; left: 0; right: 0; height: 2px; background: #fff; }
+.pc-level { position: absolute; left: 50%; top: 50%; width: 38%; max-width: 320px; transform: translate(-50%, -50%); pointer-events: none; }
 .pc-level i { display: block; height: 2px; background: rgba(255,255,255,.75); box-shadow: 0 0 3px #000; transition: transform .08s linear; }
 .pc-level.ok i { background: #22c55e; }
 .pc-level span { position: absolute; left: 50%; top: 8px; transform: translateX(-50%); font: 600 11px var(--mono, monospace); text-shadow: 0 1px 2px #000; }
-
-/* แถบค่าด้านบน: ป้ายเล็ก + ค่าตัวใหญ่ · ไทม์โค้ดตรงกลาง · แตะค่าเพื่อเปิดสเกล */
-.pc-top { position: absolute; left: 0; right: var(--pc-right); top: 0; z-index: 4; display: flex; align-items: stretch; gap: 2px;
-  padding: max(6px, env(safe-area-inset-top)) 8px 6px max(8px, env(safe-area-inset-left)); background: linear-gradient(rgba(0,0,0,.55), rgba(0,0,0,0)); text-shadow: 0 1px 2px rgba(0,0,0,.6); }
-.pc-cell { display: grid; align-content: center; gap: 1px; min-width: 0; padding: 4px 9px; border: 0; border-radius: 6px; background: none; color: #fff; text-align: left; cursor: pointer; font: inherit; }
-.pc-cell small { font-size: 11px; font-weight: 500; letter-spacing: .02em; color: rgba(255,255,255,.85); }
-.pc-cell b { position: relative; font-size: 21px; font-weight: 400; line-height: 1.05; white-space: nowrap; font-variant-numeric: tabular-nums; }
-.pc-cell.is-auto b::after { content: "A"; margin-left: 3px; font-size: 10px; font-weight: 700; vertical-align: super; color: rgba(255,255,255,.7); }
-.pc-cell.active { background: #2f7cf6; }
-.pc-cell.on:not(.active) small { color: #8fbcff; }
-.pc-cell:focus-visible { outline: 2px solid #8fbcff; }
-.pc-auto b { font-size: 16px; font-weight: 600; letter-spacing: .03em; }
-.pc-auto.on b { color: #8fbcff; }
-.pc-lockbtn { place-items: center; padding: 4px 8px; }
-.pc-lockbtn.on { color: #f5a524; }
-.pc-tc { flex: 1 1 auto; display: flex; align-items: center; justify-content: center; gap: 8px; min-width: 0; pointer-events: none; }
-.pc-tc span { font-size: clamp(22px, 4.2vw, 46px); font-weight: 300; letter-spacing: .02em; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.pc-tc.is-rec span { color: #ff4d4d; }
-.pc-rec { font: 800 11px/1 var(--mono, monospace); font-style: normal; padding: 3px 6px; border-radius: 3px; background: #dc2626; letter-spacing: .06em; }
-
-/* แผงสเกล: ชิดขวาของภาพ ไม้บรรทัดแนวตั้ง + คอลัมน์ค่าสำเร็จรูป */
-.pc-panel { position: absolute; z-index: 5; top: 64px; bottom: 0; right: var(--pc-right); width: 228px; display: flex; flex-direction: column; gap: 8px; padding: 8px 8px max(8px, env(safe-area-inset-bottom));
-  background: rgba(20, 22, 30, .84); border-left: 1px solid rgba(255,255,255,.12); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); overflow-y: auto; }
-.pc-panel:not(.is-ruler) { width: 300px; }
-.pc-panel-head { display: flex; align-items: center; justify-content: space-between; font-size: 12px; letter-spacing: .1em; color: rgba(255,255,255,.75); flex: none; }
+.pc-rec { position: absolute; left: 50%; top: max(52px, calc(env(safe-area-inset-top) + 40px)); transform: translateX(-50%); padding: 3px 10px; border-radius: 4px; background: #dc2626; font: 800 12px var(--mono, monospace); letter-spacing: .06em; z-index: 3; }
+.pc-rail { position: absolute; right: max(8px, env(safe-area-inset-right)); top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; gap: 6px; max-height: calc(100% - 130px); overflow-y: auto; z-index: 3; }
+.pc-rail button { width: 62px; padding: 5px 2px; border-radius: 8px; border: 1px solid rgba(255,255,255,.18); background: rgba(14, 16, 22, .72); color: #fff; display: grid; gap: 1px; text-align: center; cursor: pointer; -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
+.pc-rail small { font-size: 9px; font-weight: 800; letter-spacing: .08em; color: rgba(255,255,255,.6); }
+.pc-rail b { font: 700 11px var(--mono, monospace); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pc-rail button.on b { color: #f5a524; }
+.pc-rail button.active { border-color: #f5a524; }
+.pc-rail .pc-recbtn b { color: #ef4444; font-size: 14px; }
+.pc-rail .pc-recbtn.on { background: #b91c1c; }
+.pc-rail .pc-recbtn.on b { color: #fff; }
+.pc-panel { position: absolute; left: 8px; right: 78px; bottom: max(8px, env(safe-area-inset-bottom)); max-height: 52%; overflow-y: auto; z-index: 4; padding: 10px 12px 12px; border-radius: 12px; background: rgba(12, 14, 20, .9); border: 1px solid rgba(255,255,255,.14); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); display: grid; gap: 10px; }
+.pc-panel-head { display: flex; align-items: center; justify-content: space-between; font-size: 12px; letter-spacing: .1em; }
 .pc-close { border: 0; background: none; color: #fff; font-size: 16px; padding: 2px 6px; cursor: pointer; }
-.pc-body { flex: 1 1 auto; min-height: 150px; display: flex; gap: 6px; }
-.pc-main { flex: 1 1 auto; min-width: 0; position: relative; }
-.pc-side { flex: none; width: 64px; display: flex; flex-direction: column; gap: 6px; overflow-y: auto; }
-.pc-ruler { position: absolute; inset: 0; border-radius: 8px; background: linear-gradient(90deg, rgba(255,255,255,.02), rgba(255,255,255,.07)); cursor: ns-resize; touch-action: none; outline: none; user-select: none; -webkit-user-select: none;
-  -webkit-mask-image: linear-gradient(transparent, #000 14%, #000 86%, transparent); mask-image: linear-gradient(transparent, #000 14%, #000 86%, transparent); }
-.pc-ruler canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
-.pc-ruler:focus-visible, .pc-ruler.turning { box-shadow: inset 0 0 0 1px #4f9dff; }
-.pc-ruler-val { position: absolute; left: 0; top: 50%; transform: translateY(-50%); padding: 7px 10px; border-radius: 8px; background: #2a2e3a; border: 1px solid rgba(255,255,255,.4);
-  font-size: 20px; font-weight: 500; font-variant-numeric: tabular-nums; white-space: nowrap; box-shadow: 0 4px 14px rgba(0,0,0,.5); pointer-events: none; }
 .pc-seg, .pc-toggles { display: flex; flex-wrap: wrap; gap: 6px; }
 .pc-seg button, .pc-toggles button { flex: 1 1 auto; min-width: 56px; padding: 8px 10px; border-radius: 8px; border: 1px solid rgba(255,255,255,.2); background: rgba(255,255,255,.06); color: #fff; font-size: 12px; font-weight: 700; cursor: pointer; }
-.pc-seg button.on, .pc-toggles button.on { background: #2f7cf6; border-color: #2f7cf6; color: #fff; }
-.pc-seg.pc-col { flex-direction: column; flex-wrap: nowrap; }
-.pc-seg.pc-col button { min-width: 0; padding: 9px 4px; font-size: 13px; }
-.pc-seg.pc-icons button { display: grid; justify-items: center; gap: 2px; padding: 6px 2px; background: none; border-color: transparent; }
-.pc-seg.pc-icons button small { font-size: 10px; font-weight: 600; color: rgba(255,255,255,.7); }
-.pc-seg.pc-icons button.on { background: rgba(47,124,246,.35); border-color: #2f7cf6; }
+.pc-seg button.on, .pc-toggles button.on { background: #f5a524; border-color: #f5a524; color: #111; }
 .pc-slider { display: grid; gap: 4px; font-size: 12px; }
 .pc-slider span { display: flex; justify-content: space-between; }
-.pc-slider b { font-family: var(--mono, monospace); color: #8fbcff; }
-.pc-slider input { width: 100%; accent-color: #2f7cf6; }
+.pc-slider b { font-family: var(--mono, monospace); color: #f5a524; }
+.pc-slider input { width: 100%; accent-color: #f5a524; }
+.pc-ring { display: grid; gap: 6px; font-size: 12px; user-select: none; -webkit-user-select: none; }
+.pc-ring-head { display: flex; justify-content: space-between; align-items: baseline; }
+.pc-ring-head b { font: 700 15px/1 var(--mono, monospace); color: #f5a524; }
+/* แถบวงแหวน: ขีดสเกลแบบเลนส์ (ขีดยาวทุก 5 ขีด) · ขอบซ้าย-ขวาจางเหมือนผิวโค้ง · เส้นกลาง = ตำแหน่งปัจจุบัน */
+.pc-ring-band { position: relative; height: 46px; border-radius: 10px; overflow: hidden; cursor: ew-resize; touch-action: none; outline: none;
+  background: linear-gradient(90deg, #07080b 0%, #1d2129 18%, #2a2f38 50%, #1d2129 82%, #07080b 100%); border: 1px solid rgba(255,255,255,.18); }
+.pc-ring-band:focus-visible { border-color: #f5a524; }
+.pc-ring-band.turning { border-color: #f5a524; }
+.pc-ring-ticks { position: absolute; inset: 6px 0; pointer-events: none;
+  background-image: repeating-linear-gradient(90deg, rgba(255,255,255,.85) 0 2px, transparent 2px 60px), repeating-linear-gradient(90deg, rgba(255,255,255,.4) 0 1px, transparent 1px 12px);
+  background-size: 60px 100%, 12px 55%; background-repeat: repeat-x; background-position-y: center, center;
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 25%, #000 75%, transparent); mask-image: linear-gradient(90deg, transparent, #000 25%, #000 75%, transparent); }
+.pc-ring-mark { position: absolute; left: 50%; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: #f5a524; box-shadow: 0 0 6px #f5a524; pointer-events: none; }
+.pc-ring-bar { height: 3px; border-radius: 2px; background: rgba(255,255,255,.15); overflow: hidden; }
+.pc-ring-bar i { display: block; height: 100%; width: 0; background: #f5a524; }
+#caller-video { touch-action: none; }
 .pc-label { font-size: 11px; color: rgba(255,255,255,.6); letter-spacing: .06em; }
-.pc-note { margin: 0; font-size: 11px; color: rgba(255,255,255,.65); flex: none; }
-
-/* การ์ดด้านล่าง: Histogram · สถานะการส่ง · มิเตอร์ไมค์ */
-.pc-cards { position: absolute; left: max(10px, env(safe-area-inset-left)); right: calc(var(--pc-right) + 10px); bottom: max(8px, env(safe-area-inset-bottom)); z-index: 3; display: flex; justify-content: space-between; gap: 10px; pointer-events: none; }
-.pc-card { flex: 0 1 260px; min-width: 0; border-radius: 10px; background: rgba(28, 31, 40, .78); border: 1px solid rgba(255,255,255,.08); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); padding: 6px 10px 8px; }
-.pc-card[hidden] { display: block; visibility: hidden; }
-.pc-card > small { display: block; font-size: 11px; font-weight: 600; color: rgba(255,255,255,.85); padding-bottom: 4px; margin-bottom: 4px; border-bottom: 1px solid rgba(255,255,255,.1); }
-.pc-hist { display: block; width: 100%; height: 52px; }
-.pc-card-status { display: flex; gap: 10px; align-items: center; flex-basis: 300px; }
-.pc-phone { flex: none; display: grid; place-items: center; width: 44px; align-self: stretch; border-right: 1px solid rgba(255,255,255,.1); }
-.pc-phone .pc-i { width: 30px; height: 30px; }
-.pc-st { min-width: 0; flex: 1; display: grid; gap: 3px; }
-.pc-st-title { font-size: 11px; color: rgba(255,255,255,.75); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.pc-st-state { font-size: 15px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.pc-st-state.is-pgm { color: #ff5a5a; }
-.pc-st-state.is-pvw { color: #4ade80; }
-.pc-batt { height: 4px; border-radius: 2px; background: rgba(255,255,255,.15); overflow: hidden; }
-.pc-batt i { display: block; height: 100%; width: 0; background: #3b82f6; }
-.pc-batt i.low { background: #ef4444; }
-.pc-info { font: 500 11px/1.3 var(--mono, ui-monospace, monospace); color: rgba(255,255,255,.85); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.pc-info.warn { color: #fbbf24; }
-.pc-meter { position: relative; height: 12px; border-radius: 2px; background: linear-gradient(90deg, #1f3a24 0 75%, #3a3a1f 75% 90%, #3a1f1f 90%); overflow: hidden; }
-.pc-meter[hidden] { display: block; }
-.pc-meter i { position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: #22c55e; }
-.pc-meter b { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: #fff; }
-.pc-meter-scale { display: flex; justify-content: space-between; margin-top: 3px; font: 500 9.5px var(--mono, monospace); color: rgba(255,255,255,.6); }
-
-/* คอลัมน์ปุ่ม + เมนูด้านขวา */
-.pc-ctrl { position: absolute; top: 0; bottom: 0; right: calc(var(--pc-nav) + env(safe-area-inset-right)); width: var(--pc-ctrl); z-index: 4; display: flex; flex-direction: column; align-items: center; justify-content: space-evenly; background: #0b0c10;
-  padding: max(6px, env(safe-area-inset-top)) 0 max(6px, env(safe-area-inset-bottom)); }
-.pc-ctrl button { position: relative; display: grid; place-items: center; width: 52px; height: 44px; border: 0; border-radius: 10px; background: none; color: #fff; cursor: pointer; }
-.pc-ctrl button.on { color: #f5a524; }
-.pc-ctrl button[hidden] { display: none; }
-.pc-recbtn.pc-recbtn { width: 66px; height: 66px; border-radius: 50%; border: 3px solid #fff; }
-.pc-recbtn i { width: 30px; height: 30px; border-radius: 50%; background: #8e1b1b; transition: border-radius .15s, width .15s, height .15s, background .15s; }
-.pc-recbtn.on i { width: 24px; height: 24px; border-radius: 5px; background: #ef4444; }
-.pc-lensbtn b { position: absolute; right: 2px; bottom: 0; font-size: 11px; font-weight: 600; }
-.pc-txtbtn { font: 800 11px/1 var(--mono, monospace); letter-spacing: .05em; }
-.pc-txtbtn.pc-txtbtn { width: 46px; height: 30px; border: 2px solid currentColor; border-radius: 7px; }
-.pc-nav { position: absolute; top: 0; bottom: 0; right: 0; width: calc(var(--pc-nav) + env(safe-area-inset-right)); z-index: 4; display: flex; flex-direction: column; justify-content: space-evenly; align-items: stretch;
-  padding: max(6px, env(safe-area-inset-top)) env(safe-area-inset-right) max(6px, env(safe-area-inset-bottom)) 0; background: #17191f; }
-.pc-nav button { display: grid; justify-items: center; gap: 4px; margin: 0 6px; padding: 10px 2px; border: 0; border-radius: 10px; background: none; color: #8fbcff; font-size: 13px; font-weight: 500; cursor: pointer; }
-.pc-nav button.on { background: #1d2f4f; color: #4f9dff; }
-.pc-nav button.is-off { color: #f87171; }
-.pc-nav button[data-caller="end"] { color: #c9d1db; }
-
-/* จอแนวนอนเตี้ย (มือถือ) */
-@media (orientation: landscape) and (max-height: 460px) {
-  .caller.procam { --pc-ctrl: 66px; --pc-nav: 72px; }
-  .pc-cell { padding: 3px 6px; }
-  .pc-cell b { font-size: 17px; }
-  .pc-cell small { font-size: 10px; }
-  .pc-panel { top: 52px; }
-  .pc-card { padding: 4px 8px 6px; }
-  .pc-hist { height: 38px; }
-  .pc-ctrl button { height: 38px; }
-  .pc-recbtn.pc-recbtn { width: 56px; height: 56px; }
-  .pc-nav button { padding: 6px 2px; font-size: 11px; }
-  .pc-nav .pc-i { width: 22px; height: 22px; }
-}
-/* จอแนวตั้ง: แถบค่าสองแถว · ภาพตรงกลาง · การ์ด · แถวปุ่ม · เมนูล่าง */
-@media (orientation: portrait) {
-  .caller.procam { --pc-right: 0px; --pc-bottom: calc(146px + env(safe-area-inset-bottom)); }
-  .caller.procam #caller-video { top: calc(104px + env(safe-area-inset-top)); bottom: calc(var(--pc-bottom) + 76px); right: 0; }
-  .caller.procam::after { right: 0; }
-  .caller.procam .guest-bubble { left: 50%; top: calc(110px + env(safe-area-inset-top)); }
-  .pc-top { flex-wrap: wrap; justify-content: space-between; row-gap: 0; padding-left: 4px; padding-right: 4px; background: #000; }
-  /* แถวแรก: AUTO · ไทม์โค้ด · ล็อก — แถวสอง: ค่ากล้อง */
-  .pc-auto { order: -3; }
-  .pc-tc { order: -2; flex: 0 0 calc(100% - 120px); }
-  .pc-lockbtn { order: -1; }
-  .pc-tc span { font-size: 34px; }
-  .pc-cell { padding: 3px 5px; }
-  .pc-cell b { font-size: 16px; }
-  .pc-cell small { font-size: 10px; }
-  .pc-cards { left: 6px; right: 6px; bottom: calc(var(--pc-bottom) + 6px); gap: 6px; }
-  .pc-card { flex: 1 1 0; padding: 4px 6px 6px; }
-  .pc-card-status { flex: 1.4 1 0; gap: 6px; }
-  .pc-phone { display: none; }
-  .pc-hist { height: 36px; }
-  .pc-st-state { font-size: 12px; }
-  .pc-info { font-size: 9.5px; white-space: normal; max-height: 2.6em; }
-  .pc-meter-scale span:nth-child(2n) { display: none; }
-  .pc-ctrl { top: auto; left: 0; right: 0; bottom: calc(62px + env(safe-area-inset-bottom)); width: auto; height: 84px; flex-direction: row; padding: 0 4px; }
-  .pc-ctrl button { width: 44px; }
-  .pc-recbtn.pc-recbtn { width: 62px; height: 62px; }
-  .pc-nav { top: auto; left: 0; width: auto; height: calc(62px + env(safe-area-inset-bottom)); flex-direction: row; padding: 0 0 env(safe-area-inset-bottom); }
-  .pc-nav button { flex: 1; margin: 6px 4px; padding: 4px 2px; font-size: 11px; }
-  .pc-nav .pc-i { width: 22px; height: 22px; }
-  .pc-panel { top: auto; left: 0; right: 0; width: auto; bottom: var(--pc-bottom); max-height: 52vh; border-left: 0; border-top: 1px solid rgba(255,255,255,.12); }
-  .pc-panel:not(.is-ruler) { width: auto; }
-  .pc-body { flex-direction: column; min-height: 0; flex: none; }
-  .pc-main { height: 88px; flex: none; }
-  .pc-ruler { cursor: ew-resize; -webkit-mask-image: linear-gradient(90deg, transparent, #000 12%, #000 88%, transparent); mask-image: linear-gradient(90deg, transparent, #000 12%, #000 88%, transparent); }
-  .pc-ruler-val { left: 50%; top: auto; bottom: 26px; transform: translateX(-50%); font-size: 17px; padding: 4px 10px; }
-  .pc-side { width: auto; flex-direction: row; }
-  .pc-seg.pc-col { flex-direction: row; flex-wrap: wrap; flex: 1 1 auto; }
-  .pc-seg.pc-col button { flex: 1 1 auto; }
+.pc-note { margin: 0; font-size: 11px; color: rgba(255,255,255,.65); }
+@media (orientation: landscape) and (max-height: 520px) {
+  .pc-panel { max-height: 70%; left: auto; width: min(420px, 60%); }
+  .pc-rail { gap: 4px; }
+  .pc-rail button { padding: 3px 2px; }
 }
 /* สตูดิโอ: ควบคุมกล้องมือถือ */
 .cam-ctl { display: grid; gap: 8px; }

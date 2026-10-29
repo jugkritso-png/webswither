@@ -2244,15 +2244,6 @@
     "ความเร็วซูม / ดึงโฟกัสเมื่อกดปุ่ม": "Zoom / focus pull speed for the buttons",
     "หมุนวงแหวน (ลากซ้าย-ขวา) เพื่อดึงโฟกัสแบบนุ่ม — แตะวงแหวนตอน AF จะเปลี่ยนเป็น MF ให้เอง · แตะที่ภาพเพื่อโฟกัสตรงจุดนั้น · เปิด Focus peaking (ASSIST) จะเห็นขอบที่ชัดเป็นสีแดง": "Turn the ring (drag left / right) for a smooth focus pull — touching it in AF switches to MF · tap the picture to focus there · turn on Focus peaking (ASSIST) to see sharp edges in red",
     "หมุนวงแหวนหรือจีบนิ้วบนภาพเพื่อซูมแบบนุ่ม · ปุ่ม 1× 2× 3× ค่อย ๆ ซูมไปตามความเร็วที่เลือก": "Turn the ring or pinch the picture for a smooth zoom · the 1× 2× 3× buttons zoom gradually at the chosen speed",
-    "ร่มเงา": "Shade", "ค่ากล้อง": "Camera settings", "ทุกอย่างอัตโนมัติ (แสง / สี / โฟกัส)": "All automatic (exposure / colour / focus)",
-    "ล็อกแสง / สี / โฟกัส": "Lock exposure / colour / focus", "ตัวช่วยดูภาพ": "Viewing aids", "โฟกัสอัตโนมัติกลางภาพ": "Autofocus on the centre",
-    "ไฟฉาย": "Torch", "เลนส์": "Lens", "Focus peaking — ขอบที่ชัดเป็นสีแดง": "Focus peaking — sharp edges in red", "ไมค์ของเครื่อง": "Device mic",
-    "ไฟบ้าน 50 Hz: 1/50 หรือ 1/100 ภาพไม่กะพริบ": "50 Hz mains light: 1/50 or 1/100 avoids flicker",
-    "EV ใช้ได้ตอนแสง AUTO — ตอนนี้ตั้ง ISO / ชัตเตอร์เองอยู่": "EV works with AUTO exposure — ISO / shutter are set manually now",
-    "ลากสเกลเพื่อดึงโฟกัสแบบนุ่ม (ตอน AF จะเปลี่ยนเป็น MF ให้เอง) · แตะที่ภาพเพื่อโฟกัสตรงจุดนั้น · เปิด PEAK จะเห็นขอบที่ชัดเป็นสีแดง": "Drag the scale for a smooth focus pull (switches AF to MF) · tap the picture to focus there · turn on PEAK to see sharp edges in red",
-    "ลากสเกลหรือจีบนิ้วบนภาพเพื่อซูมแบบนุ่ม · ปุ่มด้านข้างค่อย ๆ ซูมไปตามความเร็วที่ตั้งไว้ (Settings)": "Drag the scale or pinch the picture for a smooth zoom · the side buttons zoom at the speed set in Settings",
-    "Focus peaking เปิด — ขอบที่ชัดเป็นสีแดง": "Focus peaking on — sharp edges in red", "Focus peaking ปิด": "Focus peaking off",
-    "แสง / สี / โฟกัส อัตโนมัติ": "Exposure / colour / focus automatic",
     "ทีวี": "TV", "หน้า": "Page", "รายการ": "Item", "ความยาว": "Length", "เหลือ": "Remain", "สไลด์": "Slides"
   });
 })(window.WebMix = window.WebMix || {});
