@@ -78,26 +78,35 @@ const until = async (fn, ms = 15000) => { const end = Date.now() + ms; while (Da
   await ph.waitForTimeout(300);
   ok('tap on the picture focuses there', await ph.evaluate(() => window.__applied.some(a => a.pointsOfInterest && a.focusMode === 'single-shot')));
 
-  // ---- วงแหวนซูม / โฟกัสแบบนุ่ม
-  await ph.tap('[data-pc=zoom]'); await ph.waitForSelector('.pc-panel .pc-ring[data-ring=zoom]');
-  const ringDrag = async (sel, dx) => {
-    const bb = await ph.locator(sel).boundingBox(), y = bb.y + bb.height / 2, x0 = bb.x + bb.width * 0.8;
+  // ---- วงล้อครึ่งวงกลม (jog wheel) ซูม / โฟกัส
+  await ph.tap('[data-pc=fps]'); await ph.tap('.pc-panel [data-seg=glide] [data-v="600"]'); await ph.tap('.pc-panel .pc-close');
+  await ph.tap('[data-pc=zoom]'); await ph.waitForSelector('.pc-dial:not([hidden])'); await ph.waitForTimeout(300);
+  ok('ZOOM opens the half-circle dial at the side', await ph.evaluate(() => { const d = document.querySelector('.pc-dial').getBoundingClientRect(), r = document.querySelector('.pc-rail').getBoundingClientRect(); return d.height > d.width * 1.8 && d.right <= r.left + 2 && d.width > 100; }));
+  // หมุนนิ้วตามโค้งขึ้นด้านบน (ทวนเข็มบนครึ่งซ้าย) = ซูมเข้า
+  const spin = async (deg0, deg1) => {
+    const bb = await ph.locator('.pc-dial canvas').boundingBox(), cx = bb.x + bb.width, cy = bb.y + bb.height / 2, R = bb.width * 0.8;
     await ph.evaluate(() => { window.__applied = []; });
-    const cdp = await pctx.newCDPSession(ph);
-    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: x0, y }] });
-    for (let i = 1; i <= 15; i++) { await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: x0 + dx * i / 15, y }] }); await ph.waitForTimeout(16); }
+    const cdp = await pctx.newCDPSession(ph), pt = d => ({ x: cx + Math.cos(d * Math.PI / 180) * R, y: cy + Math.sin(d * Math.PI / 180) * R });
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [pt(deg0)] });
+    for (let i = 1; i <= 18; i++) { await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [pt(deg0 + (deg1 - deg0) * i / 18)] }); await ph.waitForTimeout(16); }
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
     await ph.waitForTimeout(900);
   };
-  await ringDrag('.pc-ring[data-ring=zoom] .pc-ring-band', -220);
+  await spin(150, 220);
   const zs = await ph.evaluate(() => window.__applied.filter(a => 'zoom' in a).map(a => a.zoom));
-  ok('dragging the zoom ring zooms in smoothly (many small steps, only increasing)', zs.length >= 5 && zs.every((z, i) => !i || z >= zs[i - 1] - 1e-9) && zs[zs.length - 1] > 1.3, JSON.stringify(zs.map(z => +z.toFixed(2))));
-  ok('rail shows the new zoom', parseFloat(await ph.textContent('[data-pc=zoom] b')) > 1.3, await ph.textContent('[data-pc=zoom] b'));
-  await ph.tap('.pc-panel [data-seg=glide] [data-v="600"]');
+  ok('turning the dial up zooms in smoothly (many small steps, only increasing)', zs.length >= 5 && zs.every((z, i) => !i || z >= zs[i - 1] - 1e-9) && zs[zs.length - 1] > 1.3, JSON.stringify(zs.map(z => +z.toFixed(2))));
+  ok('dial and rail show the new zoom', parseFloat(await ph.textContent('[data-pc=zoom] b')) > 1.3 && (await ph.textContent('.pc-dial-val b')) === (await ph.textContent('[data-pc=zoom] b')), `${await ph.textContent('.pc-dial-val b')} / ${await ph.textContent('[data-pc=zoom] b')}`);
+  await spin(210, 170);
+  const zd = await ph.evaluate(() => window.__applied.filter(a => 'zoom' in a).map(a => a.zoom));
+  ok('turning it down zooms out', zd.length >= 3 && zd[zd.length - 1] < zs[zs.length - 1], JSON.stringify(zd.map(z => +z.toFixed(2))));
   await ph.evaluate(() => { window.__applied = []; });
-  await ph.tap('.pc-panel [data-seg=zoomQuick] [data-v="5"]'); await ph.waitForTimeout(1100);
+  await ph.tap('.pc-dial-chips [data-dz="5"]'); await ph.waitForTimeout(1100);
   const gz = await ph.evaluate(() => window.__applied.filter(a => 'zoom' in a).map(a => a.zoom));
-  ok('5× button glides there (in-between values, ends at 5)', gz.length >= 4 && Math.abs(gz[gz.length - 1] - 5) < 1e-6 && gz.some(z => z > 1.4 && z < 4.9), JSON.stringify(gz.map(z => +z.toFixed(2))));
+  ok('chip highlight follows the zoom', await ph.isVisible('.pc-dial-chips [data-dz="5"].on'));
+  ok('5× chip glides there (in-between values, ends at 5)', gz.length >= 4 && Math.abs(gz[gz.length - 1] - 5) < 1e-6 && gz.some(z => z > 1.4 && z < 4.9), JSON.stringify(gz.map(z => +z.toFixed(2))));
+  await ph.screenshot({ path: process.env.WORK + '/procam-dial.png' });
+  await ph.tap('.pc-dial-close');
+  ok('✕ closes the dial', await ph.isHidden('.pc-dial'));
   // จีบนิ้วบนภาพ (สองนิ้วกางออก) = ซูมเข้า
   await ph.evaluate(() => { window.__applied = []; });
   {
@@ -113,14 +122,15 @@ const until = async (fn, ms = 15000) => { const end = Date.now() + ms; while (Da
   }
   const pz = await ph.evaluate(() => window.__applied.filter(a => 'zoom' in a).map(a => a.zoom));
   ok('pinch out on the picture zooms in', pz.length && pz[pz.length - 1] > 5.5 && !(await ph.evaluate(() => window.__applied.some(a => a.pointsOfInterest))), JSON.stringify(pz.map(z => +z.toFixed(2))));
-  // วงแหวนโฟกัสตอน AF → เปลี่ยนเป็น MF แล้วดึงโฟกัส
-  await ph.tap('[data-pc=focus]'); await ph.waitForSelector('.pc-panel .pc-ring[data-ring=focusDistance]');
-  await ringDrag('.pc-ring[data-ring=focusDistance] .pc-ring-band', -150);
+  // วงล้อโฟกัสตอน AF → เปลี่ยนเป็น MF แล้วดึงโฟกัส
+  await ph.tap('[data-pc=focus]'); await ph.waitForSelector('.pc-dial:not([hidden])');
+  await spin(150, 210);
   const fs1 = await ph.evaluate(() => window.__applied.filter(a => 'focusDistance' in a));
-  ok('focus ring in AF switches to MF and pulls focus smoothly', fs1.length >= 5 && fs1[0].focusMode === 'manual' && fs1[fs1.length - 1].focusDistance > 1.2, JSON.stringify(fs1.map(a => +a.focusDistance.toFixed(2))));
-  ok('rail shows MF and the panel follows', (await ph.textContent('[data-pc=focus] b')) === 'MF' && await ph.isVisible('.pc-panel [data-seg=focusMode] [data-v=manual].on'));
-  await ph.screenshot({ path: process.env.WORK + '/procam-focus-ring.png' });
-  await ph.tap('.pc-panel .pc-close');
+  ok('focus dial in AF switches to MF and pulls focus smoothly', fs1.length >= 5 && fs1[0].focusMode === 'manual' && fs1[fs1.length - 1].focusDistance > 1.2, JSON.stringify(fs1.map(a => +a.focusDistance.toFixed(2))));
+  ok('rail shows MF', (await ph.textContent('[data-pc=focus] b')) === 'MF');
+  await ph.tap('.pc-dial-chips [data-daf]'); await ph.waitForTimeout(300);
+  ok('AF chip returns to autofocus', (await ph.textContent('[data-pc=focus] b')) === 'AF');
+  await ph.tap('.pc-dial-close');
 
   // ---- ช็อตที่จำไว้: บันทึกช็อต 1 ที่ซูมปัจจุบัน → ซูมไปที่อื่น → เรียกช็อต 1 = ซูมกลับ
   const z1 = await ph.evaluate(() => document.querySelector('[data-pc=zoom] b').textContent);
@@ -128,7 +138,7 @@ const until = async (fn, ms = 15000) => { const end = Date.now() + ms; while (Da
   await ph.tap('.pc-panel [data-shotsave]'); await ph.tap('.pc-panel [data-shot="0"]'); await ph.waitForTimeout(200);
   ok('shot 1 saved', await ph.isVisible('.pc-panel [data-shot="0"].has') && /×/.test(await ph.textContent('.pc-panel [data-shot="0"] small')), await ph.textContent('.pc-panel [data-shot="0"] small'));
   await ph.tap('.pc-panel .pc-close');
-  await ph.tap('[data-pc=zoom]'); await ph.tap('.pc-panel [data-seg=zoomQuick] [data-v="1"]'); await ph.waitForTimeout(900);
+  await ph.tap('[data-pc=zoom]'); await ph.tap('.pc-dial-chips [data-dz="1"]'); await ph.waitForTimeout(900); await ph.tap('.pc-dial-close');
   ok('zoom moved away for the test', (await ph.textContent('[data-pc=zoom] b')) === '1.0×' && z1 !== '1.0×', `${z1} → ${await ph.textContent('[data-pc=zoom] b')}`);
   await ph.tap('[data-pc=shot]'); await ph.tap('.pc-panel [data-shot="0"]'); await ph.waitForTimeout(1000);
   ok('recalling shot 1 glides the zoom back', (await ph.textContent('[data-pc=zoom] b')) === z1, await ph.textContent('[data-pc=zoom] b'));
@@ -182,6 +192,24 @@ const until = async (fn, ms = 15000) => { const end = Date.now() + ms; while (Da
   await host.click('.modal-foot .btn-primary');
   await ph.tap('[data-pc=exp]'); await ph.waitForTimeout(300);
   await ph.screenshot({ path: process.env.WORK + '/procam-phone.png' });
+  // ---- เปิดกล้องได้ทุกเครื่อง: ไม่มีไมค์ + กล้องที่ไม่รับเงื่อนไขขนาด/ด้าน → ยังเปิดภาพได้
+  const fctx = await b.newContext({ ...devices['Pixel 7'], permissions: ['camera', 'microphone'] }); await setup(fctx);
+  await fctx.addInitScript(() => {
+    const real = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+    window.__gum = [];
+    navigator.mediaDevices.getUserMedia = async c => {
+      window.__gum.push(JSON.stringify(c));
+      if (c.audio) throw new DOMException('no mic', 'NotFoundError');
+      if (c.video && typeof c.video === 'object' && (c.video.width || typeof c.video.facingMode === 'string')) throw new DOMException('over', 'OverconstrainedError');
+      return real(c);
+    };
+  });
+  const fp = await fctx.newPage(); fp.on('pageerror', e => errs.push('fallback ' + e.message));
+  await fp.goto(link.replace(/^https?:\/\/[^/]+\/[^?]*/, 'http://localhost:8765/index.html'));
+  ok('a camera without mic and with strict limits still opens', await until(() => fp.evaluate(() => { const v = document.querySelector('#caller-video'); return v.videoWidth > 0; }), 8000), await fp.evaluate(() => window.__gum.length + ' tries'));
+  ok('…and says the mic is unavailable', await until(async () => /ไมค์ไม่ได้/.test(await fp.textContent('#caller-msg')), 4000), await fp.textContent('#caller-msg'));
+  await fctx.close();
+
   ok('no page errors', errs.length === 0, JSON.stringify(errs));
   console.log(results.join('\n'));
   await b.close();

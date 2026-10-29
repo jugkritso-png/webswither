@@ -1610,6 +1610,22 @@ html[data-cards=l] .card-num, html[data-cards=l] .card-tally { font-size: 14px; 
 .pc-tl-pill i { position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: rgba(245,165,36,.45); }
 .pc-touchlock.holding .pc-tl-pill i { width: 100%; transition: width 1s linear; }
 .caller.touch-locked .caller-bottom, .caller.touch-locked .pc-rail { opacity: .35; }
+/* วงล้อครึ่งวงกลม (jog wheel) ชิดซ้ายของแถบปุ่ม — หมุนด้วยนิ้วตามโค้ง */
+.pc-dial { --r: 160px; position: absolute; right: calc(max(8px, env(safe-area-inset-right)) + 72px); top: 50%; width: var(--r); height: calc(var(--r) * 2); transform: translateY(-50%); z-index: 4;
+  touch-action: none; user-select: none; -webkit-user-select: none; cursor: grab; animation: pcDialIn .18s ease-out; }
+.pc-dial[hidden] { display: none; }
+.pc-dial.turning { cursor: grabbing; }
+.pc-dial canvas { position: absolute; inset: 0; width: 100%; height: 100%; filter: drop-shadow(0 6px 18px rgba(0,0,0,.55)); }
+.pc-dial-val { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); display: grid; justify-items: end; gap: 2px; pointer-events: none; text-shadow: 0 1px 3px #000; }
+.pc-dial-val small { font: 800 10px var(--mono, monospace); letter-spacing: .1em; color: rgba(255,255,255,.65); }
+.pc-dial-val b { font: 700 calc(var(--r) * .15) / 1 var(--mono, monospace); color: #f5a524; white-space: nowrap; }
+.pc-dial-chips { position: absolute; right: calc(100% + 6px); top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; gap: 5px; max-height: 100%; overflow-y: auto; }
+.pc-dial-chips button { min-width: 46px; padding: 7px 8px; border-radius: 999px; border: 1px solid rgba(255,255,255,.25); background: rgba(14,16,22,.82); color: #fff; font: 700 12px var(--mono, monospace); cursor: pointer; white-space: nowrap; }
+.pc-dial-chips button.on { background: #f5a524; border-color: #f5a524; color: #111; }
+.pc-dial-chips i { height: 1px; background: rgba(255,255,255,.25); margin: 2px 4px; }
+.pc-dial-close { position: absolute; right: 6px; top: 4px; width: 28px; height: 28px; border-radius: 50%; border: 1px solid rgba(255,255,255,.25); background: rgba(14,16,22,.82); color: #fff; cursor: pointer; }
+.pc-dial.no-range { height: auto; min-height: 120px; }
+@keyframes pcDialIn { from { opacity: 0; transform: translate(30px, -50%); } to { opacity: 1; transform: translate(0, -50%); } }
 /* สตูดิโอ: ควบคุมกล้องมือถือ */
 .cam-shots { display: inline-flex; gap: 4px; flex-wrap: wrap; }
 .cam-shot:not(.has) { opacity: .55; }

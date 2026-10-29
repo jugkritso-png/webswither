@@ -353,7 +353,6 @@
         if (!z) return unsupported('ซูม');
         return `${ring('zoom', 'ซูม', z, s.zoom ?? z.min, fmtVal.zoom)}
           ${seg('zoomQuick', [1, 2, 3, 5, 10].filter(v => v >= z.min && v <= z.max).map(v => [v, v + '×']), s.zoom)}
-          <div class="pc-label">ความเร็วซูม / ดึงโฟกัสเมื่อกดปุ่ม</div>${seg('glide', [[0, 'ทันที'], [600, 'เร็ว'], [1500, 'ปานกลาง'], [3000, 'ช้า']], prefs.glide)}
           <p class="pc-note">หมุนวงแหวนหรือจีบนิ้วบนภาพเพื่อซูมแบบนุ่ม · ปุ่ม 1× 2× 3× ค่อย ๆ ซูมไปตามความเร็วที่เลือก</p>`;
       }
       if (t === 'lens') {
@@ -364,6 +363,7 @@
         const fr = range(c.frameRate), max = fr ? fr.max : 60;
         return `<div class="pc-label">เฟรมเรต</div>${seg('fps', FPS_LIST.filter(f => f <= max + 0.5).map(f => [f, f]), ctx.getFps())}
           <div class="pc-label">ความละเอียดที่ส่งเข้าสตูดิโอ</div>${seg('quality', ctx.qualities().map(q => [q, q]), ctx.getQuality())}
+          <div class="pc-label">ความเร็วซูม / ดึงโฟกัสเมื่อกดปุ่ม</div>${seg('glide', [[0, 'ทันที'], [600, 'เร็ว'], [1500, 'ปานกลาง'], [3000, 'ช้า']], prefs.glide)}
           <p class="pc-note">ตอนนี้ ${s.width || '?'}×${s.height || '?'} @ ${Math.round(s.frameRate || 0)} fps · ใช้ 25 / 50 fps ให้ตรงไฟบ้าน 50 Hz</p>`;
       }
       if (t === 'shot') {
@@ -382,13 +382,14 @@
     }
     function openPanel(t) {
       if (tool === t) { closePanel(); return; }
+      closeDial();
       tool = t;
       panel.innerHTML = `<div class="pc-panel-head"><b>${$(`[data-pc="${t}"] small`, rail).textContent}</b><button type="button" class="pc-close">✕</button></div>${panelHtml(t)}`;
       panel.hidden = false;
       paintRings();
       paint();
     }
-    function closePanel() { tool = null; panel.hidden = true; paint(); }
+    function closePanel() { tool = null; panel.hidden = true; closeDial(); paint(); }
     // วาดแผงใหม่ (เช่นเปลี่ยน AUTO → MANUAL แล้วต้องมีแถบเลื่อน) — ยกเว้นตอนกำลังลากแถบเลื่อนอยู่
     const refreshPanel = () => { const a = document.activeElement; if (tool && !ringBusy() && !(a && a.type === 'range' && panel.contains(a))) panel.innerHTML = `<div class="pc-panel-head"><b>${$(`[data-pc="${tool}"] small`, rail).textContent}</b><button type="button" class="pc-close">✕</button></div>${panelHtml(tool)}`; paintRings(); };
 
@@ -475,6 +476,7 @@
       if (!b) return;
       const t = b.dataset.pc;
       if (t === 'ret') { setReturn(!prefs.ret); return; }
+      if (t === 'zoom' || (t === 'focus' && range(caps().focusDistance))) { openDial(t); return; }
       if (t === 'rec') { rec.recorder ? recStop() : recStart(); return; }
       if (t === 'torch') { apply({ torch: !sets().torch }); return; }
       if (t === 'lock') { setLock(!locked); return; }
@@ -509,7 +511,7 @@
       else if (name === 'zoomQuick') { glide('zoom', +v); return; }
       else if (name === 'focusQuick') { glide('focusDistance', +v); return; }
       else if (name === 'glide') { prefs.glide = +v; savePrefs(); }
-      else if (name === 'lens') { await ctx.setLens(v); afterTrackChange(); }
+      else if (name === 'lens') { const l = lenses.find(x => x.id === v); await ctx.setLens(v, l && l.side); afterTrackChange(); }
       else if (name === 'fps') { await ctx.setFps(+v); afterTrackChange(); }
       else if (name === 'quality') { await ctx.setQuality(v); afterTrackChange(); }
       else if (name === 'guide') { prefs.guide = v; savePrefs(); paintGuides(); }
@@ -540,6 +542,7 @@
       const d = drv[k] || (drv[k] = { busy: false, target: null });
       d.target = v;
       paintRing(k, v);
+      if (dialKey === k) paintDial(v);
       if (d.busy) return;
       const send = async () => {
         const t = track();
@@ -550,7 +553,7 @@
         try { await t.applyConstraints({ advanced: [adv] }); } catch (e) {}
         d.busy = false;
         if (d.target !== val) send();
-        else { d.target = null; paint(); sendStateSoon(); }
+        else { d.target = null; paint(); sendStateSoon(); if (dialKey === k && !d.anim && !dialDrag) paintDialChips(); }
       };
       send();
     }
@@ -565,7 +568,7 @@
       const step = now => {
         const p = Math.min(1, (now - t0) / ms), e = p < 0.5 ? 2 * p * p : 1 - Math.pow(-2 * p + 2, 2) / 2, x = a + (b - a) * e;
         drive(k, lg ? Math.exp(x) : x);
-        if (p < 1) d.anim = requestAnimationFrame(step);
+        if (p < 1) d.anim = requestAnimationFrame(step); else d.anim = 0;
       };
       d.anim = requestAnimationFrame(step);
     }
@@ -667,6 +670,170 @@
     root.addEventListener('pointerup', endTouch);
     root.addEventListener('pointercancel', endTouch);
 
+    /* ---------- วงล้อครึ่งวงกลมด้านข้าง (แบบ jog wheel ของ Final Cut บน iPad) ----------
+       แตะ ZOOM / FOCUS = วงล้อโผล่จากขอบขวา · ใช้นิ้วหมุนตามโค้ง: หมุนขึ้น = ซูมเข้า / โฟกัสไกลขึ้น · ปล่อยแล้วหมุนต่อด้วยแรงเฉื่อย
+       ทั้งช่วงของค่า = หมุน 1 รอบ (360°) จึงละเอียดพอสำหรับซูมช้า ๆ ระหว่างออกอากาศ */
+    const DIAL_TURN = Math.PI * 2;
+    const DIAL = {
+      zoom: { label: 'ZOOM', marks: [1, 1.5, 2, 3, 4, 5, 6, 8, 10, 15, 20, 30, 50], lab: v => v + '×' },
+      focusDistance: { label: 'FOCUS', marks: [0.05, 0.1, 0.2, 0.3, 0.5, 0.7, 1, 1.5, 2, 3, 5, 10, 20], lab: v => v >= 10 ? '∞' : v + 'm' }
+    };
+    const dial = document.createElement('div');
+    dial.className = 'pc-dial';
+    dial.hidden = true;
+    dial.innerHTML = '<canvas></canvas><div class="pc-dial-val"><small></small><b></b></div><div class="pc-dial-chips"></div><button type="button" class="pc-dial-close" aria-label="ปิด">✕</button>';
+    root.appendChild(dial);
+    const dialCv = $('canvas', dial);
+    let dialKey = null, dialDrag = null;
+    function openDial(t) {
+      const k = t === 'zoom' ? 'zoom' : 'focusDistance';
+      if (tool === t) { closePanel(); return; }
+      panel.hidden = true;
+      tool = t; dialKey = k;
+      dial.hidden = false;
+      dial.dataset.key = k;
+      paintDialChips();
+      layoutDial();
+      paintDial(+(cur(k) ?? (range(caps()[k]) || { min: 1 }).min));
+      paint();
+    }
+    function closeDial() { dial.hidden = true; dialKey = null; }
+    function layoutDial() {
+      // ขนาดตามจอ: รัศมีไม่เกินครึ่งความสูงที่เหลือ และไม่เกิน 46% ของความกว้าง
+      const R = Math.round(Math.max(110, Math.min(190, (root.clientHeight - 150) / 2, root.clientWidth * 0.46)));
+      dial.style.setProperty('--r', R + 'px');
+      const dpr = window.devicePixelRatio || 1;
+      if (dialCv.width !== Math.round(R * dpr)) { dialCv.width = Math.round(R * dpr); dialCv.height = Math.round(2 * R * dpr); }
+    }
+    addEventListener('resize', () => { if (dialKey) { layoutDial(); paintDial(+cur(dialKey)); } });
+    function paintDialChips() {
+      const c = caps(), s = sets(), box = $('.pc-dial-chips', dial), k = dialKey, r = range(c[k]);
+      const chip = (attr, v, l, on) => `<button type="button" ${attr}="${v}" class="${on ? 'on' : ''}">${l}</button>`;
+      let html = '';
+      if (k === 'zoom') {
+        if (r) html += [1, 2, 3, 5, 10].filter(v => v >= r.min && v <= r.max).map(v => chip('data-dz', v, v + '×', Math.abs((s.zoom || 1) - v) < 0.05)).join('');
+        if (lenses.length > 1) html += '<i></i>' + lenses.map(l => chip('data-dlens', l.id, l.short, l.id === s.deviceId)).join('');
+      } else {
+        html += chip('data-daf', 1, 'AF', s.focusMode !== 'manual');
+        if (r) html += [[r.max, '∞'], [Math.min(r.max, 3), '3m'], [Math.min(r.max, 1), '1m'], [r.min, 'ใกล้']].filter((x, i, a) => a.findIndex(y => y[0] === x[0]) === i).map(([v, l]) => chip('data-dfd', v, l, false)).join('');
+      }
+      box.innerHTML = html;
+      $('.pc-dial-val small', dial).textContent = DIAL[k].label + (k === 'focusDistance' && s.focusMode !== 'manual' ? ' · AF' : '');
+      dial.classList.toggle('no-range', !r);
+    }
+    function paintDial(v) {
+      const k = dialKey, r = range(caps()[k]);
+      const val = $('.pc-dial-val b', dial);
+      if (!r) { val.textContent = k === 'zoom' ? 'เลือกเลนส์' : 'AF'; const g = dialCv.getContext('2d'); g.clearRect(0, 0, dialCv.width, dialCv.height); return; }
+      val.textContent = fmtVal[k](v);
+      const dpr = window.devicePixelRatio || 1, Rpx = dialCv.width / dpr, g = dialCv.getContext('2d');
+      g.setTransform(dpr, 0, 0, dpr, 0, 0);
+      g.clearRect(0, 0, Rpx, Rpx * 2);
+      const cx = Rpx, cy = Rpx, ro = Rpx - 2, ri = Rpx * 0.58, u0 = clamp(toU(k, v, r), 0, 1);
+      // พื้นวงล้อ (ครึ่งวงกลมซ้าย) + ร่องขอบนอกให้ดูเป็นวงล้อ
+      const bg = g.createRadialGradient(cx, cy, ri, cx, cy, ro);
+      bg.addColorStop(0, 'rgba(38,42,52,.92)'); bg.addColorStop(1, 'rgba(18,20,26,.96)');
+      g.fillStyle = bg;
+      g.beginPath(); g.arc(cx, cy, ro, Math.PI / 2, Math.PI * 1.5); g.arc(cx, cy, ri, Math.PI * 1.5, Math.PI / 2, true); g.closePath(); g.fill();
+      g.strokeStyle = 'rgba(255,255,255,.18)'; g.lineWidth = 1; g.stroke();
+      // ขีดสเกลหมุนตามค่า: มุม π (ซ้ายสุด) = ค่าปัจจุบัน · ค่ามากกว่าอยู่ด้านล่าง เลื่อนขึ้นมาเมื่อหมุนขึ้น
+      const ang = u => Math.PI - (u - u0) * DIAL_TURN;
+      const vis = a => a > Math.PI / 2 + 0.04 && a < Math.PI * 1.5 - 0.04;
+      for (let i = 0; i <= 120; i++) {
+        const a = ang(i / 120);
+        if (!vis(a)) continue;
+        const major = i % 10 === 0, len = major ? 0.16 : 0.08;
+        g.strokeStyle = `rgba(255,255,255,${major ? 0.7 : 0.35})`; g.lineWidth = major ? 1.6 : 1;
+        g.beginPath(); g.moveTo(cx + Math.cos(a) * ro * 0.97, cy + Math.sin(a) * ro * 0.97); g.lineTo(cx + Math.cos(a) * ro * (0.97 - len), cy + Math.sin(a) * ro * (0.97 - len)); g.stroke();
+      }
+      g.font = `600 ${Math.round(Rpx * 0.085)}px ui-monospace, SFMono-Regular, Menlo, monospace`;
+      g.textAlign = 'center'; g.textBaseline = 'middle';
+      for (const m of DIAL[k].marks) {
+        if (m < r.min - 1e-9 || m > r.max + 1e-9) continue;
+        const a = ang(toU(k, m, r));
+        if (!vis(a)) continue;
+        const rr = ro * 0.7;
+        g.fillStyle = 'rgba(255,255,255,.85)';
+        g.fillText(DIAL[k].lab(m), cx + Math.cos(a) * rr, cy + Math.sin(a) * rr);
+      }
+      // ตัวชี้ค่าปัจจุบัน (สีส้ม) ที่ 9 นาฬิกา
+      g.strokeStyle = '#f5a524'; g.lineWidth = 3; g.lineCap = 'round';
+      g.beginPath(); g.moveTo(cx - ro + 1, cy); g.lineTo(cx - ri + 4, cy); g.stroke();
+      g.fillStyle = '#f5a524'; g.beginPath(); g.moveTo(cx - ro - 1, cy - 7); g.lineTo(cx - ro + 9, cy); g.lineTo(cx - ro - 1, cy + 7); g.fill();
+      // ความคืบหน้าของทั้งช่วง (แถบโค้งด้านใน)
+      g.strokeStyle = 'rgba(255,255,255,.12)'; g.lineWidth = 4; g.lineCap = 'butt';
+      g.beginPath(); g.arc(cx, cy, ri - 6, Math.PI / 2, Math.PI * 1.5); g.stroke();
+      g.strokeStyle = '#f5a524';
+      g.beginPath(); g.arc(cx, cy, ri - 6, Math.PI * 1.5 - u0 * Math.PI, Math.PI * 1.5); g.stroke();
+    }
+    const dialAngle = e => { const b = dialCv.getBoundingClientRect(); return Math.atan2(e.clientY - (b.top + b.height / 2), e.clientX - b.right); };
+    dial.addEventListener('pointerdown', e => {
+      const ch = e.target.closest('.pc-dial-chips button, .pc-dial-close');
+      if (ch || !dialKey) return;
+      const r = range(caps()[dialKey]);
+      if (!r) return;
+      e.preventDefault();
+      try { dial.setPointerCapture(e.pointerId); } catch (x) {}
+      const d = drv[dialKey] || (drv[dialKey] = { busy: false, target: null });
+      cancelAnimationFrame(d.anim); cancelAnimationFrame(d.coast); d.anim = 0; d.coast = 0;
+      dialDrag = { k: dialKey, r, pid: e.pointerId, a: dialAngle(e), u: toU(dialKey, +cur(dialKey), r), t: performance.now(), vel: 0 };
+      dial.classList.add('turning');
+      navigator.vibrate && navigator.vibrate(5);
+    });
+    dial.addEventListener('pointermove', e => {
+      const g = dialDrag;
+      if (!g || e.pointerId !== g.pid) return;
+      const now = performance.now(), a = dialAngle(e);
+      let da = a - g.a;
+      if (da > Math.PI) da -= 2 * Math.PI; else if (da < -Math.PI) da += 2 * Math.PI;
+      g.a = a;
+      // หมุนขึ้น (ทวนเข็มนาฬิกาบนครึ่งซ้าย) = ค่าเพิ่ม
+      const du = da / DIAL_TURN;
+      const before = g.u;
+      g.u = clamp(g.u + du, 0, 1);
+      g.vel = 0.7 * g.vel + 0.3 * (du / Math.max(1, now - g.t));
+      g.t = now;
+      // สั่นเบา ๆ เมื่อผ่านค่าหลัก (1× 2× 3× …) เหมือนวงล้อมีจังหวะ
+      const r = g.r, crossed = DIAL[g.k].marks.some(m => m >= r.min && m <= r.max && (toU(g.k, m, r) - before) * (toU(g.k, m, r) - g.u) < 0);
+      if (crossed && navigator.vibrate) navigator.vibrate(8);
+      drive(g.k, fromU(g.k, g.u, g.r));
+    });
+    const dialUp = e => {
+      const g = dialDrag;
+      if (!g || e.pointerId !== g.pid) return;
+      dialDrag = null;
+      dial.classList.remove('turning');
+      const d = drv[g.k];
+      let vel = performance.now() - g.t < 80 ? g.vel : 0, last = performance.now(), u = g.u;
+      const coast = now => {
+        const dt = now - last; last = now;
+        vel *= Math.pow(0.993, dt);
+        u = clamp(u + vel * dt, 0, 1);
+        drive(g.k, fromU(g.k, u, g.r));
+        if (Math.abs(vel) > 0.00002 && u > 0 && u < 1) d.coast = requestAnimationFrame(coast); else { d.coast = 0; setTimeout(paintDialChips, 200); }
+      };
+      if (Math.abs(vel) > 0.00004) d.coast = requestAnimationFrame(coast); else setTimeout(paintDialChips, 200);
+    };
+    dial.addEventListener('pointerup', dialUp);
+    dial.addEventListener('pointercancel', dialUp);
+    dial.addEventListener('wheel', e => {
+      if (!dialKey) return;
+      const r = range(caps()[dialKey]);
+      if (!r) return;
+      e.preventDefault();
+      drive(dialKey, fromU(dialKey, toU(dialKey, +cur(dialKey), r) - (e.deltaY || 0) / 1500, r));
+    }, { passive: false });
+    dial.addEventListener('click', async e => {
+      if (e.target.closest('.pc-dial-close')) { closePanel(); return; }
+      const b = e.target.closest('.pc-dial-chips button');
+      if (!b) return;
+      if (b.dataset.dz) glide('zoom', +b.dataset.dz);
+      else if (b.dataset.dfd) glide('focusDistance', +b.dataset.dfd);
+      else if (b.dataset.daf) await apply({ focusMode: 'continuous' }, true);
+      else if (b.dataset.dlens) { const l = lenses.find(x => x.id === b.dataset.dlens); if (l) { await ctx.setLens(l.id, l.side); afterTrackChange(); } }
+      setTimeout(() => { if (dialKey) { paintDialChips(); paintDial(+(cur(dialKey) ?? 1)); } }, 260);
+    });
+
     /* ---------- แถบสถานะ / ค่าบนปุ่ม ---------- */
     function paint() {
       const c = caps(), s = sets();
@@ -756,7 +923,7 @@
         if (msg.cmd === 'rec') { if (v) recStart(); else recStop(); }
         else if (msg.cmd === 'fps' && FPS_LIST.includes(+v)) { await ctx.setFps(+v); afterTrackChange(); }
         else if (msg.cmd === 'quality' && ctx.qualities().includes(v)) { await ctx.setQuality(v); afterTrackChange(); }
-        else if (msg.cmd === 'lens' && lenses.some(l => l.id === v)) { await ctx.setLens(v); afterTrackChange(); }
+        else if (msg.cmd === 'lens' && lenses.some(l => l.id === v)) { await ctx.setLens(v, lenses.find(l => l.id === v).side); afterTrackChange(); }
         else if (msg.cmd === 'lock') await setLock(!!v);
         else if (msg.cmd === 'shot' && v && typeof v === 'object' && v.slot >= 0 && v.slot < 4) { if (v.save) saveShot(v.slot | 0); else await recallShot(v.slot | 0); }
         else if (msg.cmd === 'poi' && v && typeof v === 'object') focusAt(+v.x, +v.y);
@@ -767,10 +934,23 @@
       }
     }
 
+    // ตั้งชื่อเลนส์ให้อ่านง่าย: กล้องหลัง/หน้า + ชนิด (Ultra Wide / Wide / Tele) จากชื่อที่เบราว์เซอร์ให้มา
+    // (iPhone ให้ชื่อชัด · Android มักเป็น "camera2 2, facing back" จึงใช้เลขลำดับแทน)
+    function nameLenses(list) {
+      const count = { user: 0, environment: 0 };
+      return list.map(d => {
+        const raw = (d.label || '').toLowerCase();
+        const side = /front|user|selfie|face ?time|หน้า/.test(raw) ? 'user' : 'environment';
+        const kind = /ultra ?wide|ultrawide/.test(raw) ? 'Ultra Wide' : /tele/.test(raw) ? 'Tele' : /triple|dual/.test(raw) ? 'Auto' : /wide/.test(raw) ? 'Wide' : '';
+        const n = ++count[side], sideTh = side === 'user' ? 'กล้องหน้า' : 'กล้องหลัง';
+        return { id: d.deviceId, side, label: kind ? `${sideTh} · ${kind}` : `${sideTh} ${n}`, short: kind ? (side === 'user' ? 'F · ' : '') + (kind === 'Ultra Wide' ? '0.5×' : kind === 'Tele' ? 'Tele' : kind) : `${sideTh} ${n}` };
+      });
+    }
+    try { navigator.mediaDevices.addEventListener('devicechange', () => loadLenses()); } catch (e) {}
     async function loadLenses() {
       try {
         const list = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'videoinput');
-        lenses = list.map(d => ({ id: d.deviceId, label: (d.label || '').replace(/\s*\(.*\)\s*$/, '').slice(0, 40) }));
+        lenses = nameLenses(list);
       } catch (e) { lenses = []; }
       paint();
     }

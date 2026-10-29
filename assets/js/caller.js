@@ -49,11 +49,36 @@
     let quality = guestSlot ? QUALITIES[0] : QUALITIES[Math.min(2, Math.max(0, +store.get('caller-quality', 1)))] || QUALITIES[1];
     // กล้องมือถือของทีมงาน: เลือกเลนส์ (deviceId) และเฟรมเรตได้จากแผงกล้องโปร
     let lensId = null, fps = guestSlot ? 30 : [24, 25, 30, 50, 60].includes(+store.get('caller-fps', 30)) ? +store.get('caller-fps', 30) : 30;
-    const getCamera = withAudio => navigator.mediaDevices.getUserMedia({
-      video: { ...(lensId ? { deviceId: { exact: lensId } } : { facingMode: facing }), width: { ideal: quality.w }, height: { ideal: quality.h }, frameRate: { ideal: fps } },
+    // เปิดกล้องให้ได้ทุกเครื่อง: ลองค่าที่ต้องการก่อน แล้วค่อย ๆ ผ่อนเงื่อนไข (เลนส์ที่เลือก → ด้านหน้า/หลัง → กล้องตัวไหนก็ได้)
+    // และถ้าไมค์ใช้ไม่ได้ (ไม่มี / ถูกแอปอื่นจับอยู่) ยังส่งภาพได้
+    const camAudio = () => guestSlot ? { echoCancellation: true, noiseSuppression: true, ...(micId ? { deviceId: { exact: micId } } : {}) }
       // กล้องทีมงาน: ไม่ตัดเสียงรอบข้าง (เสียงบรรยากาศ/ดนตรีไม่ถูกบีบ) · แขก: ตัดเสียงสะท้อน
-      audio: withAudio ? (guestSlot ? { echoCancellation: true, noiseSuppression: true, ...(micId ? { deviceId: { exact: micId } } : {}) } : { echoCancellation: false, noiseSuppression: false, autoGainControl: false }) : false
-    });
+      : { echoCancellation: false, noiseSuppression: false, autoGainControl: false };
+    async function getCamera(withAudio) {
+      const size = { width: { ideal: quality.w }, height: { ideal: quality.h }, frameRate: { ideal: fps } };
+      const tries = [
+        ...(lensId ? [{ deviceId: { exact: lensId }, ...size }] : []),
+        { facingMode: facing, ...size },
+        { facingMode: { ideal: facing } },
+        true
+      ];
+      let last = null;
+      for (const audio of withAudio ? [camAudio(), true, false] : [false]) {
+        for (const v of tries) {
+          try {
+            const st = await navigator.mediaDevices.getUserMedia({ video: v, audio });
+            if (v !== tries[0] && lensId) lensId = null;
+            if (withAudio && !audio) setTimeout(() => showMsgBrief('ใช้ไมค์ไม่ได้ — ส่งเฉพาะภาพ (ตรวจสิทธิ์ไมค์ หรือปิดแอปอื่นที่ใช้ไมค์อยู่)'), 1500);
+            return st;
+          } catch (e) {
+            last = e;
+            // ไม่ได้รับอนุญาต = ลองแบบอื่นก็ไม่ได้
+            if (e && (e.name === 'NotAllowedError' || e.name === 'SecurityError')) throw e;
+          }
+        }
+      }
+      throw last || new Error('เปิดกล้องไม่ได้');
+    }
     const qualityBtn = $('#caller-quality');
     const paintQuality = () => {
       const s = stream?.getVideoTracks()[0]?.getSettings();
@@ -139,7 +164,8 @@
         getFps: () => fps,
         async setQuality(label) { const i = QUALITIES.findIndex(q => q.label === label); if (i < 0 || QUALITIES[i] === quality) return; quality = QUALITIES[(i + QUALITIES.length - 1) % QUALITIES.length]; await cycleQuality(); },
         async setFps(v) { fps = v; store.set('caller-fps', v); const t = stream?.getVideoTracks()[0]; try { await t.applyConstraints({ frameRate: { ideal: v } }); } catch (e) { await reopenVideo(); } },
-        async setLens(id) { lensId = id; await reopenVideo(); },
+        // เลือกเลนส์ (หน้า/หลัง/มุมกว้าง/เทเล) — จำด้านของเลนส์ไว้ ปุ่มสลับกล้องจึงสลับถูกด้าน
+        async setLens(id, side) { lensId = id; if (side) facing = side; await reopenVideo(); },
         teamMsg: text => teamMsg(text),
         flip: () => flip()
       });
@@ -258,6 +284,7 @@
       try { track = (await getCamera(false)).getVideoTracks()[0]; }
       catch (e) {
         facing = prev;
+        lensId = null;
         try { track = (await getCamera(false)).getVideoTracks()[0]; }
         catch (e2) { setStatus('สลับกล้องไม่ได้', 'bad'); return; }
       }
