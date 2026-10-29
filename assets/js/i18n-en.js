@@ -2244,6 +2244,18 @@
     "ความเร็วซูม / ดึงโฟกัสเมื่อกดปุ่ม": "Zoom / focus pull speed for the buttons",
     "หมุนวงแหวน (ลากซ้าย-ขวา) เพื่อดึงโฟกัสแบบนุ่ม — แตะวงแหวนตอน AF จะเปลี่ยนเป็น MF ให้เอง · แตะที่ภาพเพื่อโฟกัสตรงจุดนั้น · เปิด Focus peaking (ASSIST) จะเห็นขอบที่ชัดเป็นสีแดง": "Turn the ring (drag left / right) for a smooth focus pull — touching it in AF switches to MF · tap the picture to focus there · turn on Focus peaking (ASSIST) to see sharp edges in red",
     "หมุนวงแหวนหรือจีบนิ้วบนภาพเพื่อซูมแบบนุ่ม · ปุ่ม 1× 2× 3× ค่อย ๆ ซูมไปตามความเร็วที่เลือก": "Turn the ring or pinch the picture for a smooth zoom · the 1× 2× 3× buttons zoom gradually at the chosen speed",
+    "ล็อกจอ กันนิ้วโดนระหว่างถ่าย": "Lock the screen against accidental touches", "ช็อต {}": "Shot {1}",
+    "ช็อตที่จำไว้บนมือถือ — คลิก = เรียก · Shift + คลิก = บันทึกช็อตปัจจุบัน": "Shots stored on the phone — click = recall · Shift + click = store the current shot",
+    "บันทึกช็อต {} บนมือถือแล้ว": "Stored shot {1} on the phone", "คืนคุณภาพ": "Restore quality",
+    "🔒 ล็อกจออยู่ — กดค้าง 1 วินาทีเพื่อปลดล็อก": "🔒 Screen locked — hold 1 second to unlock", "แตะช่องเพื่อบันทึก…": "Tap a slot to store…",
+    "บันทึกช็อตปัจจุบัน": "Store the current shot",
+    "ช็อตจำซูม · โฟกัส · แสง · สมดุลสีขาว — แตะช่องเพื่อเรียกกลับ (ซูม/โฟกัสค่อย ๆ เลื่อนไป) · สตูดิโอสั่งเรียกช็อตได้จากหน้าควบคุมกล้อง": "A shot stores zoom · focus · exposure · white balance — tap a slot to recall it (zoom / focus glide there) · the studio can recall shots from camera control",
+    "บันทึกช็อต {} แล้ว": "Stored shot {1}", "ช็อต {} ยังว่าง": "Shot {1} is empty", "ล็อกจอแล้ว — กดค้าง 1 วินาทีเพื่อปลดล็อก": "Screen locked — hold 1 second to unlock",
+    "เน็ตส่งไม่ทัน — ลดเป็น {} อัตโนมัติ": "The network can't keep up — lowered to {1} automatically", "เน็ตอ่อน": "Weak network",
+    "ลดความละเอียดเป็น {} ชั่วคราว (เน็ตกลับมาดีแล้ว)": "Resolution lowered to {1} for now (the network is good again)",
+    "งานถ่ายทอดสด: มุมบนมือถือแสดงเลขกล้อง (CAM = ลำดับการ์ด / ปุ่มลัด) · ขอบแดง = ON AIR (มือถือสั่นเตือน) ขอบเขียว = PREVIEW": "Live production: the phone shows its camera number at the top (CAM = card order / shortcut key) · red border = ON AIR (the phone vibrates) · green border = PREVIEW",
+    "ASSIST → Safe area (Action 90% / Title 80%) และ Waveform วัดระดับแสง · SHOT จำซูม/โฟกัส/แสงไว้ 4 ช็อต สตูดิโอเรียกได้จากหน้าควบคุมกล้อง (Shift + คลิก = บันทึก)": "ASSIST → Safe area (Action 90% / Title 80%) and a Waveform for exposure · SHOT stores 4 shots of zoom / focus / exposure; the studio can recall them from camera control (Shift + click = store)",
+    "PGM = ดูภาพ Program จากสตูดิโอบนมือถือ (แตะภาพเพื่อขยาย) · ปุ่มกุญแจด้านล่างล็อกจอกันนิ้วโดน (กดค้าง 1 วินาทีเพื่อปลด) · เน็ตอ่อนจะมีแถบเตือน และลดความละเอียดเองไม่ให้ภาพค้าง": "PGM = watch the studio Program on the phone (tap to enlarge) · the lock button at the bottom blocks accidental touches (hold 1 second to unlock) · on a weak network a warning shows and the resolution drops automatically so the picture doesn't freeze",
     "ทีวี": "TV", "หน้า": "Page", "รายการ": "Item", "ความยาว": "Length", "เหลือ": "Remain", "สไลด์": "Slides"
   });
 })(window.WebMix = window.WebMix || {});

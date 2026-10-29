@@ -46,6 +46,8 @@ const until = async (fn, ms = 15000) => { const end = Date.now() + ms; while (Da
   const connected = await until(() => host.evaluate(() => window.webmix.inputs.some(i => i.type === 'wireless' && i.status === 'live' && i.cam)));
   ok('studio gets the phone and its camera state', connected);
   const id = await host.evaluate(() => window.webmix.inputs.find(i => i.type === 'wireless').id);
+  const camN = await host.evaluate(() => window.webmix.inputs.findIndex(i => i.type === 'wireless') + 1);
+  ok('phone shows its camera number = card position in the studio', await until(async () => (await ph.textContent('#cam-num')) === `CAM ${camN}` && await ph.isVisible('#cam-num'), 5000), `${await ph.textContent('#cam-num')} (card ${camN})`);
   ok('card offers camera control', await until(() => host.isVisible(`.card[data-id="${id}"] [data-card=camctl]`), 5000));
 
   // ---- บนมือถือ: แสงแบบปรับเอง
@@ -63,10 +65,12 @@ const until = async (fn, ms = 15000) => { const end = Date.now() + ms; while (Da
   ok('white balance preset 3200K', (await ph.textContent('[data-pc=wb] b')) === '3200K');
   // ตัวช่วยดูภาพ
   await ph.tap('[data-pc=assist]');
-  for (const k of ['peaking', 'grid']) await ph.tap(`.pc-panel [data-tog=${k}]`);
+  for (const k of ['peaking', 'grid', 'safe', 'wave']) await ph.tap(`.pc-panel [data-tog=${k}]`);
   await ph.tap('.pc-panel [data-seg=guide] [data-v="2.39"]');
   await ph.waitForTimeout(600);
   const as = await ph.evaluate(() => { const c = document.querySelector('.pc-assist'); const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let red = 0; for (let i = 0; i < d.length; i += 4) if (d[i + 3] > 0 && d[i] > 200 && d[i + 1] < 80) red++; return { visible: !c.hidden, red, grid: document.querySelectorAll('.pc-guides .g-v').length, masks: document.querySelectorAll('.pc-guides .g-mask').length, hist: !document.querySelector('.pc-hist').hidden }; });
+  const wv = await ph.evaluate(() => { const c = document.querySelector('.pc-wave'); const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let g = 0; for (let i = 0; i < d.length; i += 4) if (d[i + 1] > 150 && d[i] < 160) g++; return { visible: !c.hidden && c.getBoundingClientRect().width > 0, g, safe: document.querySelectorAll('.pc-guides .g-safe').length }; });
+  ok('safe area (action 90% / title 80%) and waveform monitor', wv.safe === 2 && wv.visible && wv.g > 40, JSON.stringify(wv));
   ok('focus peaking marks edges, grid and 2.39 frame drawn, histogram on', as.visible && as.red > 50 && as.grid === 2 && as.masks === 2 && as.hist, JSON.stringify(as));
   await ph.tap('.pc-panel .pc-close');
   // แตะเพื่อโฟกัส
@@ -118,6 +122,31 @@ const until = async (fn, ms = 15000) => { const end = Date.now() + ms; while (Da
   await ph.screenshot({ path: process.env.WORK + '/procam-focus-ring.png' });
   await ph.tap('.pc-panel .pc-close');
 
+  // ---- ช็อตที่จำไว้: บันทึกช็อต 1 ที่ซูมปัจจุบัน → ซูมไปที่อื่น → เรียกช็อต 1 = ซูมกลับ
+  const z1 = await ph.evaluate(() => document.querySelector('[data-pc=zoom] b').textContent);
+  await ph.tap('[data-pc=shot]'); await ph.waitForSelector('.pc-panel .pc-shots');
+  await ph.tap('.pc-panel [data-shotsave]'); await ph.tap('.pc-panel [data-shot="0"]'); await ph.waitForTimeout(200);
+  ok('shot 1 saved', await ph.isVisible('.pc-panel [data-shot="0"].has') && /×/.test(await ph.textContent('.pc-panel [data-shot="0"] small')), await ph.textContent('.pc-panel [data-shot="0"] small'));
+  await ph.tap('.pc-panel .pc-close');
+  await ph.tap('[data-pc=zoom]'); await ph.tap('.pc-panel [data-seg=zoomQuick] [data-v="1"]'); await ph.waitForTimeout(900);
+  ok('zoom moved away for the test', (await ph.textContent('[data-pc=zoom] b')) === '1.0×' && z1 !== '1.0×', `${z1} → ${await ph.textContent('[data-pc=zoom] b')}`);
+  await ph.tap('[data-pc=shot]'); await ph.tap('.pc-panel [data-shot="0"]'); await ph.waitForTimeout(1000);
+  ok('recalling shot 1 glides the zoom back', (await ph.textContent('[data-pc=zoom] b')) === z1, await ph.textContent('[data-pc=zoom] b'));
+  await ph.tap('.pc-panel .pc-close');
+  // ---- ล็อกจอ: แตะปุ่มไม่ได้จนกว่าจะกดค้าง 1 วินาที
+  await ph.tap('.caller-bottom [data-caller=lock]'); await ph.waitForTimeout(150);
+  await ph.tap('[data-pc=wb]', { force: true }).catch(() => {}); await ph.waitForTimeout(200);
+  ok('touch lock blocks the controls', await ph.isVisible('.pc-touchlock') && await ph.isHidden('.pc-panel'));
+  { const bb = await ph.locator('.pc-touchlock').boundingBox(); const cdp = await pctx.newCDPSession(ph); const pt = { x: bb.x + bb.width / 2, y: bb.y + bb.height / 2 };
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [pt] }); await ph.waitForTimeout(1200); await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] }); }
+  await ph.waitForTimeout(200);
+  ok('holding 1 second unlocks', await ph.isHidden('.pc-touchlock'));
+  // ---- ภาพ Program จากสตูดิโอ
+  await ph.tap('[data-pc=ret]');
+  ok('PGM button shows the studio program on the phone', await until(() => ph.evaluate(() => { const v = document.querySelector('.pc-ret'); return !v.hidden && v.videoWidth > 0; }), 8000) && (await ph.textContent('[data-pc=ret] b')) === 'ON');
+  await ph.tap('[data-pc=ret]'); await ph.waitForTimeout(400);
+  ok('…and turns it off', await ph.isHidden('.pc-ret') && await until(() => host.evaluate(i => !window.webmix.inputs.find(x => x.id === i).retCall, id), 3000));
+
   // ---- สตูดิโอควบคุมจากระยะไกล
   const card = host.locator(`.card[data-id="${id}"]`); await card.hover(); await card.locator('[data-card=camctl]').click();
   await host.waitForSelector('.cam-ctl [data-ck=iso]');
@@ -126,6 +155,8 @@ const until = async (fn, ms = 15000) => { const end = Date.now() + ms; while (Da
   ok('studio zoom 3× reaches the phone', await until(() => ph.evaluate(() => window.__applied.some(a => a.zoom === 3)), 5000) && await until(async () => (await ph.textContent('[data-pc=zoom] b')) === '3.0×', 3000));
   ok('studio dialog follows the phone back', await until(async () => /3\.0×/.test(await host.textContent('[data-cv=zoom]')), 5000));
   await host.click('.cam-ctl [data-cs=fps] [data-v="25"]');
+  await host.click('.cam-ctl .cam-shot[data-shot="0"]');
+  ok('studio recalls shot 1 on the phone', await until(async () => /^1$/.test(await ph.textContent('[data-pc=shot] b')), 4000) && await host.isVisible('.cam-ctl .cam-shot[data-shot="0"].has'));
   ok('studio sets 25 fps on the phone', await until(async () => /25/.test(await ph.textContent('[data-pc=fps] b')), 5000));
   await host.fill('.cam-ctl .cam-msg', 'ซูมเข้าหน้าผู้พูด'); await host.click('.cam-ctl .cam-msg-send');
   ok('message shows on the phone', await until(async () => /ผู้กำกับ: ซูมเข้าหน้าผู้พูด/.test(await ph.textContent('#guest-bubble')) && await ph.isVisible('#guest-bubble'), 4000));

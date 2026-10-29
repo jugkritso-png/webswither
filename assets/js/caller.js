@@ -25,7 +25,11 @@
 
     const setStatus = (text, kind = '') => { statusEl.textContent = text; statusEl.className = `chip ${kind}`; };
     const showMsg = text => { msgEl.textContent = text; msgEl.hidden = !text; };
+    let lastTally = 'off';
     const setTally = t => {
+      // ขึ้น ON AIR = สั่นเตือนช่างกล้อง (กล้องจริงมีไฟแดงที่ช่องมอง)
+      if (t === 'pgm' && lastTally !== 'pgm' && !guestSlot) { try { navigator.vibrate && navigator.vibrate([90, 60, 90]); } catch (e) {} }
+      lastTally = t;
       root.classList.toggle('tally-pgm', t === 'pgm');
       root.classList.toggle('tally-pvw', t === 'pvw');
       $('#caller-tally').textContent = t === 'pgm' ? 'ON AIR' : 'PREVIEW';
@@ -154,6 +158,13 @@
       const connect = id => {
         peer = id ? new Peer(id, peerOptionsFromSig(sig)) : new Peer(peerOptionsFromSig(sig));
         peer.on('open', () => { placeCall(); openData(); });
+        // สตูดิโอโทรกลับมาเพื่อส่งภาพ Program ให้ช่างกล้องดู (ขอจากปุ่ม PGM)
+        peer.on('call', c => {
+          if (guestSlot || !c.metadata || !c.metadata.ret || c.peer !== targetId) { try { c.close(); } catch (e) {} return; }
+          c.answer();
+          c.on('stream', s => pro && pro.showReturn(s));
+          c.on('close', () => pro && pro.showReturn(null));
+        });
         peer.on('error', err => {
           if (stopped) return;
           // ID ถูกใช้อยู่ (เช่นเปิดซ้อนสองแท็บ) — ใช้ ID ชั่วคราวแทน
@@ -187,12 +198,14 @@
       if (stopped || !peer || peer.destroyed) return;
       const d = peer.connect(targetId, { reliable: true });
       conn = d;
-      d.on('open', () => { if (pro) pro.sendState(); if (guestSlot) { try { d.send({ type: 'guest-info', name: guestName }); } catch (e) {} } });
+      d.on('open', () => { if (pro) pro.onConnected(); if (guestSlot) { try { d.send({ type: 'guest-info', name: guestName }); } catch (e) {} } });
       d.on('data', msg => {
         if (!msg || typeof msg !== 'object') return;
         if (pro && (msg.type === 'cam-set' || msg.type === 'cam-cmd')) pro.onStudioMsg(msg);
         if (msg.type === 'tally') setTally(msg.tally);
         if (!guestSlot && msg.type === 'hello' && msg.name) $('.caller-title').textContent = `${String(msg.name).slice(0, 32)}${msg.show ? ' · สตูดิโอ ' + String(msg.show).slice(0, 40) : ''}`;
+        // เลขกล้อง = ลำดับการ์ดในสตูดิโอ (ตรงกับปุ่มลัด 1–9 ของผู้กำกับ)
+        if (!guestSlot && msg.type === 'hello') { const n = $('#cam-num'); if (n) { n.hidden = !(msg.num > 0); n.textContent = `CAM ${msg.num | 0}`; } }
         if (guestSlot && msg.type === 'msg' && typeof msg.text === 'string') teamMsg(msg.text);
         if (guestSlot && msg.type === 'view') root.classList.toggle('view-self', msg.v === 'self');
         if (msg.type === 'removed') stop(guestSlot ? 'สตูดิโอจบการเชื่อมต่อแล้ว ขอบคุณที่ร่วมรายการ' : 'สตูดิโอนำกล้องนี้ออกจากรายการแล้ว');

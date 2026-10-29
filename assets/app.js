@@ -5715,7 +5715,8 @@
       return `<button type="button" class="btn cam-flip">${icon('flip')}สลับกล้องหน้า/หลัง</button>
         ${k.torch ? `<button type="button" class="btn cam-torch ${st.torch ? 'is-on' : ''}">ไฟฉาย ${st.torch ? 'เปิด' : 'ปิด'}</button>` : ''}
         <button type="button" class="btn cam-lock ${c.locked ? 'is-on' : ''}">${c.locked ? 'ปลดล็อกแสง (AE-L)' : 'ล็อกแสง (AE-L)'}</button>
-        <button type="button" class="btn ${c.rec ? 'btn-danger' : ''} cam-rec">${c.rec ? '■ หยุดบันทึกในมือถือ' : '● บันทึกในมือถือ'}</button>`;
+        <button type="button" class="btn ${c.rec ? 'btn-danger' : ''} cam-rec">${c.rec ? '■ หยุดบันทึกในมือถือ' : '● บันทึกในมือถือ'}</button>
+        <span class="cam-shots" title="ช็อตที่จำไว้บนมือถือ — คลิก = เรียก · Shift + คลิก = บันทึกช็อตปัจจุบัน">${[0, 1, 2, 3].map(i => `<button type="button" class="btn btn-sm cam-shot ${(c.shots || [])[i] ? 'has' : ''} ${c.shot === i ? 'is-on' : ''}" data-shot="${i}">ช็อต ${i + 1}</button>`).join('')}</span>`;
     };
     const cc = { ...NEUTRAL_COLOR, ...(inp.color || {}) };
     const ccFmt = { b: v => `${v >= 1 ? '+' : ''}${Math.round((v - 1) * 100)}%`, c: v => `${v >= 1 ? '+' : ''}${Math.round((v - 1) * 100)}%`, s: v => `${v >= 1 ? '+' : ''}${Math.round((v - 1) * 100)}%`, t: v => (v > 0 ? 'อุ่น +' : v < 0 ? 'เย็น ' : '') + Math.round(v * 100) };
@@ -5810,6 +5811,8 @@
           if (e.target.closest('.cam-rec')) { cmd('rec', !inp.cam.rec); return; }
           if (e.target.closest('.cam-flip')) { cmd('flip'); return; }
           if (e.target.closest('.cam-lock')) { cmd('lock', !inp.cam.locked); return; }
+          const shotB = e.target.closest('.cam-shot');
+          if (shotB) { cmd('shot', { slot: +shotB.dataset.shot, save: e.shiftKey }); if (e.shiftKey) toast(`บันทึกช็อต ${+shotB.dataset.shot + 1} บนมือถือแล้ว`, 'success', 2000); return; }
           if (e.target.closest('.cam-torch')) { send({ torch: !(inp.cam.set || {}).torch }); return; }
           if (e.target.closest('.cam-msg-send')) { const i = $('.cam-msg', box); if (i.value.trim()) { cmd('msg', i.value.trim()); toast('ส่งข้อความถึงช่างกล้องแล้ว', 'success', 2000); i.value = ''; } return; }
           const b = e.target.closest('[data-cs] button');
@@ -6885,7 +6888,7 @@
       if (!conn.open) return;
       const inp = inputs.find(i => i.peerId === conn.peer);
       const tally = !inp ? 'off' : isOnAir(inp.id) ? 'pgm' : inp.id === state.previewId ? 'pvw' : 'off';
-      try { conn.send({ type: 'tally', tally }); if (inp && inp.type === 'guest' && inp.guestView) conn.send({ type: 'view', v: inp.guestView }); if (inp && inp.type === 'wireless') conn.send({ type: 'hello', name: inp.name, show: show.name || '' }); } catch (e) {}
+      try { conn.send({ type: 'tally', tally }); if (inp && inp.type === 'guest' && inp.guestView) conn.send({ type: 'view', v: inp.guestView }); if (inp && inp.type === 'wireless') conn.send({ type: 'hello', name: inp.name, show: show.name || '', num: inputs.indexOf(inp) + 1 }); } catch (e) {}
     },
     sendTally() { for (const conn of this.conns.values()) this.sendTallyTo(conn); },
     // กล้องมือถือแบบโปร: สถานะกล้อง (ความสามารถ/ค่าปัจจุบัน/แบต/บันทึก) และคำสั่งควบคุมจากสตูดิโอ
@@ -6894,6 +6897,12 @@
       if (msg && msg.type === 'guest-info') {
         const g = inputs.find(i => i.type === 'guest' && i.peerId === peerId), n = String(msg.name || '').trim().slice(0, 32);
         if (g && n && n !== g.name) { g.name = n; renderInputs(); renderMixer(); }
+        return;
+      }
+      // ช่างกล้องขอดูภาพ Program: สตูดิโอโทรกลับไปพร้อมภาพย่อ (ไม่มีเสียง กันเสียงย้อน)
+      if (msg && msg.type === 'cam-return') {
+        const w = inputs.find(i => i.type === 'wireless' && i.peerId === peerId);
+        if (w) this.camReturn(w, !!msg.on);
         return;
       }
       if (!msg || msg.type !== 'cam-state' || typeof msg !== 'object') return;
@@ -6909,6 +6918,28 @@
       }
       if (camCtl && camCtl.inp === inp) camCtl.refresh();
     },
+    camReturn(inp, on) {
+      if (inp.retCall) { try { inp.retCall.close(); } catch (e) {} inp.retCall = null; }
+      if (inp.retTrack) { inp.retTrack.stop(); inp.retTrack = null; }
+      if (!on || !this.peer || this.peer.destroyed) return;
+      inp.retTrack = pgmCanvas.captureStream(15).getVideoTracks()[0];
+      const call = this.peer.call(inp.peerId, new MediaStream([inp.retTrack]), { metadata: { ret: 1 } });
+      if (!call) return;
+      inp.retCall = call;
+      call.on('close', () => { if (inp.retCall === call) { inp.retCall = null; if (inp.retTrack) { inp.retTrack.stop(); inp.retTrack = null; } } });
+      // ภาพสำหรับดูเฉย ๆ: ~360p 15 fps ไม่เกิน 600 kbps — ไม่แย่งเน็ตกับภาพที่มือถือส่งเข้ามา
+      call.peerConnection?.addEventListener('connectionstatechange', async () => {
+        if (call.peerConnection.connectionState !== 'connected') return;
+        const sender = call.peerConnection.getSenders().find(x => x.track && x.track.kind === 'video');
+        if (!sender) return;
+        try {
+          const params = sender.getParameters();
+          if (!params.encodings || !params.encodings.length) params.encodings = [{}];
+          Object.assign(params.encodings[0], { maxBitrate: 600000, maxFramerate: 15, scaleResolutionDownBy: Math.max(1, H / 360) });
+          await sender.setParameters(params);
+        } catch (e) {}
+      });
+    },
     sendCam(inp, msg) {
       const conn = this.conns.get(inp.peerId);
       if (conn && conn.open) { try { conn.send(msg); return true; } catch (e) {} }
@@ -6920,6 +6951,7 @@
       if (conn && conn.open) { try { conn.send({ type: 'removed' }); } catch (e) {} }
       const inp = inputs.find(i => i.peerId === peerId);
       if (inp && inp.call) inp.call.close();
+      if (inp) this.camReturn(inp, false);
     },
     connectedCount() { return inputs.filter(i => i.type === 'wireless' && i.status === 'live').length; },
     guestLink(inp) {

@@ -20,7 +20,8 @@
   function initProCam(ctx) {
     const { root, video } = ctx;
     root.classList.add('procam');
-    const prefs = Object.assign({ zebra: false, zebraAt: 95, peaking: false, falsecolor: false, hist: true, grid: false, guide: 'none', level: false, meter: true, glide: 1500 }, store.get('procam', {}));
+    const prefs = Object.assign({ zebra: false, zebraAt: 95, peaking: false, falsecolor: false, hist: true, grid: false, guide: 'none', level: false, meter: true, glide: 1500, safe: false, wave: false, ret: false, autoq: true, shots: [null, null, null, null] }, store.get('procam', {}));
+    if (!Array.isArray(prefs.shots) || prefs.shots.length !== 4) prefs.shots = [null, null, null, null];
     const savePrefs = () => store.set('procam', prefs);
     let tool = null, lenses = [], battery = null, stats = {}, stateTimer = null;
     const rec = { recorder: null, since: 0, name: '', parts: null, writable: null, handle: null, bytes: 0 };
@@ -33,6 +34,10 @@
       </div>
       <div class="pc-info"></div>
       <canvas class="pc-hist" width="128" height="56" hidden></canvas>
+      <canvas class="pc-wave" width="128" height="56" hidden></canvas>
+      <video class="pc-ret" autoplay muted playsinline hidden></video>
+      <div class="pc-net" hidden><span></span><button type="button" data-net="restore" hidden>คืนคุณภาพ</button></div>
+      <div class="pc-touchlock" hidden><span class="pc-tl-pill"><i></i>🔒 ล็อกจออยู่ — กดค้าง 1 วินาทีเพื่อปลดล็อก</span></div>
       <div class="pc-meter" hidden><i></i><b></b></div>
       <div class="pc-level" hidden><i></i><span></span></div>
       <div class="pc-rec" hidden>● REC <span>00:00</span></div>
@@ -44,6 +49,8 @@
         <button type="button" data-pc="lens"><small>LENS</small><b>—</b></button>
         <button type="button" data-pc="fps"><small>FPS</small><b>30</b></button>
         <button type="button" data-pc="assist"><small>ASSIST</small><b>—</b></button>
+        <button type="button" data-pc="shot"><small>SHOT</small><b>—</b></button>
+        <button type="button" data-pc="ret"><small>PGM</small><b>OFF</b></button>
         <button type="button" data-pc="lock"><small>LOCK</small><b>OFF</b></button>
         <button type="button" data-pc="torch"><small>TORCH</small><b>OFF</b></button>
         <button type="button" data-pc="rec" class="pc-recbtn"><small>REC</small><b>●</b></button>
@@ -52,6 +59,7 @@
     const stage = $('.pc-stage', root), assist = $('.pc-assist', root), guides = $('.pc-guides', root), focusBox = $('.pc-focus', root);
     const info = $('.pc-info', root), histC = $('.pc-hist', root), meter = $('.pc-meter', root), level = $('.pc-level', root);
     const recEl = $('.pc-rec', root), rail = $('.pc-rail', root), panel = $('.pc-panel', root);
+    const waveC = $('.pc-wave', root), retV = $('.pc-ret', root), netEl = $('.pc-net', root), touchLock = $('.pc-touchlock', root);
 
     /* ---------- กล้อง ---------- */
     const track = () => { const s = ctx.getStream(); return s ? s.getVideoTracks()[0] : null; };
@@ -112,7 +120,8 @@
     const fcColor = y => y < 10 ? [128, 0, 160] : y < 30 ? [0, 80, 255] : y < 105 ? null : y < 125 ? [0, 200, 70] : y < 150 ? null : y < 175 ? [255, 120, 180] : y < 235 ? null : y < 250 ? [255, 230, 0] : [255, 30, 30];
     let phase = 0;
     function analyse() {
-      const any = prefs.zebra || prefs.peaking || prefs.falsecolor || prefs.hist;
+      const any = prefs.zebra || prefs.peaking || prefs.falsecolor || prefs.hist || prefs.wave;
+      waveC.hidden = !prefs.wave;
       assist.hidden = !(prefs.zebra || prefs.peaking || prefs.falsecolor);
       histC.hidden = !prefs.hist;
       if (!any || !video.videoWidth || document.hidden) return;
@@ -137,6 +146,7 @@
         }
         actx.putImageData(out, 0, 0);
       }
+      if (prefs.wave) drawWave();
       if (prefs.hist) {
         const max = Math.max(1, ...hist);
         hctx.clearRect(0, 0, 128, 56);
@@ -150,6 +160,21 @@
       }
     }
     setInterval(analyse, 110);
+    // Waveform (ความสว่างตามแนวนอนของภาพ) แบบเครื่องวัดในห้องควบคุม: 0–100% · เส้นอ้างอิง 0 / 50 / 100
+    const wctx2 = waveC.getContext('2d'), wimg = wctx2.createImageData(128, 56), wacc = new Uint16Array(128 * 56);
+    function drawWave() {
+      wacc.fill(0);
+      for (let y = 0; y < SH; y += 2) for (let x = 0; x < SW; x += 2) { const v = Y[y * SW + x]; wacc[(55 - ((v * 55 / 255) | 0)) * 128 + ((x * 128 / SW) | 0)]++; }
+      const o = wimg.data, gain = 255 / Math.max(4, SH / 2 / 56 * 6);
+      for (let i = 0; i < wacc.length; i++) { const a = Math.min(255, wacc[i] * gain), p = i * 4; o[p] = 90; o[p + 1] = 255; o[p + 2] = 120; o[p + 3] = a; }
+      wctx2.fillStyle = 'rgba(0,0,0,.55)'; wctx2.fillRect(0, 0, 128, 56);
+      const tmp = wctx2.__tmp || (wctx2.__tmp = Object.assign(document.createElement('canvas'), { width: 128, height: 56 }));
+      tmp.getContext('2d').putImageData(wimg, 0, 0);
+      wctx2.drawImage(tmp, 0, 0);
+      wctx2.fillStyle = 'rgba(255,255,255,.35)';
+      for (const lv of [0, 50, 100]) wctx2.fillRect(0, 55 - Math.round(lv / 100 * 55), 128, 1);
+      wctx2.fillStyle = 'rgba(239,68,68,.8)'; wctx2.fillRect(0, 0, 128, 1);
+    }
 
     function paintGuides() {
       const parts = [];
@@ -161,6 +186,8 @@
         if (target > frame) { const h = frame / target * 100, m = (100 - h) / 2; parts.push(`<i class="g-mask" style="left:0;right:0;top:0;height:${m}%"></i><i class="g-mask" style="left:0;right:0;bottom:0;height:${m}%"></i>`); }
         else { const w = target / frame * 100, m = (100 - w) / 2; parts.push(`<i class="g-mask" style="top:0;bottom:0;left:0;width:${m}%"></i><i class="g-mask" style="top:0;bottom:0;right:0;width:${m}%"></i>`); }
       }
+      // พื้นที่ปลอดภัยแบบงานทีวี: Action safe 90% · Title safe 80%
+      if (prefs.safe) parts.push('<i class="g-safe g-action" style="left:5%;top:5%;right:5%;bottom:5%"><small>ACTION 90%</small></i><i class="g-safe g-title" style="left:10%;top:10%;right:10%;bottom:10%"><small>TITLE 80%</small></i>');
       guides.innerHTML = parts.join('');
     }
 
@@ -339,9 +366,15 @@
           <div class="pc-label">ความละเอียดที่ส่งเข้าสตูดิโอ</div>${seg('quality', ctx.qualities().map(q => [q, q]), ctx.getQuality())}
           <p class="pc-note">ตอนนี้ ${s.width || '?'}×${s.height || '?'} @ ${Math.round(s.frameRate || 0)} fps · ใช้ 25 / 50 fps ให้ตรงไฟบ้าน 50 Hz</p>`;
       }
+      if (t === 'shot') {
+        const sum = sh => sh ? [sh.zoom ? (+sh.zoom).toFixed(1) + '×' : '', sh.focusMode === 'manual' && sh.focusDistance != null ? (+sh.focusDistance).toFixed(2) + ' m' : 'AF', sh.exposureMode === 'manual' ? 'M' : 'A'].filter(Boolean).join(' · ') : 'ว่าง';
+        return `<div class="pc-shots">${prefs.shots.map((sh, i) => `<button type="button" data-shot="${i}" class="${sh ? 'has' : ''} ${lastShot === i ? 'on' : ''}"><b>${i + 1}</b><small>${sum(sh)}</small></button>`).join('')}</div>
+          <div class="pc-toggles"><button type="button" data-shotsave class="${shotSave ? 'on' : ''}">${shotSave ? 'แตะช่องเพื่อบันทึก…' : 'บันทึกช็อตปัจจุบัน'}</button></div>
+          <p class="pc-note">ช็อตจำซูม · โฟกัส · แสง · สมดุลสีขาว — แตะช่องเพื่อเรียกกลับ (ซูม/โฟกัสค่อย ๆ เลื่อนไป) · สตูดิโอสั่งเรียกช็อตได้จากหน้าควบคุมกล้อง</p>`;
+      }
       if (t === 'assist') {
         const tog = (k, l) => `<button type="button" data-tog="${k}" class="${prefs[k] ? 'on' : ''}">${l}</button>`;
-        return `<div class="pc-toggles">${tog('zebra', 'Zebra')}${tog('peaking', 'Focus peaking')}${tog('falsecolor', 'False color')}${tog('hist', 'Histogram')}${tog('grid', 'ตาราง 3×3')}${tog('level', 'ระดับน้ำ')}${tog('meter', 'มิเตอร์เสียง')}</div>
+        return `<div class="pc-toggles">${tog('zebra', 'Zebra')}${tog('peaking', 'Focus peaking')}${tog('falsecolor', 'False color')}${tog('hist', 'Histogram')}${tog('grid', 'ตาราง 3×3')}${tog('safe', 'Safe area')}${tog('wave', 'Waveform')}${tog('level', 'ระดับน้ำ')}${tog('meter', 'มิเตอร์เสียง')}</div>
           ${prefs.zebra ? `<label class="pc-slider"><span>Zebra เริ่มที่ <b data-val="zebraAt">${prefs.zebraAt}%</b></span><input type="range" data-pref="zebraAt" min="70" max="100" step="1" value="${prefs.zebraAt}"></label>` : ''}
           <div class="pc-label">กรอบสัดส่วน</div>${seg('guide', Object.entries(GUIDES), prefs.guide)}`;
       }
@@ -359,10 +392,89 @@
     // วาดแผงใหม่ (เช่นเปลี่ยน AUTO → MANUAL แล้วต้องมีแถบเลื่อน) — ยกเว้นตอนกำลังลากแถบเลื่อนอยู่
     const refreshPanel = () => { const a = document.activeElement; if (tool && !ringBusy() && !(a && a.type === 'range' && panel.contains(a))) panel.innerHTML = `<div class="pc-panel-head"><b>${$(`[data-pc="${tool}"] small`, rail).textContent}</b><button type="button" class="pc-close">✕</button></div>${panelHtml(tool)}`; paintRings(); };
 
+    /* ---------- ช็อตที่จำไว้ (Shot presets) ---------- */
+    let lastShot = null, shotSave = false;
+    const SHOT_KEYS = ['zoom', 'focusMode', 'focusDistance', 'exposureMode', 'iso', 'exposureTime', 'exposureCompensation', 'whiteBalanceMode', 'colorTemperature'];
+    function saveShot(i) {
+      const s = sets(), c = caps(), sh = {};
+      for (const k of SHOT_KEYS) if (s[k] != null && k in c) sh[k] = s[k];
+      prefs.shots[i] = sh; savePrefs();
+      lastShot = i; shotSave = false;
+      ctx.brief(`บันทึกช็อต ${i + 1} แล้ว`);
+      paint(); sendStateSoon();
+    }
+    async function recallShot(i) {
+      const sh = prefs.shots[i];
+      if (!sh) { ctx.brief(`ช็อต ${i + 1} ยังว่าง`); return; }
+      const patch = {};
+      for (const k of ['exposureMode', 'iso', 'exposureTime', 'exposureCompensation', 'whiteBalanceMode', 'colorTemperature', 'focusMode']) if (sh[k] != null) patch[k] = sh[k];
+      if (patch.exposureMode !== 'manual') { delete patch.iso; delete patch.exposureTime; }
+      if (patch.whiteBalanceMode !== 'manual') delete patch.colorTemperature;
+      if (Object.keys(patch).length) await apply(patch, true);
+      if (sh.zoom != null) glide('zoom', +sh.zoom);
+      if (sh.focusMode === 'manual' && sh.focusDistance != null) glide('focusDistance', +sh.focusDistance);
+      lastShot = i;
+      paint(); sendStateSoon();
+    }
+
+    /* ---------- ล็อกจอ: กันนิ้วโดนระหว่างถ่าย (กดค้าง 1 วินาทีเพื่อปลด) ---------- */
+    let tlTimer = null;
+    function setTouchLock(on) {
+      touchLock.hidden = !on;
+      root.classList.toggle('touch-locked', on);
+      $('[data-caller="lock"]', root)?.classList.toggle('is-on', on);
+      if (on) { closePanel(); ctx.brief('ล็อกจอแล้ว — กดค้าง 1 วินาทีเพื่อปลดล็อก'); }
+    }
+    const tlCancel = () => { clearTimeout(tlTimer); tlTimer = null; touchLock.classList.remove('holding'); };
+    touchLock.addEventListener('pointerdown', e => { e.preventDefault(); e.stopPropagation(); tlCancel(); touchLock.classList.add('holding'); tlTimer = setTimeout(() => { tlCancel(); setTouchLock(false); }, 1000); });
+    for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) touchLock.addEventListener(ev, tlCancel);
+    touchLock.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); }, true);
+    root.addEventListener('click', e => { if (e.target.closest('[data-caller="lock"]')) setTouchLock(true); });
+
+    /* ---------- ภาพ Program จากสตูดิโอ (return feed) ---------- */
+    function setReturn(on) {
+      prefs.ret = !!on; savePrefs();
+      ctx.send({ type: 'cam-return', on: prefs.ret });
+      if (!prefs.ret) showReturn(null);
+      paint();
+    }
+    function showReturn(stream) {
+      retV.srcObject = stream || null;
+      retV.hidden = !stream;
+      if (stream) retV.play().catch(() => {});
+    }
+    retV.addEventListener('click', () => retV.classList.toggle('big'));
+
+    /* ---------- เน็ตอ่อน: เตือน + ลดความละเอียดเองไม่ให้ภาพค้าง ---------- */
+    let badPolls = 0, autoFrom = null, autoAt = 0;
+    function checkNet() {
+      const bad = stats.limit === 'bandwidth' || (stats.rtt != null && stats.rtt > 500);
+      badPolls = bad ? badPolls + 1 : 0;
+      const qs = ctx.qualities(), qi = qs.indexOf(ctx.getQuality());
+      if (prefs.autoq && badPolls >= 3 && qi > 0 && Date.now() - autoAt > 30000) {
+        if (autoFrom == null) autoFrom = ctx.getQuality();
+        autoAt = Date.now(); badPolls = 0;
+        const to = qs[qi - 1];
+        ctx.setQuality(to).then(afterTrackChange);
+        ctx.brief(`เน็ตส่งไม่ทัน — ลดเป็น ${to} อัตโนมัติ`);
+      }
+      netEl.hidden = !(bad || autoFrom);
+      $('span', netEl).textContent = bad ? ['เน็ตอ่อน', stats.rtt != null && `ดีเลย์ ${Math.round(stats.rtt)} ms`, stats.kbps && `${(stats.kbps / 1000).toFixed(1)} Mb/s`].filter(Boolean).join(' · ') : `ลดความละเอียดเป็น ${ctx.getQuality()} ชั่วคราว (เน็ตกลับมาดีแล้ว)`;
+      netEl.classList.toggle('bad', bad);
+      $('[data-net="restore"]', netEl).hidden = !autoFrom || bad;
+    }
+    netEl.addEventListener('click', e => {
+      if (!e.target.closest('[data-net="restore"]') || !autoFrom) return;
+      const q = autoFrom; autoFrom = null; autoAt = Date.now();
+      ctx.setQuality(q).then(afterTrackChange);
+      netEl.hidden = true;
+    });
+
     rail.addEventListener('click', e => {
       const b = e.target.closest('[data-pc]');
       if (!b) return;
       const t = b.dataset.pc;
+      if (t === 'ret') { setReturn(!prefs.ret); return; }
       if (t === 'rec') { rec.recorder ? recStop() : recStart(); return; }
       if (t === 'torch') { apply({ torch: !sets().torch }); return; }
       if (t === 'lock') { setLock(!locked); return; }
@@ -370,6 +482,9 @@
     });
     panel.addEventListener('click', async e => {
       if (e.target.closest('.pc-close')) { closePanel(); return; }
+      const sb = e.target.closest('[data-shot]');
+      if (sb) { const i = +sb.dataset.shot; if (shotSave) saveShot(i); else await recallShot(i); refreshPanel(); return; }
+      if (e.target.closest('[data-shotsave]')) { shotSave = !shotSave; refreshPanel(); return; }
       const tog = e.target.closest('[data-tog]');
       if (tog) {
         const k = tog.dataset.tog;
@@ -563,12 +678,14 @@
       const li = lenses.findIndex(l => l.id === s.deviceId);
       set('lens', li >= 0 ? `${li + 1}/${lenses.length}` : lenses.length ? '—' : '1');
       set('fps', `${ctx.getQuality()} ${ctx.getFps()}`);
-      set('assist', [prefs.zebra && 'Z', prefs.peaking && 'P', prefs.falsecolor && 'FC', prefs.grid && '#', prefs.guide !== 'none' && prefs.guide].filter(Boolean).join(' ') || '—', prefs.zebra || prefs.peaking || prefs.falsecolor);
+      set('assist', [prefs.zebra && 'Z', prefs.peaking && 'P', prefs.falsecolor && 'FC', prefs.grid && '#', prefs.safe && 'S', prefs.wave && 'W', prefs.guide !== 'none' && prefs.guide].filter(Boolean).join(' ') || '—', prefs.zebra || prefs.peaking || prefs.falsecolor);
       set('lock', locked ? 'ON' : 'OFF', locked);
       set('torch', s.torch ? 'ON' : 'OFF', s.torch);
       const tb = $('[data-pc="torch"]', rail);
       if (tb) tb.hidden = !has(c, 'torch');
       set('rec', rec.recorder ? '■' : '●', !!rec.recorder);
+      set('shot', lastShot != null ? String(lastShot + 1) : prefs.shots.some(Boolean) ? '—' : '—', lastShot != null);
+      set('ret', prefs.ret ? 'ON' : 'OFF', prefs.ret);
       const bits = [`${s.width || '?'}×${s.height || '?'}`, `${Math.round(stats.fps || s.frameRate || 0)} fps`];
       if (stats.kbps) bits.push(`${(stats.kbps / 1000).toFixed(1)} Mb/s`);
       if (stats.rtt != null) bits.push(`ดีเลย์ ${Math.round(stats.rtt)} ms`);
@@ -598,6 +715,7 @@
         });
         stats = next;
       } catch (e) {}
+      checkNet();
       paint();
       sendStateSoon();
     }
@@ -616,7 +734,8 @@
         rec: rec.recorder ? { since: rec.since, bytes: rec.bytes } : null,
         battery: battery ? { level: battery.level, charging: battery.charging } : null,
         stats: { kbps: Math.round(stats.kbps || 0), fps: Math.round(stats.fps || 0), rtt: stats.rtt != null ? Math.round(stats.rtt) : null, limit: stats.limit || '' },
-        tilt: tilt != null ? +tilt.toFixed(1) : null
+        tilt: tilt != null ? +tilt.toFixed(1) : null,
+        shots: prefs.shots.map(Boolean), shot: lastShot, ret: !!prefs.ret
       };
     }
     function sendStateSoon() {
@@ -639,6 +758,7 @@
         else if (msg.cmd === 'quality' && ctx.qualities().includes(v)) { await ctx.setQuality(v); afterTrackChange(); }
         else if (msg.cmd === 'lens' && lenses.some(l => l.id === v)) { await ctx.setLens(v); afterTrackChange(); }
         else if (msg.cmd === 'lock') await setLock(!!v);
+        else if (msg.cmd === 'shot' && v && typeof v === 'object' && v.slot >= 0 && v.slot < 4) { if (v.save) saveShot(v.slot | 0); else await recallShot(v.slot | 0); }
         else if (msg.cmd === 'poi' && v && typeof v === 'object') focusAt(+v.x, +v.y);
         else if (msg.cmd === 'flip' && ctx.flip) { await ctx.flip(); afterTrackChange(); }
         else if (msg.cmd === 'state') sendStateSoon();
@@ -664,7 +784,9 @@
     startMeter();
     layout();
     paint();
-    return { onStudioMsg, sendState: sendStateSoon, afterTrackChange, startMeter, state, apply, panelOpen: () => tool };
+    // ต่อสตูดิโอใหม่: ขอภาพ Program กลับอีกครั้งถ้าเปิดไว้
+    const onConnected = () => { sendStateSoon(); if (prefs.ret) ctx.send({ type: 'cam-return', on: true }); };
+    return { onStudioMsg, sendState: sendStateSoon, onConnected, showReturn, afterTrackChange, startMeter, state, apply, panelOpen: () => tool, setTouchLock };
   }
 
   Object.assign(WM, { initProCam });
