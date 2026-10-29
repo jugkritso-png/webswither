@@ -2230,6 +2230,16 @@
     "ภาษา (ไทย / English)": "Language (Thai / English)",
     "ตั้งค่า → ทั่วไป → “ภาษา · Language” หรือบนมือถือ: เมนู “เพิ่มเติม” → English / ภาษาไทย — สลับได้ทันทีไม่ต้องโหลดหน้าใหม่ แม้ระหว่างไลฟ์": "Settings → General → “Language”, or on a phone: the “More” menu → English / Thai — switches instantly without reloading, even while live",
     "แอปจำภาษาที่เลือกไว้ในเครื่องนี้ · ชื่อแหล่งภาพ ป้าย และข้อความที่ตั้งเอง ไม่ถูกแปล": "The app remembers the language on this device · source names, tags and your own text are not translated",
+    "แหล่งภาพที่เลือก": "Selected sources", "เลือก {} แหล่ง": "{1} selected", "ติดป้าย…": "Tag…", "เลือกทั้งหมด": "Select all",
+    "ป้ายของ {} แหล่งที่เลือก": "Tags of the {1} selected sources", "เลือกหลายแหล่ง…": "Select several…",
+    "แตะการ์ดอื่นเพื่อเลือกเพิ่ม แล้วกด “ติดป้าย…”": "Tap other cards to add them, then press “Tag…”",
+    "ติดป้าย “{}” ให้ {} แหล่งแล้ว": "Tagged {2} sources “{1}”",
+    "Ctrl / Shift + คลิกการ์ด": "Ctrl / Shift + click a card", "คลิกการ์ด": "click a card",
+    "เลือกหลายแหล่งภาพ แล้วกด “ติดป้าย…” เพื่อติด / เอาป้ายออกทีเดียว · Esc = เลิกเลือก": "Select several sources, then press “Tag…” to tag / untag them at once · Esc = clear the selection",
+    "เลือกหลายแหล่ง: Ctrl / Shift + คลิกการ์ด (มือถือ: ปุ่ม “เลือก” ในแถวป้าย แล้วแตะการ์ด) → “ติดป้าย…” ติด / เอาป้ายออกทีเดียว · ลากการ์ดที่เลือกไปวางบนป้ายก็ได้": "Select several: Ctrl / Shift + click cards (phone: the “Select” button in the tag row, then tap cards) → “Tag…” tags / untags them at once · or drag a selected card onto a tag",
+    "{}ติดป้าย…": "{1}Tag…", "{}เลือกหลายแหล่ง…": "{1}Select several…",
+    "แตะการ์ดเพื่อเลือก": "Tap cards to select", "{}เลือก": "{1}Select",
+    "เลือกหลายแหล่งภาพเพื่อติดป้ายทีเดียว (Ctrl / Shift + คลิกการ์ดก็ได้)": "Select several sources to tag them at once (or Ctrl / Shift + click cards)",
     "ทีวี": "TV", "หน้า": "Page", "รายการ": "Item", "ความยาว": "Length", "เหลือ": "Remain", "สไลด์": "Slides"
   });
 })(window.WebMix = window.WebMix || {});

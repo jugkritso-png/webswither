@@ -64,6 +64,28 @@ const results = []; const ok = (n, c, x = '') => results.push(`${c ? 'PASS' : 'F
   ok('card tag menu toggles a tag (menu stays open)', await p.isVisible('.tag-menu') && (await p.evaluate(() => window.webmix.inputs.find(i => i.name === 'SLATE').tags || [])).length === 1);
   await p.keyboard.press('Escape'); await p.click('body', { position: { x: 5, y: 5 } });
 
+  // ---- เลือกหลายแหล่ง (Ctrl + คลิก) แล้วติด/เอาป้ายออกทีเดียว ----
+  const pvSel = await p.evaluate(() => window.webmix.state.previewId);
+  await p.click(`${cardOf('CLOCK')} .card-thumb`, { modifiers: ['Control'] });
+  await p.click(`${cardOf('COLOR BARS')} .card-thumb`, { modifiers: ['Control'] });
+  ok('Ctrl+click selects cards (bar shows the count)', await p.isVisible('#src-sel') && /เลือก 2 แหล่ง/.test(await p.textContent('#src-sel')) && await p.$$eval('#inputs-grid .card.is-selected', c => c.length) === 2);
+  ok('selecting does not change Preview', await p.evaluate(() => window.webmix.state.previewId) === pvSel);
+  await p.click(`${cardOf('SLATE')} .card-thumb`);
+  ok('plain click while selecting toggles selection too', /เลือก 3 แหล่ง/.test(await p.textContent('#src-sel')) && await p.evaluate(() => window.webmix.state.previewId) === pvSel);
+  await p.click('#src-sel [data-sel=tags]');
+  ok('multi tag menu shows a mixed state', await p.getAttribute(`.tag-menu [data-tg="${tag1[0].id}"]`, 'aria-checked') === 'mixed');
+  await p.click(`.tag-menu [data-tg="${tag1[0].id}"]`);
+  const tagged = () => p.evaluate(id => window.webmix.inputs.filter(i => (i.tags || []).includes(id)).map(i => i.name).sort().join(','), tag1[0].id);
+  ok('one click tags every selected source', await tagged() === 'CLOCK,COLOR BARS,SLATE', await tagged());
+  await p.click(`.tag-menu [data-tg="${tag1[0].id}"]`);
+  ok('…and again removes it from all', await tagged() === '', await tagged());
+  await p.click(`.tag-menu [data-tg="${tag1[0].id}"]`);
+  await p.keyboard.press('Escape'); await p.keyboard.press('Escape');
+  ok('Esc clears the selection', await p.isHidden('#src-sel') && await p.$$eval('#inputs-grid .card.is-selected', c => c.length) === 0);
+  // คืนสภาพเดิมของชุดทดสอบ: COLOR BARS + SLATE มีป้าย
+  await p.evaluate(id => { const c = window.webmix.inputs.find(i => i.name === 'CLOCK'); c.tags = c.tags.filter(x => x !== id); }, tag1[0].id);
+  await p.click('body', { position: { x: 5, y: 5 } });
+
   // ---- กรองตามป้าย ----
   await p.click(`.src-chip[data-tag="${tag1[0].id}"]`);
   ok('tag chip filters to that group', JSON.stringify((await visible()).sort()) === '["COLOR BARS","SLATE"]', JSON.stringify(await visible()));
@@ -144,6 +166,15 @@ const results = []; const ok = (n, c, x = '') => results.push(`${c ? 'PASS' : 'F
   await ph.tap('.tag-menu [data-tg="x1"]');
   ok('phone: tap tag dots → menu removes the tag', (await ph.evaluate(() => window.webmix.inputs[0].tags || [])).length === 0);
   await ph.keyboard.press('Escape'); await ph.waitForTimeout(150);
+  // เลือกหลายแหล่งบนมือถือ: เมนูป้าย → เลือกหลายแหล่ง แล้วแตะการ์ดอื่น
+  await ph.keyboard.press('Escape'); await ph.waitForTimeout(150);
+  await ph.tap('#src-chips [data-tagact=select]'); await ph.waitForTimeout(200);
+  ok('phone: "Select" chip opens select mode', /แตะการ์ดเพื่อเลือก/.test(await ph.textContent('#src-sel').catch(() => '')));
+  await ph.tap('#inputs-grid .card:nth-child(1) .card-thumb'); await ph.waitForTimeout(450);
+  await ph.tap('#inputs-grid .card:nth-child(2) .card-thumb'); await ph.waitForTimeout(450);
+  ok('phone: tap two cards = 2 selected', /เลือก 2 แหล่ง/.test(await ph.textContent('#src-sel').catch(() => '')), await ph.textContent('#src-sel').catch(() => ''));
+  ok('phone: selection bar fits the screen', await ph.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+  await ph.tap('#src-sel [data-sel=clear]'); await ph.waitForTimeout(150);
   // ปุ่มขนาดการ์ด/จัดการป้ายที่ไม่มีที่บนหัวแผง อยู่ในเมนู "เพิ่มเติม"
   const size0 = await ph.evaluate(() => document.documentElement.dataset.cards || 'm');
   await ph.tap('#m-tabs [data-mmore]'); await ph.waitForTimeout(200);

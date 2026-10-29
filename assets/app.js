@@ -1503,7 +1503,8 @@
     const count = id => inputs.filter(i => (i.tags || []).includes(id)).length;
     row.innerHTML = (tagDefs.length ? `<button type="button" class="src-chip ${srcFilter.tag ? '' : 'is-on'}" data-tag="" aria-pressed="${!srcFilter.tag}">ทั้งหมด <small>${inputs.length}</small></button>` : '')
       + tagDefs.map(t => `<button type="button" class="src-chip ${srcFilter.tag === t.id ? 'is-on' : ''}" data-tag="${t.id}" aria-pressed="${srcFilter.tag === t.id}" style="--tag:${t.color}" title="กรองเฉพาะป้าย “${esc(t.name)}” · ลากการ์ดมาวางเพื่อติดป้ายนี้"><i></i>${esc(t.name)} <small>${count(t.id)}</small></button>`).join('')
-      + `<button type="button" class="src-chip src-chip-add" data-tagact="new" title="สร้างป้ายใหม่">${icon('plus')}ป้าย</button>`;
+      + `<button type="button" class="src-chip src-chip-add" data-tagact="new" title="สร้างป้ายใหม่">${icon('plus')}ป้าย</button>`
+      + (inputs.length > 1 ? `<button type="button" class="src-chip src-chip-add" data-tagact="select" title="เลือกหลายแหล่งภาพเพื่อติดป้ายทีเดียว (Ctrl / Shift + คลิกการ์ดก็ได้)">${icon('grid')}เลือก</button>` : '');
   }
   function applySourceFilter() {
     const grid = $('#inputs-grid');
@@ -1528,7 +1529,7 @@
     const s = $('#src-search'); if (s) s.value = '';
     renderSourceBar(); applySourceFilter();
   }
-  async function createTagFlow(inp) {
+  async function createTagFlow(inp, quiet) {
     const r = await dialog({ title: 'ป้ายใหม่', body: `<label class="field"><span>ชื่อป้าย</span><input name="name" class="input" maxlength="24" placeholder="เช่น กล้อง, เวที, กราฟิก, ผู้พูด" required></label>`,
       actions: [{ label: 'ยกเลิก' }, { label: 'สร้างป้าย', primary: true, value: 'ok' }] });
     if (!r || r.value !== 'ok') return null;
@@ -1537,7 +1538,7 @@
     if (inp) inp.tags = [...(inp.tags || []), t.id];
     renderInputs();
     show.autosave();
-    toast(inp ? `ติดป้าย “${t.name}” ให้ “${inp.name}” แล้ว` : `สร้างป้าย “${t.name}” แล้ว — ลากการ์ดมาวางบนป้ายเพื่อติดป้าย`, 'success', 4000);
+    if (!quiet) toast(inp ? `ติดป้าย “${t.name}” ให้ “${inp.name}” แล้ว` : `สร้างป้าย “${t.name}” แล้ว — ลากการ์ดมาวางบนป้ายเพื่อติดป้าย`, 'success', 4000);
     return t;
   }
   function openTagManager() {
@@ -1574,7 +1575,73 @@
     }).then(() => { renderInputs(); show.autosave(); });
   }
   // เมนูป้ายของการ์ด: ติด/เอาป้ายออก (ไม่ปิดเมนู) · ป้ายใหม่ · เลื่อนลำดับ (สำหรับจอสัมผัส/คีย์บอร์ด)
+  /* เลือกหลายแหล่งภาพเพื่อติด/เอาป้ายออกครั้งเดียว: Ctrl/⌘/Shift + คลิกการ์ด · มือถือ: เมนูป้าย → "เลือกหลายแหล่ง"
+     ระหว่างเลือก แตะการ์ด = เลือก/ไม่เลือก (ไม่เปลี่ยน Preview) · Esc หรือ "ยกเลิก" = เลิกเลือก */
+  const srcSel = new Set();
+  let selMode = false; // โหมดเลือก (จากปุ่ม "เลือก") — ยังไม่ได้เลือกสักการ์ดก็แตะเพื่อเลือกได้
+  const selecting = () => selMode || srcSel.size > 0;
+  const selected = () => inputs.filter(i => srcSel.has(i.id));
+  function toggleSelect(inp, on) {
+    if (on === undefined) on = !srcSel.has(inp.id);
+    if (on) srcSel.add(inp.id); else srcSel.delete(inp.id);
+    paintSelection();
+  }
+  function clearSelection() { if (!selecting()) return; srcSel.clear(); selMode = false; paintSelection(); }
+  function paintSelection() {
+    for (const id of [...srcSel]) if (!byId(id)) srcSel.delete(id);
+    $$('#inputs-grid .card').forEach(c => { const on = srcSel.has(c.dataset.id); c.classList.toggle('is-selected', on); c.setAttribute('aria-selected', on); });
+    const bar = $('#src-sel');
+    if (!bar) return;
+    bar.hidden = !selecting();
+    document.documentElement.classList.toggle('is-src-select', selecting());
+    bar.innerHTML = selecting() ? `<span class="src-sel-n">${srcSel.size ? `เลือก ${srcSel.size} แหล่ง` : 'แตะการ์ดเพื่อเลือก'}</span>`
+      + `<button type="button" class="btn btn-sm" data-sel="tags" ${srcSel.size ? '' : 'disabled'}>${icon('tag')}ติดป้าย…</button>`
+      + `<button type="button" class="btn btn-sm btn-ghost" data-sel="all">เลือกทั้งหมด</button>`
+      + `<button type="button" class="btn btn-sm btn-ghost" data-sel="clear">ยกเลิก</button>` : '';
+  }
+  function setTagOn(list, id, on) {
+    for (const inp of list) {
+      const has = (inp.tags || []).includes(id);
+      if (on && !has) inp.tags = [...(inp.tags || []), id];
+      else if (!on && has) inp.tags = inp.tags.filter(x => x !== id);
+    }
+    renderInputs();
+    show.autosave();
+  }
+  function openMultiTagMenu(list, anchor) {
+    closeMenu();
+    const menu = document.createElement('div');
+    menu.className = 'menu tag-menu';
+    menu.setAttribute('role', 'menu');
+    const paint = () => {
+      menu.innerHTML = `<div class="menu-label">ป้ายของ ${list.length} แหล่งที่เลือก</div>`
+        + (tagDefs.length ? tagDefs.map(t => {
+          const n = list.filter(i => (i.tags || []).includes(t.id)).length;
+          const st = n === list.length ? 'true' : n ? 'mixed' : 'false';
+          return `<button role="menuitemcheckbox" aria-checked="${st}" data-tg="${t.id}" style="--tag:${t.color}"><i class="tag-dot"></i>${esc(t.name)}<small>${st === 'true' ? '✓' : st === 'mixed' ? '–' : ''}</small></button>`;
+        }).join('') : '<p class="note tag-empty">ยังไม่มีป้าย — สร้างป้ายแรกด้านล่าง</p>')
+        + `<button role="menuitem" data-tm="new">${icon('plus')}ป้ายใหม่…</button>`;
+    };
+    paint();
+    document.body.appendChild(menu);
+    const r = anchor.getBoundingClientRect();
+    menu.style.left = `${clamp(r.left, 8, innerWidth - menu.offsetWidth - 8)}px`;
+    menu.style.top = `${r.bottom + 6 + menu.offsetHeight > innerHeight ? Math.max(8, r.top - menu.offsetHeight - 6) : r.bottom + 6}px`;
+    menu.addEventListener('click', async e => {
+      const t = e.target.closest('[data-tg]');
+      // ติดครบทุกแหล่งแล้ว = เอาออกจากทั้งหมด · ยังไม่ครบ = ติดให้ทั้งหมด
+      if (t) { setTagOn(list, t.dataset.tg, t.getAttribute('aria-checked') !== 'true'); paint(); return; }
+      if (!e.target.closest('[data-tm="new"]')) return;
+      closeMenu();
+      const tag = await createTagFlow(null, true);
+      if (tag) { setTagOn(list, tag.id, true); toast(`ติดป้าย “${tag.name}” ให้ ${list.length} แหล่งแล้ว`, 'success', 3000); }
+    });
+    menu.querySelector('button')?.focus({ preventScroll: true });
+    setTimeout(() => document.addEventListener('pointerdown', outsideMenu, true));
+  }
   function openTagMenu(inp, anchor) {
+    // คลิกขวา/ปุ่มป้ายบนการ์ดที่อยู่ในกลุ่มที่เลือก = จัดป้ายทั้งกลุ่ม
+    if (srcSel.size > 1 && srcSel.has(inp.id)) { openMultiTagMenu(selected(), anchor); return; }
     closeMenu();
     const menu = document.createElement('div');
     menu.className = 'menu tag-menu';
@@ -1586,7 +1653,8 @@
         + `<button role="menuitem" data-tm="new">${icon('plus')}ป้ายใหม่…</button>`
         + (tagDefs.length ? `<button role="menuitem" data-tm="manage">${icon('edit')}จัดการป้าย…</button>` : '')
         + `<div class="menu-sep"></div><div class="menu-label">ลำดับ (ตอนนี้ ${at + 1} จาก ${inputs.length})</div>`
-        + `<button role="menuitem" data-tm="up" ${at ? '' : 'disabled'}>‹ เลื่อนไปก่อนหน้า</button><button role="menuitem" data-tm="down" ${at < inputs.length - 1 ? '' : 'disabled'}>เลื่อนไปถัดไป ›</button>`;
+        + `<button role="menuitem" data-tm="up" ${at ? '' : 'disabled'}>‹ เลื่อนไปก่อนหน้า</button><button role="menuitem" data-tm="down" ${at < inputs.length - 1 ? '' : 'disabled'}>เลื่อนไปถัดไป ›</button>`
+        + `<div class="menu-sep"></div><button role="menuitem" data-tm="select">${icon('grid')}เลือกหลายแหล่ง…</button>`;
     };
     paint();
     document.body.appendChild(menu);
@@ -1603,6 +1671,7 @@
       closeMenu();
       if (act === 'new') createTagFlow(inp);
       else if (act === 'manage') openTagManager();
+      else if (act === 'select') { toggleSelect(inp, true); toast('แตะการ์ดอื่นเพื่อเลือกเพิ่ม แล้วกด “ติดป้าย…”', 'info', 4000); }
     });
     menu.querySelector('button')?.focus({ preventScroll: true });
     setTimeout(() => document.addEventListener('pointerdown', outsideMenu, true));
@@ -1635,6 +1704,7 @@
       const a = e.target.closest('[data-tagact]');
       if (a?.dataset.tagact === 'new') createTagFlow();
       else if (a?.dataset.tagact === 'manage') openTagManager();
+      else if (a?.dataset.tagact === 'select') { selMode = true; paintSelection(); }
     };
     bar.addEventListener('click', onClick);
     $('#src-chips')?.addEventListener('click', onClick);
@@ -1720,7 +1790,9 @@
         const inp = byId(st.id);
         if (inp && st.chip) {
           const t = tagById(st.chip);
-          if (t && !(inp.tags || []).includes(t.id)) { toggleInputTag(inp, t.id, true); toast(`ติดป้าย “${t.name}” ให้ “${inp.name}” แล้ว`, 'success', 3000); }
+          const group = srcSel.has(inp.id) && srcSel.size > 1 ? selected() : null;
+          if (t && group) { setTagOn(group, t.id, true); toast(`ติดป้าย “${t.name}” ให้ ${group.length} แหล่งแล้ว`, 'success', 3000); }
+          else if (t && !(inp.tags || []).includes(t.id)) { toggleInputTag(inp, t.id, true); toast(`ติดป้าย “${t.name}” ให้ “${inp.name}” แล้ว`, 'success', 3000); }
         } else if (inp && st.target) {
           const tgt = byId(st.target);
           if (tgt) {
@@ -1794,7 +1866,7 @@
       const canRelink = ['camera', 'screen', 'media', 'image', 'slides'].includes(inp.type) && (inp.missing || inp.status !== 'live');
       const card = document.createElement('div');
       const tags = inputTags(inp);
-      card.className = 'card' + (inp.status !== 'live' ? ' no-signal' : '') + (tags.length ? ' has-tag' : '');
+      card.className = 'card' + (inp.status !== 'live' ? ' no-signal' : '') + (tags.length ? ' has-tag' : '') + (srcSel.has(inp.id) ? ' is-selected' : '');
       card.dataset.id = inp.id;
       if (tags.length) card.style.setProperty('--tag', tags[0].color);
       card.innerHTML = `
@@ -1845,6 +1917,7 @@
     });
     renderSourceBar();
     applySourceFilter();
+    paintSelection();
     cardVu.sync();
     placeVcrops();
     updateTally();
@@ -1927,6 +2000,7 @@
       else if (act === 'rspd') { const i = REPLAY_SPEEDS.indexOf(inp.replay.speed); inp.replay.speed = REPLAY_SPEEDS[(i + 1) % REPLAY_SPEEDS.length]; inp.el.playbackRate = inp.replay.speed; actionBtn.textContent = speedLabel(inp.replay.speed); }
       return;
     }
+    if (e.ctrlKey || e.metaKey || e.shiftKey || selecting()) { toggleSelect(inp); return; }
     // แตะสองครั้ง = ตัดเข้า Program (ตรวจจับเองเพราะ iOS ไม่ส่ง dblclick)
     const now = Date.now();
     const isDouble = lastTap.id === inp.id && now - lastTap.time < 350;
@@ -11337,6 +11411,13 @@ onmessage = async e => {
     bindVcropDrag($('#inputs-grid'));
     bindCardDrag($('#inputs-grid'));
     bindSourceBar();
+    $('#src-sel').addEventListener('click', e => {
+      const b = e.target.closest('[data-sel]');
+      if (!b) return;
+      if (b.dataset.sel === 'clear') clearSelection();
+      else if (b.dataset.sel === 'all') { $$('#inputs-grid .card:not([hidden])').forEach(c => srcSel.add(c.dataset.id)); paintSelection(); }
+      else openMultiTagMenu(selected(), b);
+    });
     $('#inputs-grid').addEventListener('contextmenu', e => {
       const card = e.target.closest('.card'), inp = card && byId(card.dataset.id);
       if (!inp || e.target.closest('input, textarea')) return;
@@ -11412,6 +11493,7 @@ onmessage = async e => {
 
     document.addEventListener('keydown', e => {
       if (e.key === 'Escape') {
+        if (!$('.menu') && !$('.modal-backdrop')) clearSelection();
         closeMenu();
         $('#pgm-monitor').classList.remove('is-fullscreen');
         return;
