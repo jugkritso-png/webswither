@@ -74,6 +74,50 @@ const until = async (fn, ms = 15000) => { const end = Date.now() + ms; while (Da
   await ph.waitForTimeout(300);
   ok('tap on the picture focuses there', await ph.evaluate(() => window.__applied.some(a => a.pointsOfInterest && a.focusMode === 'single-shot')));
 
+  // ---- วงแหวนซูม / โฟกัสแบบนุ่ม
+  await ph.tap('[data-pc=zoom]'); await ph.waitForSelector('.pc-panel .pc-ring[data-ring=zoom]');
+  const ringDrag = async (sel, dx) => {
+    const bb = await ph.locator(sel).boundingBox(), y = bb.y + bb.height / 2, x0 = bb.x + bb.width * 0.8;
+    await ph.evaluate(() => { window.__applied = []; });
+    const cdp = await pctx.newCDPSession(ph);
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: x0, y }] });
+    for (let i = 1; i <= 15; i++) { await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: x0 + dx * i / 15, y }] }); await ph.waitForTimeout(16); }
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    await ph.waitForTimeout(900);
+  };
+  await ringDrag('.pc-ring[data-ring=zoom] .pc-ring-band', -220);
+  const zs = await ph.evaluate(() => window.__applied.filter(a => 'zoom' in a).map(a => a.zoom));
+  ok('dragging the zoom ring zooms in smoothly (many small steps, only increasing)', zs.length >= 5 && zs.every((z, i) => !i || z >= zs[i - 1] - 1e-9) && zs[zs.length - 1] > 1.3, JSON.stringify(zs.map(z => +z.toFixed(2))));
+  ok('rail shows the new zoom', parseFloat(await ph.textContent('[data-pc=zoom] b')) > 1.3, await ph.textContent('[data-pc=zoom] b'));
+  await ph.tap('.pc-panel [data-seg=glide] [data-v="600"]');
+  await ph.evaluate(() => { window.__applied = []; });
+  await ph.tap('.pc-panel [data-seg=zoomQuick] [data-v="5"]'); await ph.waitForTimeout(1100);
+  const gz = await ph.evaluate(() => window.__applied.filter(a => 'zoom' in a).map(a => a.zoom));
+  ok('5× button glides there (in-between values, ends at 5)', gz.length >= 4 && Math.abs(gz[gz.length - 1] - 5) < 1e-6 && gz.some(z => z > 1.4 && z < 4.9), JSON.stringify(gz.map(z => +z.toFixed(2))));
+  // จีบนิ้วบนภาพ (สองนิ้วกางออก) = ซูมเข้า
+  await ph.evaluate(() => { window.__applied = []; });
+  {
+    const vb = await ph.locator('#caller-video').boundingBox(), cx = vb.x + vb.width / 2, cy = vb.y + vb.height / 2;
+    await ph.evaluate(([cx, cy]) => {
+      const v = document.querySelector('#caller-video');
+      const ev = (type, id, x) => v.dispatchEvent(new PointerEvent(type, { pointerId: id, pointerType: 'touch', clientX: x, clientY: cy, bubbles: true }));
+      ev('pointerdown', 11, cx - 40); ev('pointerdown', 12, cx + 40);
+      for (let i = 1; i <= 10; i++) { ev('pointermove', 11, cx - 40 - i * 4); ev('pointermove', 12, cx + 40 + i * 4); }
+      ev('pointerup', 11, cx - 80); ev('pointerup', 12, cx + 80);
+    }, [cx, cy]);
+    await ph.waitForTimeout(500);
+  }
+  const pz = await ph.evaluate(() => window.__applied.filter(a => 'zoom' in a).map(a => a.zoom));
+  ok('pinch out on the picture zooms in', pz.length && pz[pz.length - 1] > 5.5 && !(await ph.evaluate(() => window.__applied.some(a => a.pointsOfInterest))), JSON.stringify(pz.map(z => +z.toFixed(2))));
+  // วงแหวนโฟกัสตอน AF → เปลี่ยนเป็น MF แล้วดึงโฟกัส
+  await ph.tap('[data-pc=focus]'); await ph.waitForSelector('.pc-panel .pc-ring[data-ring=focusDistance]');
+  await ringDrag('.pc-ring[data-ring=focusDistance] .pc-ring-band', -150);
+  const fs1 = await ph.evaluate(() => window.__applied.filter(a => 'focusDistance' in a));
+  ok('focus ring in AF switches to MF and pulls focus smoothly', fs1.length >= 5 && fs1[0].focusMode === 'manual' && fs1[fs1.length - 1].focusDistance > 1.2, JSON.stringify(fs1.map(a => +a.focusDistance.toFixed(2))));
+  ok('rail shows MF and the panel follows', (await ph.textContent('[data-pc=focus] b')) === 'MF' && await ph.isVisible('.pc-panel [data-seg=focusMode] [data-v=manual].on'));
+  await ph.screenshot({ path: process.env.WORK + '/procam-focus-ring.png' });
+  await ph.tap('.pc-panel .pc-close');
+
   // ---- สตูดิโอควบคุมจากระยะไกล
   const card = host.locator(`.card[data-id="${id}"]`); await card.hover(); await card.locator('[data-card=camctl]').click();
   await host.waitForSelector('.cam-ctl [data-ck=iso]');

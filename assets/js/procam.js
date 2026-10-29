@@ -20,7 +20,7 @@
   function initProCam(ctx) {
     const { root, video } = ctx;
     root.classList.add('procam');
-    const prefs = Object.assign({ zebra: false, zebraAt: 95, peaking: false, falsecolor: false, hist: true, grid: false, guide: 'none', level: false, meter: true }, store.get('procam', {}));
+    const prefs = Object.assign({ zebra: false, zebraAt: 95, peaking: false, falsecolor: false, hist: true, grid: false, guide: 'none', level: false, meter: true, glide: 1500 }, store.get('procam', {}));
     const savePrefs = () => store.set('procam', prefs);
     let tool = null, lenses = [], battery = null, stats = {}, stateTimer = null;
     const rec = { recorder: null, since: 0, name: '', parts: null, writable: null, handle: null, bytes: 0 };
@@ -218,6 +218,7 @@
     root.addEventListener('click', e => {
       if (e.target !== video && e.target !== assist && !e.target.closest('.pc-stage')) return;
       if (tool) { closePanel(); return; }
+      if (pinch || performance.now() - pinchEndAt < 400) return;
       focusAt((e.clientX - rect.x) / rect.w, (e.clientY - rect.y) / rect.h);
     });
     // แตะเพื่อโฟกัส/วัดแสง (จากจอมือถือ หรือสตูดิโอสั่งมา)
@@ -285,6 +286,11 @@
     const seg = (name, items, cur) => `<div class="pc-seg" data-seg="${name}">${items.map(([v, l]) => `<button type="button" data-v="${v}" class="${String(v) === String(cur) ? 'on' : ''}">${l}</button>`).join('')}</div>`;
     const slider = (key, label, r, val, fmt) => `<label class="pc-slider"><span>${label} <b data-val="${key}">${fmt(val)}</b></span>
       <input type="range" data-k="${key}" min="${r.min}" max="${r.max}" step="${r.step || (r.max - r.min) / 200}" value="${val ?? r.min}"></label>`;
+    // วงแหวนแบบเลนส์: ลากซ้าย-ขวาให้ขีดสเกลเลื่อนตามนิ้ว (ปล่อยแล้วหมุนต่อด้วยแรงเฉื่อย) · ซูมใช้สเกลลอการิทึม (2× → 4× ระยะลากเท่ากับ 1× → 2×)
+    const ring = (key, label, r, val, fmt) => `<div class="pc-ring" data-ring="${key}">
+      <div class="pc-ring-head"><span>${label}</span><b data-val="${key}">${fmt(val ?? r.min)}</b></div>
+      <div class="pc-ring-band" role="slider" tabindex="0" aria-label="${label}" aria-valuemin="${r.min}" aria-valuemax="${r.max}" aria-valuenow="${val ?? r.min}"><i class="pc-ring-ticks"></i><i class="pc-ring-mark"></i></div>
+      <div class="pc-ring-bar"><i></i></div></div>`;
     const unsupported = what => `<p class="pc-note">กล้องหรือเบราว์เซอร์นี้ไม่ให้ปรับ${what} — Android + Chrome รองรับมากที่สุด (iPhone ยังปรับเองได้น้อย)</p>`;
     function panelHtml(t) {
       const c = caps(), s = sets();
@@ -311,14 +317,17 @@
         if (!fd && !(Array.isArray(c.focusMode) && c.focusMode.length)) return unsupported('โฟกัส') + '<p class="pc-note">ยังแตะที่ภาพเพื่อโฟกัสได้ถ้ากล้องรองรับ</p>';
         const manual = s.focusMode === 'manual';
         return `${seg('focusMode', [['continuous', 'AF'], ['manual', 'MF']], manual ? 'manual' : 'continuous')}
-          ${manual && fd ? slider('focusDistance', 'ระยะโฟกัส', fd, s.focusDistance ?? fd.min, v => (+v).toFixed(2) + ' m') : ''}
-          <p class="pc-note">แตะที่ภาพเพื่อโฟกัส/วัดแสงตรงจุดนั้น · เปิด Focus peaking (ASSIST) จะเห็นขอบที่ชัดเป็นสีแดง</p>`;
+          ${fd ? ring('focusDistance', 'ระยะโฟกัส', fd, s.focusDistance ?? fd.min, fmtVal.focusDistance) : ''}
+          ${fd ? seg('focusQuick', [[fd.min, 'ใกล้สุด'], [Math.min(fd.max, 1), '1 m'], [Math.min(fd.max, 3), '3 m'], [fd.max, '∞']].filter((x, i, a) => a.findIndex(y => y[0] === x[0]) === i), '') : ''}
+          <p class="pc-note">หมุนวงแหวน (ลากซ้าย-ขวา) เพื่อดึงโฟกัสแบบนุ่ม — แตะวงแหวนตอน AF จะเปลี่ยนเป็น MF ให้เอง · แตะที่ภาพเพื่อโฟกัสตรงจุดนั้น · เปิด Focus peaking (ASSIST) จะเห็นขอบที่ชัดเป็นสีแดง</p>`;
       }
       if (t === 'zoom') {
         const z = range(c.zoom);
         if (!z) return unsupported('ซูม');
-        return `${slider('zoom', 'ซูม', z, s.zoom ?? z.min, v => (+v).toFixed(1) + '×')}
-          ${seg('zoomQuick', [1, 2, 3, 5, 10].filter(v => v >= z.min && v <= z.max).map(v => [v, v + '×']), s.zoom)}`;
+        return `${ring('zoom', 'ซูม', z, s.zoom ?? z.min, fmtVal.zoom)}
+          ${seg('zoomQuick', [1, 2, 3, 5, 10].filter(v => v >= z.min && v <= z.max).map(v => [v, v + '×']), s.zoom)}
+          <div class="pc-label">ความเร็วซูม / ดึงโฟกัสเมื่อกดปุ่ม</div>${seg('glide', [[0, 'ทันที'], [600, 'เร็ว'], [1500, 'ปานกลาง'], [3000, 'ช้า']], prefs.glide)}
+          <p class="pc-note">หมุนวงแหวนหรือจีบนิ้วบนภาพเพื่อซูมแบบนุ่ม · ปุ่ม 1× 2× 3× ค่อย ๆ ซูมไปตามความเร็วที่เลือก</p>`;
       }
       if (t === 'lens') {
         if (lenses.length < 2) return '<p class="pc-note">ไม่พบเลนส์อื่นในเครื่องนี้ (หรือเบราว์เซอร์ไม่ให้เลือก)</p>';
@@ -343,11 +352,12 @@
       tool = t;
       panel.innerHTML = `<div class="pc-panel-head"><b>${$(`[data-pc="${t}"] small`, rail).textContent}</b><button type="button" class="pc-close">✕</button></div>${panelHtml(t)}`;
       panel.hidden = false;
+      paintRings();
       paint();
     }
     function closePanel() { tool = null; panel.hidden = true; paint(); }
     // วาดแผงใหม่ (เช่นเปลี่ยน AUTO → MANUAL แล้วต้องมีแถบเลื่อน) — ยกเว้นตอนกำลังลากแถบเลื่อนอยู่
-    const refreshPanel = () => { const a = document.activeElement; if (tool && !(a && a.type === 'range' && panel.contains(a))) panel.innerHTML = `<div class="pc-panel-head"><b>${$(`[data-pc="${tool}"] small`, rail).textContent}</b><button type="button" class="pc-close">✕</button></div>${panelHtml(tool)}`; };
+    const refreshPanel = () => { const a = document.activeElement; if (tool && !ringBusy() && !(a && a.type === 'range' && panel.contains(a))) panel.innerHTML = `<div class="pc-panel-head"><b>${$(`[data-pc="${tool}"] small`, rail).textContent}</b><button type="button" class="pc-close">✕</button></div>${panelHtml(tool)}`; paintRings(); };
 
     rail.addEventListener('click', e => {
       const b = e.target.closest('[data-pc]');
@@ -381,7 +391,9 @@
         await apply(patch);
       } else if (name === 'shutterQuick') await apply({ exposureTime: +v });
       else if (name === 'wbPreset') await apply({ colorTemperature: +v });
-      else if (name === 'zoomQuick') await apply({ zoom: +v });
+      else if (name === 'zoomQuick') { glide('zoom', +v); return; }
+      else if (name === 'focusQuick') { glide('focusDistance', +v); return; }
+      else if (name === 'glide') { prefs.glide = +v; savePrefs(); }
       else if (name === 'lens') { await ctx.setLens(v); afterTrackChange(); }
       else if (name === 'fps') { await ctx.setFps(+v); afterTrackChange(); }
       else if (name === 'quality') { await ctx.setQuality(v); afterTrackChange(); }
@@ -399,6 +411,146 @@
       dragTimer = setTimeout(() => apply({ [k]: v }, true), 40);
     });
     panel.addEventListener('change', e => { if (e.target.dataset.k) e.target.blur(); });
+
+    /* ---------- วงแหวนโฟกัส / ซูมแบบนุ่ม ----------
+       ส่งค่าให้กล้องทีละครั้ง (รอครั้งก่อนเสร็จ แล้วส่งค่าล่าสุด) — ลากเร็วแค่ไหนกล้องก็ไม่ค้างคิว
+       glide = ค่อย ๆ เปลี่ยนไปยังค่าเป้าหมาย (ease in-out) เหมือนซูมไฟฟ้า / ดึงโฟกัสของกล้องวิดีโอ */
+    const fmtVal = { zoom: v => (+v).toFixed(1) + '×', focusDistance: v => (+v).toFixed(2) + ' m' };
+    const drv = {};
+    const cur = k => { const d = drv[k]; return d && d.target != null ? d.target : sets()[k]; };
+    function drive(k, v) {
+      const r = range(caps()[k]);
+      if (!r) return;
+      v = clamp(v, r.min, r.max);
+      const d = drv[k] || (drv[k] = { busy: false, target: null });
+      d.target = v;
+      paintRing(k, v);
+      if (d.busy) return;
+      const send = async () => {
+        const t = track();
+        if (!t) return;
+        d.busy = true;
+        const val = d.target, adv = { [k]: val };
+        if (k === 'focusDistance' && sets().focusMode !== 'manual') adv.focusMode = 'manual';
+        try { await t.applyConstraints({ advanced: [adv] }); } catch (e) {}
+        d.busy = false;
+        if (d.target !== val) send();
+        else { d.target = null; paint(); sendStateSoon(); }
+      };
+      send();
+    }
+    function glide(k, to) {
+      const r = range(caps()[k]);
+      if (!r) return;
+      const d = drv[k] || (drv[k] = { busy: false, target: null });
+      cancelAnimationFrame(d.anim);
+      const from = +(cur(k) ?? to), ms = prefs.glide || 0;
+      if (!ms || Math.abs(to - from) < 1e-6) { drive(k, to); return; }
+      const lg = k === 'zoom' && from > 0 && to > 0, a = lg ? Math.log(from) : from, b = lg ? Math.log(to) : to, t0 = performance.now();
+      const step = now => {
+        const p = Math.min(1, (now - t0) / ms), e = p < 0.5 ? 2 * p * p : 1 - Math.pow(-2 * p + 2, 2) / 2, x = a + (b - a) * e;
+        drive(k, lg ? Math.exp(x) : x);
+        if (p < 1) d.anim = requestAnimationFrame(step);
+      };
+      d.anim = requestAnimationFrame(step);
+    }
+    // ตำแหน่ง 0–1 บนวงแหวน (ซูม = ลอการิทึม)
+    const toU = (k, v, r) => k === 'zoom' && r.min > 0 ? Math.log(v / r.min) / Math.log(r.max / r.min) : (v - r.min) / (r.max - r.min);
+    const fromU = (k, u, r) => { u = clamp(u, 0, 1); return k === 'zoom' && r.min > 0 ? r.min * Math.pow(r.max / r.min, u) : r.min + u * (r.max - r.min); };
+    function paintRing(k, v) {
+      const el = $(`.pc-ring[data-ring="${k}"]`, panel), r = range(caps()[k]);
+      if (!el || !r) return;
+      const u = clamp(toU(k, v, r), 0, 1);
+      // ทั้งช่วงเท่ากับวงแหวนยาว 3 เท่าของแถบ — ขีดสเกลเลื่อนตามค่า
+      $('.pc-ring-ticks', el).style.backgroundPositionX = `${(-u * (el.clientWidth || 300) * 3).toFixed(1)}px`;
+      $('.pc-ring-bar i', el).style.width = `${(u * 100).toFixed(1)}%`;
+      $(`[data-val="${k}"]`, el).textContent = fmtVal[k](v);
+      $('.pc-ring-band', el).setAttribute('aria-valuenow', (+v).toFixed(2));
+    }
+    const paintRings = () => panel.querySelectorAll('.pc-ring').forEach(el => { const k = el.dataset.ring, v = cur(k); if (v != null) paintRing(k, +v); });
+    let ringDrag = null;
+    const ringBusy = () => !!ringDrag || Object.values(drv).some(d => d.busy || d.coast);
+    panel.addEventListener('pointerdown', e => {
+      const band = e.target.closest('.pc-ring-band');
+      if (!band) return;
+      const k = band.closest('.pc-ring').dataset.ring, r = range(caps()[k]);
+      if (!r) return;
+      e.preventDefault();
+      try { band.setPointerCapture(e.pointerId); } catch (x) {}
+      const d = drv[k] || (drv[k] = { busy: false, target: null });
+      cancelAnimationFrame(d.anim); cancelAnimationFrame(d.coast); d.coast = 0;
+      ringDrag = { k, r, band, pid: e.pointerId, u: toU(k, +cur(k), r), x: e.clientX, t: performance.now(), vel: 0 };
+      band.classList.add('turning');
+    });
+    panel.addEventListener('pointermove', e => {
+      const g = ringDrag;
+      if (!g || e.pointerId !== g.pid) return;
+      const now = performance.now(), dx = e.clientX - g.x, span = g.band.clientWidth * 3 || 900;
+      // ลากนิ้วไปทางซ้าย = ค่าเพิ่ม (สเกลเลื่อนตามนิ้ว เหมือนหมุนวงแหวนเลนส์)
+      const du = -dx / span;
+      g.u = clamp(g.u + du, 0, 1);
+      g.vel = 0.7 * g.vel + 0.3 * (du / Math.max(1, now - g.t));
+      g.x = e.clientX; g.t = now;
+      drive(g.k, fromU(g.k, g.u, g.r));
+    });
+    const ringUp = e => {
+      const g = ringDrag;
+      if (!g || e.pointerId !== g.pid) return;
+      ringDrag = null;
+      g.band.classList.remove('turning');
+      const d = drv[g.k];
+      let vel = performance.now() - g.t < 80 ? g.vel : 0, last = performance.now(), u = g.u;
+      // แรงเฉื่อย: หมุนต่ออีกนิดแล้วค่อย ๆ หยุด
+      const coast = now => {
+        const dt = now - last; last = now;
+        vel *= Math.pow(0.992, dt);
+        u = clamp(u + vel * dt, 0, 1);
+        drive(g.k, fromU(g.k, u, g.r));
+        if (Math.abs(vel) > 0.00002 && u > 0 && u < 1) d.coast = requestAnimationFrame(coast); else { d.coast = 0; setTimeout(refreshPanel, 300); }
+      };
+      if (Math.abs(vel) > 0.00005) d.coast = requestAnimationFrame(coast); else setTimeout(refreshPanel, 300);
+    };
+    panel.addEventListener('pointerup', ringUp);
+    panel.addEventListener('pointercancel', ringUp);
+    // ล้อเมาส์ / ปุ่มลูกศรบนวงแหวน (ละเอียดทีละ 1% · Shift = 5%)
+    panel.addEventListener('wheel', e => {
+      const band = e.target.closest('.pc-ring-band');
+      if (!band) return;
+      e.preventDefault();
+      const k = band.closest('.pc-ring').dataset.ring, r = range(caps()[k]);
+      if (r) drive(k, fromU(k, toU(k, +cur(k), r) + (e.deltaY || e.deltaX) / 2000, r));
+    }, { passive: false });
+    panel.addEventListener('keydown', e => {
+      const band = e.target.closest('.pc-ring-band');
+      if (!band || !/^Arrow(Left|Right|Up|Down)$/.test(e.key)) return;
+      e.preventDefault();
+      const k = band.closest('.pc-ring').dataset.ring, r = range(caps()[k]), dir = /Right|Up/.test(e.key) ? 1 : -1;
+      if (r) drive(k, fromU(k, toU(k, +cur(k), r) + dir * (e.shiftKey ? 0.05 : 0.01), r));
+    });
+    // จีบนิ้วบนภาพ = ซูมแบบนุ่ม
+    const touches = new Map();
+    let pinch = null;
+    const onPicture = e => e.target === video || e.target === assist || !!e.target.closest('.pc-stage');
+    root.addEventListener('pointerdown', e => {
+      if (e.pointerType !== 'touch' || !onPicture(e)) return;
+      touches.set(e.pointerId, [e.clientX, e.clientY]);
+      const z = range(caps().zoom);
+      if (touches.size === 2 && z) {
+        const [a, b] = [...touches.values()];
+        pinch = { d0: Math.hypot(a[0] - b[0], a[1] - b[1]) || 1, z0: +(cur('zoom') || z.min) };
+      }
+    });
+    root.addEventListener('pointermove', e => {
+      if (!touches.has(e.pointerId)) return;
+      touches.set(e.pointerId, [e.clientX, e.clientY]);
+      if (!pinch || touches.size !== 2) return;
+      const [a, b] = [...touches.values()];
+      drive('zoom', pinch.z0 * (Math.hypot(a[0] - b[0], a[1] - b[1]) / pinch.d0));
+    });
+    const endTouch = e => { touches.delete(e.pointerId); if (touches.size < 2 && pinch) { pinch = null; pinchEndAt = performance.now(); setTimeout(refreshPanel, 300); } };
+    let pinchEndAt = 0;
+    root.addEventListener('pointerup', endTouch);
+    root.addEventListener('pointercancel', endTouch);
 
     /* ---------- แถบสถานะ / ค่าบนปุ่ม ---------- */
     function paint() {
@@ -476,7 +628,9 @@
         const allowed = ['exposureMode', 'iso', 'exposureTime', 'exposureCompensation', 'whiteBalanceMode', 'colorTemperature', 'focusMode', 'focusDistance', 'zoom', 'torch'];
         const patch = {};
         for (const k of allowed) if (k in msg.set) patch[k] = msg.set[k];
-        await apply(patch, true);
+        // ซูม / ระยะโฟกัสจากแถบเลื่อนของสตูดิโอ: ส่งค่าล่าสุดทีละครั้งแบบเดียวกับวงแหวน ภาพไม่กระตุก
+        for (const k of ['zoom', 'focusDistance']) if (typeof patch[k] === 'number' && !(k === 'focusDistance' && patch.focusMode && patch.focusMode !== 'manual')) { drive(k, patch[k]); delete patch[k]; }
+        if (Object.keys(patch).length) await apply(patch, true);
         refreshPanel();
       } else if (msg.type === 'cam-cmd') {
         const v = msg.value;

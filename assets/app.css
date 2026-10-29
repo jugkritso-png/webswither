@@ -1556,6 +1556,22 @@ html[data-cards=l] .card-num, html[data-cards=l] .card-tally { font-size: 14px; 
 .pc-slider span { display: flex; justify-content: space-between; }
 .pc-slider b { font-family: var(--mono, monospace); color: #f5a524; }
 .pc-slider input { width: 100%; accent-color: #f5a524; }
+.pc-ring { display: grid; gap: 6px; font-size: 12px; user-select: none; -webkit-user-select: none; }
+.pc-ring-head { display: flex; justify-content: space-between; align-items: baseline; }
+.pc-ring-head b { font: 700 15px/1 var(--mono, monospace); color: #f5a524; }
+/* แถบวงแหวน: ขีดสเกลแบบเลนส์ (ขีดยาวทุก 5 ขีด) · ขอบซ้าย-ขวาจางเหมือนผิวโค้ง · เส้นกลาง = ตำแหน่งปัจจุบัน */
+.pc-ring-band { position: relative; height: 46px; border-radius: 10px; overflow: hidden; cursor: ew-resize; touch-action: none; outline: none;
+  background: linear-gradient(90deg, #07080b 0%, #1d2129 18%, #2a2f38 50%, #1d2129 82%, #07080b 100%); border: 1px solid rgba(255,255,255,.18); }
+.pc-ring-band:focus-visible { border-color: #f5a524; }
+.pc-ring-band.turning { border-color: #f5a524; }
+.pc-ring-ticks { position: absolute; inset: 6px 0; pointer-events: none;
+  background-image: repeating-linear-gradient(90deg, rgba(255,255,255,.85) 0 2px, transparent 2px 60px), repeating-linear-gradient(90deg, rgba(255,255,255,.4) 0 1px, transparent 1px 12px);
+  background-size: 60px 100%, 12px 55%; background-repeat: repeat-x; background-position-y: center, center;
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 25%, #000 75%, transparent); mask-image: linear-gradient(90deg, transparent, #000 25%, #000 75%, transparent); }
+.pc-ring-mark { position: absolute; left: 50%; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: #f5a524; box-shadow: 0 0 6px #f5a524; pointer-events: none; }
+.pc-ring-bar { height: 3px; border-radius: 2px; background: rgba(255,255,255,.15); overflow: hidden; }
+.pc-ring-bar i { display: block; height: 100%; width: 0; background: #f5a524; }
+#caller-video { touch-action: none; }
 .pc-label { font-size: 11px; color: rgba(255,255,255,.6); letter-spacing: .06em; }
 .pc-note { margin: 0; font-size: 11px; color: rgba(255,255,255,.65); }
 @media (orientation: landscape) and (max-height: 520px) {

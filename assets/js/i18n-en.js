@@ -2240,6 +2240,10 @@
     "{}ติดป้าย…": "{1}Tag…", "{}เลือกหลายแหล่ง…": "{1}Select several…",
     "แตะการ์ดเพื่อเลือก": "Tap cards to select", "{}เลือก": "{1}Select",
     "เลือกหลายแหล่งภาพเพื่อติดป้ายทีเดียว (Ctrl / Shift + คลิกการ์ดก็ได้)": "Select several sources to tag them at once (or Ctrl / Shift + click cards)",
+    "ระยะโฟกัส": "Focus distance", "ใกล้สุด": "Closest", "ปานกลาง": "Medium", "ทันที": "Instant", "เร็ว": "Fast", "ช้า": "Slow",
+    "ความเร็วซูม / ดึงโฟกัสเมื่อกดปุ่ม": "Zoom / focus pull speed for the buttons",
+    "หมุนวงแหวน (ลากซ้าย-ขวา) เพื่อดึงโฟกัสแบบนุ่ม — แตะวงแหวนตอน AF จะเปลี่ยนเป็น MF ให้เอง · แตะที่ภาพเพื่อโฟกัสตรงจุดนั้น · เปิด Focus peaking (ASSIST) จะเห็นขอบที่ชัดเป็นสีแดง": "Turn the ring (drag left / right) for a smooth focus pull — touching it in AF switches to MF · tap the picture to focus there · turn on Focus peaking (ASSIST) to see sharp edges in red",
+    "หมุนวงแหวนหรือจีบนิ้วบนภาพเพื่อซูมแบบนุ่ม · ปุ่ม 1× 2× 3× ค่อย ๆ ซูมไปตามความเร็วที่เลือก": "Turn the ring or pinch the picture for a smooth zoom · the 1× 2× 3× buttons zoom gradually at the chosen speed",
     "ทีวี": "TV", "หน้า": "Page", "รายการ": "Item", "ความยาว": "Length", "เหลือ": "Remain", "สไลด์": "Slides"
   });
 })(window.WebMix = window.WebMix || {});
