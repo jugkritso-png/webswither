@@ -85,7 +85,7 @@ const until = async (fn, ms = 15000) => { const end = Date.now() + ms; while (Da
   // ชั้นนอก = ซูม servo: ดันขึ้น (T) ค้างไว้ → ซูมเข้าต่อเนื่อง · ปล่อย → หยุดนุ่ม
   const spin = async (deg0, deg1, rf, hold = 0) => {
     const bb = await ph.locator('.pc-dial canvas').boundingBox(), cx = bb.x + bb.width, cy = bb.y + bb.height / 2, R = bb.width * rf;
-    await ph.evaluate(() => { window.__applied = []; });
+    await ph.evaluate(() => { window.__applied = []; window.__zoomTrace = []; window.__zoomTimes = []; });
     const cdp = await pctx.newCDPSession(ph), pt = d => ({ x: cx + Math.cos(d * Math.PI / 180) * R, y: cy + Math.sin(d * Math.PI / 180) * R });
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [pt(deg0)] });
     for (let i = 1; i <= 18; i++) { await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [pt(deg0 + (deg1 - deg0) * i / 18)] }); await ph.waitForTimeout(16); }
@@ -94,8 +94,17 @@ const until = async (fn, ms = 15000) => { const end = Date.now() + ms; while (Da
     await ph.waitForTimeout(900);
   };
   await spin(180, 240, 0.87, 1200);
-  const zs = await ph.evaluate(() => window.__applied.filter(a => 'zoom' in a).map(a => a.zoom));
+  const zs = await ph.evaluate(() => (window.__zoomTrace || []).filter((z, i, a) => !i || z !== a[i - 1]));
   ok('pushing the outer ring to T zooms in continuously and smoothly (many small steps, only increasing)', zs.length >= 10 && zs.every((z, i) => !i || z >= zs[i - 1] - 1e-9) && zs[zs.length - 1] > 1.3, JSON.stringify(zs.map(z => +z.toFixed(2))));
+  { // ทุกเฟรมขยับตามเวลาจริง: ความเร็วซูม (log/วินาที) ของเฟรมติดกันต่างกันน้อย — ไม่มีเฟรมค้างแล้วกระโดด
+    const tr = await ph.evaluate(() => (window.__zoomTrace || []).map((z, i) => [z, window.__zoomTimes[i]]));
+    const rate = tr.slice(1).map(([z, t], i) => Math.log(z / tr[i][0]) / Math.max(1, t - tr[i][1]) * 1000), top = Math.max(...rate);
+    // (เบราว์เซอร์ทดสอบแบบ headless จับเวลาไม่นิ่ง จึงวัดว่าเกือบทุกคู่เฟรมเรียบ แทนการดูคู่ที่แย่ที่สุดคู่เดียว)
+    const pairs = []; for (let i = 1; i < rate.length; i++) if (rate[i] > top * 0.3 && rate[i - 1] > top * 0.3) pairs.push(Math.max(rate[i] / rate[i - 1], rate[i - 1] / rate[i]));
+    const rough = pairs.filter(x => x > 1.6).length, frozen = rate.filter((x, i) => i > 0 && i < rate.length - 1 && x === 0 && rate[i - 1] > top * 0.3 && rate[i + 1] > top * 0.3).length;
+    ok('zoom is digital and moves every frame evenly in time (no lens steps, no frozen frames)', tr.length >= 30 && pairs.length >= 10 && rough <= Math.max(1, pairs.length * 0.15) && frozen === 0 && !(await ph.evaluate(() => window.__applied.some(a => 'zoom' in a))), `${tr.length} frames, ${rough}/${pairs.length} uneven pairs, ${frozen} frozen`);
+  }
+  ok('the studio still receives video', await host.evaluate(i => window.webmix.inputs.find(x => x.id === i).el.videoWidth > 0, id));
   // ช่วงต้น/ท้ายต้องค่อย ๆ เร่งและผ่อน (ก้าวแรก ๆ เล็กกว่าก้าวกลาง)
   { const st = zs.slice(1).map((z, i) => z - zs[i]); const mid = Math.max(...st); ok('zoom ramps up and eases to a stop (no jump)', st.length > 6 && st[0] < mid * 0.6 && st[st.length - 1] < mid * 0.6, JSON.stringify(st.map(x => +x.toFixed(3)))); }
   const zAfter = await ph.evaluate(() => document.querySelector('[data-pc=zoom] b').textContent);
@@ -103,11 +112,11 @@ const until = async (fn, ms = 15000) => { const end = Date.now() + ms; while (Da
   ok('releasing stops the zoom', (await ph.textContent('[data-pc=zoom] b')) === zAfter, `${zAfter} → ${await ph.textContent('[data-pc=zoom] b')}`);
   ok('dial and rail show the new zoom', parseFloat(zAfter) > 1.3 && (await ph.textContent('.pc-dial-val [data-dv=zoom]')) === zAfter, `${await ph.textContent('.pc-dial-val [data-dv=zoom]')} / ${zAfter}`);
   await spin(180, 125, 0.87, 500);
-  const zd = await ph.evaluate(() => window.__applied.filter(a => 'zoom' in a).map(a => a.zoom));
+  const zd = await ph.evaluate(() => (window.__zoomTrace || []).filter((z, i, a) => !i || z !== a[i - 1]));
   ok('pushing to W zooms out', zd.length >= 3 && zd[zd.length - 1] < zs[zs.length - 1], JSON.stringify(zd.map(z => +z.toFixed(2))));
-  await ph.evaluate(() => { window.__applied = []; });
+  await ph.evaluate(() => { window.__applied = []; window.__zoomTrace = []; });
   await ph.tap('.pc-dial-chips [data-dz="5"]'); await ph.waitForTimeout(1100);
-  const gz = await ph.evaluate(() => window.__applied.filter(a => 'zoom' in a).map(a => a.zoom));
+  const gz = await ph.evaluate(() => (window.__zoomTrace || []).filter((z, i, a) => !i || z !== a[i - 1]));
   ok('chip highlight follows the zoom', await ph.isVisible('.pc-dial-chips [data-dz="5"].on'));
   ok('5× chip glides there (in-between values, ends at 5)', gz.length >= 4 && Math.abs(gz[gz.length - 1] - 5) < 1e-6 && gz.some(z => z > 1.4 && z < 4.9), JSON.stringify(gz.map(z => +z.toFixed(2))));
   // ชั้นใน = วงแหวนโฟกัส (ไม่ต้องสลับหน้าจอ)
@@ -115,12 +124,12 @@ const until = async (fn, ms = 15000) => { const end = Date.now() + ms; while (Da
   const fs1 = await ph.evaluate(() => window.__applied.filter(a => 'focusDistance' in a));
   ok('inner focus ring in AF switches to MF and pulls focus smoothly', fs1.length >= 5 && fs1[0].focusMode === 'manual' && fs1[fs1.length - 1].focusDistance > 1.2, JSON.stringify(fs1.map(a => +a.focusDistance.toFixed(2))));
   ok('rail shows MF and the dial shows the distance', (await ph.textContent('[data-pc=focus] b')) === 'MF' && / m$/.test(await ph.textContent('.pc-dial-val [data-dv=focus]')));
-  ok('turning focus does not move the zoom', !(await ph.evaluate(() => window.__applied.some(a => 'zoom' in a))));
+  ok('turning focus does not move the zoom', await ph.evaluate(() => (window.__zoomTrace || []).filter((z, i, a) => !i || z !== a[i - 1]).length <= 1));
   await ph.screenshot({ path: process.env.WORK + '/procam-dial.png' });
   await ph.tap('.pc-dial-close');
   ok('✕ closes the dial', await ph.isHidden('.pc-dial'));
   // จีบนิ้วบนภาพ (สองนิ้วกางออก) = ซูมเข้า
-  await ph.evaluate(() => { window.__applied = []; });
+  await ph.evaluate(() => { window.__applied = []; window.__zoomTrace = []; });
   {
     const vb = await ph.locator('#caller-video').boundingBox(), cx = vb.x + vb.width / 2, cy = vb.y + vb.height / 2;
     await ph.evaluate(([cx, cy]) => {
@@ -132,7 +141,7 @@ const until = async (fn, ms = 15000) => { const end = Date.now() + ms; while (Da
     }, [cx, cy]);
     await ph.waitForTimeout(500);
   }
-  const pz = await ph.evaluate(() => window.__applied.filter(a => 'zoom' in a).map(a => a.zoom));
+  const pz = await ph.evaluate(() => (window.__zoomTrace || []).filter((z, i, a) => !i || z !== a[i - 1]));
   ok('pinch out on the picture zooms in', pz.length && pz[pz.length - 1] > 5.5 && !(await ph.evaluate(() => window.__applied.some(a => a.pointsOfInterest))), JSON.stringify(pz.map(z => +z.toFixed(2))));
   await ph.tap('[data-pc=focus]'); await ph.waitForSelector('.pc-dial:not([hidden])');
   await ph.tap('.pc-dial-chips [data-daf]'); await ph.waitForTimeout(300);
@@ -169,7 +178,7 @@ const until = async (fn, ms = 15000) => { const end = Date.now() + ms; while (Da
   await host.waitForSelector('.cam-ctl [data-ck=iso]');
   ok('studio dialog shows the phone values (manual ISO 800, 3200K)', /800/.test(await host.textContent('[data-cv=iso]')) && /3200K/.test(await host.textContent('[data-cv=colorTemperature]')));
   await host.evaluate(() => { const r = document.querySelector('.cam-ctl [data-ck=zoom]'); r.value = 3; r.dispatchEvent(new Event('input', { bubbles: true })); });
-  ok('studio zoom 3× reaches the phone', await until(() => ph.evaluate(() => window.__applied.some(a => a.zoom === 3)), 5000) && await until(async () => (await ph.textContent('[data-pc=zoom] b')) === '3.0×', 3000));
+  ok('studio zoom 3× reaches the phone', await until(() => ph.evaluate(() => (window.__zoomTrace || []).includes(3)), 5000) && await until(async () => (await ph.textContent('[data-pc=zoom] b')) === '3.0×', 3000));
   ok('studio dialog follows the phone back', await until(async () => /3\.0×/.test(await host.textContent('[data-cv=zoom]')), 5000));
   await host.click('.cam-ctl [data-cs=fps] [data-v="25"]');
   await host.click('.cam-ctl .cam-shot[data-shot="0"]');
@@ -190,7 +199,9 @@ const until = async (fn, ms = 15000) => { const end = Date.now() + ms; while (Da
   ok('studio locks AE/AWB/AF', await until(() => ph.evaluate(() => window.__applied.some(a => a.exposureMode === 'manual' && a.whiteBalanceMode === 'manual' && a.focusMode === 'manual')), 4000) && await until(async () => (await ph.textContent('[data-pc=lock] b')) === 'ON', 3000));
   ok('studio shows the live picture', await until(() => host.evaluate(() => document.querySelector('.cc-video video').videoWidth > 0), 4000));
   { const vb = await host.locator('.cc-video video').boundingBox(); await host.mouse.click(vb.x + vb.width * 0.3, vb.y + vb.height * 0.6); }
-  ok('tapping the studio picture focuses the phone there', await until(() => ph.evaluate(() => window.__applied.some(a => a.pointsOfInterest && Math.abs(a.pointsOfInterest[0].x - 0.3) < 0.05)), 4000));
+  // ภาพที่สตูดิโอเห็นถูกซูมดิจิทัลอยู่ → จุดบนเซนเซอร์ = กลางภาพ + ระยะ / ซูม
+  const zNow = await ph.evaluate(() => parseFloat(document.querySelector('[data-pc=zoom] b').textContent));
+  ok('tapping the studio picture focuses the phone there (mapped through the zoom)', await until(() => ph.evaluate(x => window.__applied.some(a => a.pointsOfInterest && Math.abs(a.pointsOfInterest[0].x - x) < 0.05), 0.5 + (0.3 - 0.5) / zNow), 4000), `zoom ${zNow}`);
   await host.click('.cc-tabs [data-tab=color]');
   await host.evaluate(() => { const r = document.querySelector('.cc-color [data-cc=s]'); r.value = 0.5; r.dispatchEvent(new Event('input', { bubbles: true })); });
   ok('colour tab adjusts the source', await host.evaluate(i => window.webmix.inputs.find(x => x.id === i).color?.s === 0.5, id));

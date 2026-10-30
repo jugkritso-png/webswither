@@ -49,13 +49,55 @@
     let quality = guestSlot ? QUALITIES[0] : QUALITIES[Math.min(2, Math.max(0, +store.get('caller-quality', 1)))] || QUALITIES[1];
     // กล้องมือถือของทีมงาน: เลือกเลนส์ (deviceId) และเฟรมเรตได้จากแผงกล้องโปร
     let lensId = null, fps = guestSlot ? 30 : [24, 25, 30, 50, 60].includes(+store.get('caller-fps', 30)) ? +store.get('caller-fps', 30) : 30;
+    // ซูมนุ่ม (ดิจิทัล): เลนส์มือถือที่สั่งผ่านเบราว์เซอร์ซูมได้ทีละขั้น (มัก 0.1× ≈ กระโดด 10%) และหน่วง ภาพจึงกระตุก
+    // จึงเปิดกล้องละเอียดกว่าที่ส่ง แล้วครอปขยายเองทุกเฟรม (ค่าซูมเปลี่ยนต่อเนื่องทุกเฟรม) — ภาพที่ส่ง/บันทึก/แสดงคือภาพที่ครอปแล้ว
+    // ปิดได้ในหน้า FPS (กลับไปใช้ซูมของเลนส์) · แขกรับเชิญไม่ใช้
+    const smooth = { on: !guestSlot && store.get('caller-smoothzoom', true) !== false, z: 1, max: 8, vel: 0, src: null, cv: null, g: null, out: null, outStream: null, raf: 0 };
+    const capSize = () => smooth.on ? (quality.label === 'HD' ? { w: 1920, h: 1080 } : { w: 3840, h: 2160 }) : { w: quality.w, h: quality.h };
+    const sendStream = () => smooth.outStream || stream;
+    function startSmooth() {
+      if (!smooth.on || smooth.out || !stream) return;
+      const src = document.createElement('video');
+      src.muted = true; src.playsInline = true; src.autoplay = true;
+      src.srcObject = new MediaStream(stream.getVideoTracks());
+      const cv = document.createElement('canvas');
+      cv.width = quality.w; cv.height = quality.h;
+      const g = cv.getContext('2d', { alpha: false, desynchronized: true });
+      Object.assign(smooth, { src, cv, g });
+      const draw = () => {
+        const vw = src.videoWidth, vh = src.videoHeight;
+        if (vw && vh) {
+          // ขนาดภาพที่ส่ง = คุณภาพที่เลือก ตามแนวของกล้อง (แนวนอน/แนวตั้ง) ไม่เกินความละเอียดจริงของกล้อง
+          const land = vw >= vh, k = Math.min(1, (land ? quality.w : quality.h) / vw);
+          const W = Math.round(vw * k / 2) * 2, H = Math.round(vh * k / 2) * 2;
+          if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H; }
+          // ค่าซูมที่วาดไล่ตามค่าเป้าหมายแบบนุ่มตามเวลาจริงของเฟรม (log scale, ~70 ms) — ทุกเฟรมขยับเท่า ๆ กัน ไม่กระตุกแม้จอกับกล้องรีเฟรชไม่ตรงกัน
+          const now = performance.now(), dt = smooth.at ? Math.min(200, now - smooth.at) : 1000; smooth.at = now;
+          // ซูม servo: ความเร็ว (log ต่อ ms) คูณเวลาจริงของเฟรมนี้ — ภาพเคลื่อนตามเวลาจริงทุกเฟรม แม้เฟรมมาไม่สม่ำเสมอ
+          if (smooth.vel) { smooth.z = Math.min(smooth.max, Math.max(1, Math.exp(Math.log(smooth.z) + smooth.vel * Math.min(dt, 100)))); if (smooth.z >= smooth.max || smooth.z <= 1) smooth.vel = 0; if (!smooth.zd) smooth.zd = smooth.z; }
+          const target = Math.max(1, smooth.z), lz = Math.log(smooth.zd || target), kz = 1 - Math.exp(-dt / 70);
+          // ระหว่างซูม servo ภาพตามค่าจริงทันที (คำนวณจากเวลาแล้ว) · ค่าที่กระโดด (ปุ่ม/สตูดิโอ) ไล่ตามแบบนุ่ม
+          smooth.zd = smooth.vel || Math.abs(Math.log(target) - lz) < 1e-3 ? target : Math.exp(lz + (Math.log(target) - lz) * kz);
+          const z = smooth.zd, sw = vw / z, sh = vh / z;
+          g.imageSmoothingQuality = 'high';
+          g.drawImage(src, (vw - sw) / 2, (vh - sh) / 2, sw, sh, 0, 0, W, H);
+          if (window.__zoomTrace) { window.__zoomTrace.push(+z.toFixed(4)); (window.__zoomTimes || (window.__zoomTimes = [])).push(now); }
+        }
+        next();
+      };
+      const next = () => { if (stopped) return; if (src.requestVideoFrameCallback) src.requestVideoFrameCallback(draw); else smooth.raf = requestAnimationFrame(draw); };
+      src.play().catch(() => {});
+      next();
+      smooth.out = cv.captureStream(fps).getVideoTracks()[0];
+      smooth.outStream = new MediaStream([smooth.out, ...stream.getAudioTracks()]);
+    }
     // เปิดกล้องให้ได้ทุกเครื่อง: ลองค่าที่ต้องการก่อน แล้วค่อย ๆ ผ่อนเงื่อนไข (เลนส์ที่เลือก → ด้านหน้า/หลัง → กล้องตัวไหนก็ได้)
     // และถ้าไมค์ใช้ไม่ได้ (ไม่มี / ถูกแอปอื่นจับอยู่) ยังส่งภาพได้
     const camAudio = () => guestSlot ? { echoCancellation: true, noiseSuppression: true, ...(micId ? { deviceId: { exact: micId } } : {}) }
       // กล้องทีมงาน: ไม่ตัดเสียงรอบข้าง (เสียงบรรยากาศ/ดนตรีไม่ถูกบีบ) · แขก: ตัดเสียงสะท้อน
       : { echoCancellation: false, noiseSuppression: false, autoGainControl: false };
     async function getCamera(withAudio) {
-      const size = { width: { ideal: quality.w }, height: { ideal: quality.h }, frameRate: { ideal: fps } };
+      const cs = capSize(), size = { width: { ideal: cs.w }, height: { ideal: cs.h }, frameRate: { ideal: fps } };
       const tries = [
         ...(lensId ? [{ deviceId: { exact: lensId }, ...size }] : []),
         { facingMode: facing, ...size },
@@ -103,12 +145,12 @@
       store.set('caller-quality', i);
       const track = stream?.getVideoTracks()[0];
       if (track) {
-        try { await track.applyConstraints({ width: { ideal: quality.w }, height: { ideal: quality.h }, frameRate: { ideal: fps } }); }
+        try { const cs = capSize(); await track.applyConstraints({ width: { ideal: cs.w }, height: { ideal: cs.h }, frameRate: { ideal: fps } }); }
         catch (e) {}
       }
       await applyBitrate();
       paintQuality();
-      const s = track?.getSettings();
+      const s = smooth.cv ? { width: smooth.cv.width, height: smooth.cv.height } : track?.getSettings();
       if (s?.width) showMsgBrief(`ส่งภาพ ${s.width}×${s.height}${s.height < quality.h ? ' (กล้องรองรับสูงสุดเท่านี้)' : ''}`);
     }
     let briefTimer = null;
@@ -151,12 +193,18 @@
         showMsg('ไม่ได้รับอนุญาตให้ใช้กล้อง/ไมค์: ' + e.message);
         return;
       }
-      video.srcObject = stream;
+      startSmooth();
+      video.srcObject = sendStream();
       paintQuality();
       keepScreenOn(true);
       if (!guestSlot && WM.initProCam) pro = WM.initProCam({
         root, video, brief: showMsgBrief,
         getStream: () => stream,
+        getOutStream: () => sendStream(),
+        // ซูมดิจิทัลแบบนุ่ม (null = ใช้ซูมของเลนส์)
+        digitalZoom: smooth.on ? { get: () => smooth.z, set: v => { smooth.vel = 0; smooth.z = Math.min(smooth.max, Math.max(1, +v || 1)); }, setVel: v => { smooth.vel = +v || 0; }, max: () => smooth.max, outSize: () => smooth.cv ? { width: smooth.cv.width, height: smooth.cv.height } : null } : null,
+        smoothZoom: () => smooth.on,
+        setSmoothZoom(on) { store.set('caller-smoothzoom', !!on); location.reload(); },
         getPeerConnection: () => call?.peerConnection || null,
         send: msg => { if (conn && conn.open) { try { conn.send(msg); } catch (e) {} } },
         qualities: () => QUALITIES.map(q => q.label),
@@ -208,7 +256,7 @@
       if (stopped) return;
       clearTimeout(retryTimer);
       setStatus('กำลังเชื่อมต่อสตูดิโอ…');
-      const c = peer.call(targetId, stream, guestSlot ? { metadata: { guest: guestSlot } } : undefined);
+      const c = peer.call(targetId, sendStream(), guestSlot ? { metadata: { guest: guestSlot } } : undefined);
       call = c;
       // แขก: ภาพและเสียงรายการที่สตูดิโอส่งกลับมา
       if (guestSlot) c.on('stream', remote => { returnVideo.srcObject = remote; returnVideo.hidden = false; returnVideo.play().catch(() => {}); });
@@ -255,6 +303,7 @@
       try { call && call.close(); } catch (e) {}
       try { peer && peer.destroy(); } catch (e) {}
       stream && stream.getTracks().forEach(t => t.stop());
+      if (smooth.out) smooth.out.stop();
       video.srcObject = null;
       returnVideo.srcObject = null;
       returnVideo.hidden = true;
@@ -289,8 +338,9 @@
         catch (e2) { setStatus('สลับกล้องไม่ได้', 'bad'); return; }
       }
       stream.addTrack(track);
-      video.srcObject = stream;
-      if (sender) await sender.replaceTrack(track);
+      // ซูมนุ่ม: เปลี่ยนแค่ภาพต้นทาง — แทร็กที่ส่ง/บันทึกเป็นแทร็กเดิม สตูดิโอไม่สะดุด
+      if (smooth.src) { smooth.src.srcObject = new MediaStream([track]); smooth.src.play().catch(() => {}); }
+      else { video.srcObject = stream; if (sender) await sender.replaceTrack(track); }
       paintQuality();
       if (pro) pro.afterTrackChange();
     }

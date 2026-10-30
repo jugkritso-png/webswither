@@ -63,13 +63,26 @@
 
     /* ---------- กล้อง ---------- */
     const track = () => { const s = ctx.getStream(); return s ? s.getVideoTracks()[0] : null; };
-    const caps = () => { const t = track(); try { return (t && t.getCapabilities && t.getCapabilities()) || {}; } catch (e) { return {}; } };
-    const sets = () => { const t = track(); try { return (t && t.getSettings()) || {}; } catch (e) { return {}; } };
+    // ซูมนุ่มแบบดิจิทัล (caller.js ครอปภาพเองทุกเฟรม): ช่วงซูม/ค่าซูม/ขนาดภาพที่ส่ง มาจากตัวครอป ไม่ใช่เลนส์
+    const dz = ctx.digitalZoom || null;
+    const caps = () => {
+      const t = track(); let c = {};
+      try { c = (t && t.getCapabilities && t.getCapabilities()) || {}; } catch (e) {}
+      return dz ? { ...c, zoom: { min: 1, max: dz.max(), step: 0.01 } } : c;
+    };
+    const sets = () => {
+      const t = track(); let s = {};
+      try { s = (t && t.getSettings()) || {}; } catch (e) {}
+      if (!dz) return s;
+      const o = dz.outSize();
+      return { ...s, zoom: dz.get(), ...(o ? { width: o.width, height: o.height } : {}) };
+    };
     const has = (c, k) => k === 'torch' ? !!c.torch : Array.isArray(c[k]) ? c[k].length > 0 : !!range(c[k]);
     let locked = false;
     async function apply(patch, quiet) {
       const t = track();
       if (!t) return false;
+      if (dz && 'zoom' in patch) { patch = { ...patch }; dz.set(patch.zoom); delete patch.zoom; if (!Object.keys(patch).length) { paint(); sendStateSoon(); return true; } }
       const c = caps(), adv = {};
       for (const [k, v] of Object.entries(patch)) if (k in c || k === 'pointsOfInterest') adv[k] = v;
       if (('iso' in adv || 'exposureTime' in adv) && !('exposureMode' in adv)) adv.exposureMode = 'manual';
@@ -255,7 +268,9 @@
       focusBox.hidden = false;
       focusBox.classList.remove('pulse'); void focusBox.offsetWidth; focusBox.classList.add('pulse');
       setTimeout(() => { focusBox.hidden = true; }, 1600);
-      const c = caps(), patch = { pointsOfInterest: [{ x, y }] };
+      // ภาพบนจอถูกครอปขยาย (ซูมดิจิทัล) → แปลงจุดที่แตะกลับเป็นตำแหน่งบนเซนเซอร์
+      const zf = dz ? dz.get() : 1, px = 0.5 + (x - 0.5) / zf, py = 0.5 + (y - 0.5) / zf;
+      const c = caps(), patch = { pointsOfInterest: [{ x: px, y: py }] };
       if (Array.isArray(c.focusMode) && c.focusMode.includes('single-shot')) patch.focusMode = 'single-shot';
       else if (Array.isArray(c.focusMode) && c.focusMode.includes('continuous')) patch.focusMode = 'continuous';
       // วัดแสงตรงจุดที่แตะเฉพาะตอนแสงอัตโนมัติ — ตั้งแสงเองไว้แล้ว (หรือล็อก) จะไม่ถูกเปลี่ยนกลับเป็นอัตโนมัติ
@@ -267,7 +282,7 @@
     const pickMime = () => ['video/mp4;codecs=avc1', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'].find(t => window.MediaRecorder && MediaRecorder.isTypeSupported(t)) || '';
     async function recStart() {
       if (rec.recorder || !window.MediaRecorder) { if (!window.MediaRecorder) ctx.brief('เบราว์เซอร์นี้บันทึกวิดีโอไม่ได้'); return; }
-      const s = ctx.getStream();
+      const s = (ctx.getOutStream || ctx.getStream)();
       if (!s) return;
       const mime = pickMime(), st = sets();
       const kbps = (st.height || 1080) >= 2160 ? 40000 : (st.height || 1080) >= 1080 ? 16000 : 8000;
@@ -364,6 +379,8 @@
         return `<div class="pc-label">เฟรมเรต</div>${seg('fps', FPS_LIST.filter(f => f <= max + 0.5).map(f => [f, f]), ctx.getFps())}
           <div class="pc-label">ความละเอียดที่ส่งเข้าสตูดิโอ</div>${seg('quality', ctx.qualities().map(q => [q, q]), ctx.getQuality())}
           <div class="pc-label">ความเร็วซูม / ดึงโฟกัสเมื่อกดปุ่ม</div>${seg('glide', [[0, 'ทันที'], [600, 'เร็ว'], [1500, 'ปานกลาง'], [3000, 'ช้า']], prefs.glide)}
+          ${ctx.setSmoothZoom ? `<div class="pc-label">วิธีซูม</div>${seg('zoomMode', [['smooth', 'นุ่ม (ดิจิทัล)'], ['lens', 'เลนส์กล้อง']], ctx.smoothZoom() ? 'smooth' : 'lens')}
+          <p class="pc-note">นุ่ม = ครอปขยายจากกล้องความละเอียดสูงทุกเฟรม ซูมลื่นไม่กระตุก (ค่าเริ่มต้น) · เลนส์กล้อง = ใช้ซูมของมือถือ คมกว่าตอนซูมไกลแต่บางรุ่นซูมเป็นขั้น ๆ — เปลี่ยนแล้วหน้าจะโหลดใหม่</p>` : ''}
           <p class="pc-note">ตอนนี้ ${s.width || '?'}×${s.height || '?'} @ ${Math.round(s.frameRate || 0)} fps · ใช้ 25 / 50 fps ให้ตรงไฟบ้าน 50 Hz</p>`;
       }
       if (t === 'shot') {
@@ -511,6 +528,7 @@
       else if (name === 'zoomQuick') { glide('zoom', +v); return; }
       else if (name === 'focusQuick') { glide('focusDistance', +v); return; }
       else if (name === 'glide') { prefs.glide = +v; savePrefs(); }
+      else if (name === 'zoomMode') { if ((v === 'smooth') !== ctx.smoothZoom()) ctx.setSmoothZoom(v === 'smooth'); }
       else if (name === 'lens') { const l = lenses.find(x => x.id === v); await ctx.setLens(v, l && l.side); afterTrackChange(); }
       else if (name === 'fps') { await ctx.setFps(+v); afterTrackChange(); }
       else if (name === 'quality') { await ctx.setQuality(v); afterTrackChange(); }
@@ -542,6 +560,15 @@
       const d = drv[k] || (drv[k] = { busy: false, target: null });
       d.target = v;
       paintRing(k, v);
+      // ซูมดิจิทัล: ใช้ค่าทันทีในเฟรมถัดไป ไม่ต้องรอกล้อง — ลื่นทุกเฟรม
+      if (dz && k === 'zoom') {
+        dz.set(v); d.target = null;
+        if (dialOpen) paintDial();
+        const now = performance.now();
+        if (!d.paintAt || now - d.paintAt > 120) { d.paintAt = now; paint(); sendStateSoon(); }
+        clearTimeout(d.tail); d.tail = setTimeout(() => { paint(); sendStateSoon(); if (dialOpen && !servo.raf && !d.anim) paintDialChips(); }, 140);
+        return;
+      }
       if (dialOpen && (k === 'zoom' || k === 'focusDistance')) paintDial();
       if (d.busy) return;
       const send = async () => {
@@ -803,14 +830,21 @@
       servo.speed += (want - servo.speed) * Math.min(1, dt / 140);
       // คันดีดกลับตรงกลางเมื่อปล่อยนิ้ว
       servo.disp += (servo.target - servo.disp) * Math.min(1, dt / 70);
-      if (Math.abs(servo.speed) > 1e-7) {
+      if (dz && dz.setVel) {
+        // ซูมดิจิทัล: ส่งแค่ความเร็ว ตัววาดภาพคำนวณตำแหน่งจากเวลาจริงของแต่ละเฟรมเอง (ลื่นที่สุด)
+        dz.setVel(Math.abs(servo.speed) > 1e-7 ? servo.speed * Math.log(z.max / z.min) : 0);
+        servo.u = clamp(toU('zoom', dz.get(), z), 0, 1);
+        if (servo.u <= 0 && servo.speed < 0 || servo.u >= 1 && servo.speed > 0) servo.speed = 0;
+        const now2 = performance.now();
+        if (!servo.paintAt || now2 - servo.paintAt > 120) { servo.paintAt = now2; paint(); sendStateSoon(); }
+      } else if (Math.abs(servo.speed) > 1e-7) {
         servo.u = clamp(servo.u + servo.speed * dt, 0, 1);
         drive('zoom', fromU('zoom', servo.u, z));
         if (servo.u <= 0 || servo.u >= 1) servo.speed = 0;
       }
       paintDial();
       if (Math.abs(servo.speed) > 1e-7 || Math.abs(servo.disp) > 0.002 || servo.target) servo.raf = requestAnimationFrame(servoLoop);
-      else { servo.raf = 0; servo.disp = 0; paintDial(); paintDialChips(); }
+      else { servo.raf = 0; servo.disp = 0; if (dz && dz.setVel) dz.setVel(0); paint(); sendStateSoon(); paintDial(); paintDialChips(); }
     }
     const geo = e => { const b = dialCv.getBoundingClientRect(), dx = e.clientX - b.right, dy = e.clientY - (b.top + b.height / 2); return { a: Math.atan2(dy, dx), r: Math.hypot(dx, dy) / (b.width || 1) }; };
     dial.addEventListener('pointerdown', e => {
