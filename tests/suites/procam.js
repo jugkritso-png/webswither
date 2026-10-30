@@ -82,28 +82,40 @@ const until = async (fn, ms = 15000) => { const end = Date.now() + ms; while (Da
   await ph.tap('[data-pc=fps]'); await ph.tap('.pc-panel [data-seg=glide] [data-v="600"]'); await ph.tap('.pc-panel .pc-close');
   await ph.tap('[data-pc=zoom]'); await ph.waitForSelector('.pc-dial:not([hidden])'); await ph.waitForTimeout(300);
   ok('ZOOM opens the half-circle dial at the side', await ph.evaluate(() => { const d = document.querySelector('.pc-dial').getBoundingClientRect(), r = document.querySelector('.pc-rail').getBoundingClientRect(); return d.height > d.width * 1.8 && d.right <= r.left + 2 && d.width > 100; }));
-  // หมุนนิ้วตามโค้งขึ้นด้านบน (ทวนเข็มบนครึ่งซ้าย) = ซูมเข้า
-  const spin = async (deg0, deg1) => {
-    const bb = await ph.locator('.pc-dial canvas').boundingBox(), cx = bb.x + bb.width, cy = bb.y + bb.height / 2, R = bb.width * 0.8;
+  // ชั้นนอก = ซูม servo: ดันขึ้น (T) ค้างไว้ → ซูมเข้าต่อเนื่อง · ปล่อย → หยุดนุ่ม
+  const spin = async (deg0, deg1, rf, hold = 0) => {
+    const bb = await ph.locator('.pc-dial canvas').boundingBox(), cx = bb.x + bb.width, cy = bb.y + bb.height / 2, R = bb.width * rf;
     await ph.evaluate(() => { window.__applied = []; });
     const cdp = await pctx.newCDPSession(ph), pt = d => ({ x: cx + Math.cos(d * Math.PI / 180) * R, y: cy + Math.sin(d * Math.PI / 180) * R });
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [pt(deg0)] });
     for (let i = 1; i <= 18; i++) { await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [pt(deg0 + (deg1 - deg0) * i / 18)] }); await ph.waitForTimeout(16); }
+    if (hold) await ph.waitForTimeout(hold);
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
     await ph.waitForTimeout(900);
   };
-  await spin(150, 220);
+  await spin(180, 240, 0.87, 1200);
   const zs = await ph.evaluate(() => window.__applied.filter(a => 'zoom' in a).map(a => a.zoom));
-  ok('turning the dial up zooms in smoothly (many small steps, only increasing)', zs.length >= 5 && zs.every((z, i) => !i || z >= zs[i - 1] - 1e-9) && zs[zs.length - 1] > 1.3, JSON.stringify(zs.map(z => +z.toFixed(2))));
-  ok('dial and rail show the new zoom', parseFloat(await ph.textContent('[data-pc=zoom] b')) > 1.3 && (await ph.textContent('.pc-dial-val b')) === (await ph.textContent('[data-pc=zoom] b')), `${await ph.textContent('.pc-dial-val b')} / ${await ph.textContent('[data-pc=zoom] b')}`);
-  await spin(210, 170);
+  ok('pushing the outer ring to T zooms in continuously and smoothly (many small steps, only increasing)', zs.length >= 10 && zs.every((z, i) => !i || z >= zs[i - 1] - 1e-9) && zs[zs.length - 1] > 1.3, JSON.stringify(zs.map(z => +z.toFixed(2))));
+  // ช่วงต้น/ท้ายต้องค่อย ๆ เร่งและผ่อน (ก้าวแรก ๆ เล็กกว่าก้าวกลาง)
+  { const st = zs.slice(1).map((z, i) => z - zs[i]); const mid = Math.max(...st); ok('zoom ramps up and eases to a stop (no jump)', st.length > 6 && st[0] < mid * 0.6 && st[st.length - 1] < mid * 0.6, JSON.stringify(st.map(x => +x.toFixed(3)))); }
+  const zAfter = await ph.evaluate(() => document.querySelector('[data-pc=zoom] b').textContent);
+  await ph.waitForTimeout(400);
+  ok('releasing stops the zoom', (await ph.textContent('[data-pc=zoom] b')) === zAfter, `${zAfter} → ${await ph.textContent('[data-pc=zoom] b')}`);
+  ok('dial and rail show the new zoom', parseFloat(zAfter) > 1.3 && (await ph.textContent('.pc-dial-val [data-dv=zoom]')) === zAfter, `${await ph.textContent('.pc-dial-val [data-dv=zoom]')} / ${zAfter}`);
+  await spin(180, 125, 0.87, 500);
   const zd = await ph.evaluate(() => window.__applied.filter(a => 'zoom' in a).map(a => a.zoom));
-  ok('turning it down zooms out', zd.length >= 3 && zd[zd.length - 1] < zs[zs.length - 1], JSON.stringify(zd.map(z => +z.toFixed(2))));
+  ok('pushing to W zooms out', zd.length >= 3 && zd[zd.length - 1] < zs[zs.length - 1], JSON.stringify(zd.map(z => +z.toFixed(2))));
   await ph.evaluate(() => { window.__applied = []; });
   await ph.tap('.pc-dial-chips [data-dz="5"]'); await ph.waitForTimeout(1100);
   const gz = await ph.evaluate(() => window.__applied.filter(a => 'zoom' in a).map(a => a.zoom));
   ok('chip highlight follows the zoom', await ph.isVisible('.pc-dial-chips [data-dz="5"].on'));
   ok('5× chip glides there (in-between values, ends at 5)', gz.length >= 4 && Math.abs(gz[gz.length - 1] - 5) < 1e-6 && gz.some(z => z > 1.4 && z < 4.9), JSON.stringify(gz.map(z => +z.toFixed(2))));
+  // ชั้นใน = วงแหวนโฟกัส (ไม่ต้องสลับหน้าจอ)
+  await spin(150, 210, 0.58);
+  const fs1 = await ph.evaluate(() => window.__applied.filter(a => 'focusDistance' in a));
+  ok('inner focus ring in AF switches to MF and pulls focus smoothly', fs1.length >= 5 && fs1[0].focusMode === 'manual' && fs1[fs1.length - 1].focusDistance > 1.2, JSON.stringify(fs1.map(a => +a.focusDistance.toFixed(2))));
+  ok('rail shows MF and the dial shows the distance', (await ph.textContent('[data-pc=focus] b')) === 'MF' && / m$/.test(await ph.textContent('.pc-dial-val [data-dv=focus]')));
+  ok('turning focus does not move the zoom', !(await ph.evaluate(() => window.__applied.some(a => 'zoom' in a))));
   await ph.screenshot({ path: process.env.WORK + '/procam-dial.png' });
   await ph.tap('.pc-dial-close');
   ok('✕ closes the dial', await ph.isHidden('.pc-dial'));
@@ -122,12 +134,7 @@ const until = async (fn, ms = 15000) => { const end = Date.now() + ms; while (Da
   }
   const pz = await ph.evaluate(() => window.__applied.filter(a => 'zoom' in a).map(a => a.zoom));
   ok('pinch out on the picture zooms in', pz.length && pz[pz.length - 1] > 5.5 && !(await ph.evaluate(() => window.__applied.some(a => a.pointsOfInterest))), JSON.stringify(pz.map(z => +z.toFixed(2))));
-  // วงล้อโฟกัสตอน AF → เปลี่ยนเป็น MF แล้วดึงโฟกัส
   await ph.tap('[data-pc=focus]'); await ph.waitForSelector('.pc-dial:not([hidden])');
-  await spin(150, 210);
-  const fs1 = await ph.evaluate(() => window.__applied.filter(a => 'focusDistance' in a));
-  ok('focus dial in AF switches to MF and pulls focus smoothly', fs1.length >= 5 && fs1[0].focusMode === 'manual' && fs1[fs1.length - 1].focusDistance > 1.2, JSON.stringify(fs1.map(a => +a.focusDistance.toFixed(2))));
-  ok('rail shows MF', (await ph.textContent('[data-pc=focus] b')) === 'MF');
   await ph.tap('.pc-dial-chips [data-daf]'); await ph.waitForTimeout(300);
   ok('AF chip returns to autofocus', (await ph.textContent('[data-pc=focus] b')) === 'AF');
   await ph.tap('.pc-dial-close');

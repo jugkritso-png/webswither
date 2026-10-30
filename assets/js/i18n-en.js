@@ -2259,6 +2259,7 @@
     "ใช้ไมค์ไม่ได้ — ส่งเฉพาะภาพ (ตรวจสิทธิ์ไมค์ หรือปิดแอปอื่นที่ใช้ไมค์อยู่)": "Can't use the mic — sending video only (check the mic permission, or close other apps using the mic)",
     "ใกล้": "Near", "เลือกเลนส์": "Pick a lens", "กล้องหน้า": "Front camera", "กล้องหลัง": "Back camera", "กล้องหน้า {}": "Front camera {1}", "กล้องหลัง {}": "Back camera {1}",
     "ZOOM / FOCUS = วงล้อครึ่งวงกลมด้านข้าง (แบบ Final Cut บน iPad) — ใช้นิ้วหมุนตามโค้ง หมุนขึ้น = ซูมเข้า / โฟกัสไกลขึ้น · ปุ่มข้างวงล้อ: 1× 2× 3× 5× และเลือกเลนส์ (มุมกว้าง / เทเล / กล้องหน้า)": "ZOOM / FOCUS = a half-circle wheel at the side (like Final Cut on iPad) — turn it along the curve with your finger: up = zoom in / focus further · buttons next to it: 1× 2× 3× 5× and lens choice (ultra wide / tele / front)",
+    "ZOOM / FOCUS = วงล้อเลนส์ครึ่งวงกลมด้านข้าง (แบบ Final Cut บน iPad) · ชั้นนอก = ซูมต่อเนื่องแบบเลนส์ broadcast: ดันขึ้น (T) / ลง (W) ค้างไว้ — ยิ่งดันมากยิ่งซูมเร็ว ปล่อยแล้วหยุดนุ่ม · ชั้นใน = วงแหวนโฟกัส หมุนตามโค้ง · ปุ่มข้างวงล้อ: 1× 2× 3× 5× เลือกเลนส์ และ AF / ระยะโฟกัส": "ZOOM / FOCUS = a half-circle lens wheel at the side (like Final Cut on iPad) · outer ring = continuous broadcast-style zoom: push up (T) / down (W) and hold — the further you push, the faster it zooms; release to stop smoothly · inner ring = focus, turn it along the curve · buttons next to it: 1× 2× 3× 5×, lens choice, AF / focus distance",
     "ทีวี": "TV", "หน้า": "Page", "รายการ": "Item", "ความยาว": "Length", "เหลือ": "Remain", "สไลด์": "Slides"
   });
 })(window.WebMix = window.WebMix || {});

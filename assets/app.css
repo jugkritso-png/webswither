@@ -1618,7 +1618,9 @@ html[data-cards=l] .card-num, html[data-cards=l] .card-tally { font-size: 14px; 
 .pc-dial canvas { position: absolute; inset: 0; width: 100%; height: 100%; filter: drop-shadow(0 6px 18px rgba(0,0,0,.55)); }
 .pc-dial-val { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); display: grid; justify-items: end; gap: 2px; pointer-events: none; text-shadow: 0 1px 3px #000; }
 .pc-dial-val small { font: 800 10px var(--mono, monospace); letter-spacing: .1em; color: rgba(255,255,255,.65); }
-.pc-dial-val b { font: 700 calc(var(--r) * .15) / 1 var(--mono, monospace); color: #f5a524; white-space: nowrap; }
+.pc-dial-val b { font: 700 calc(var(--r) * .13) / 1 var(--mono, monospace); color: #38bdf8; white-space: nowrap; }
+.pc-dial-val b[data-dv="focus"] { font-size: calc(var(--r) * .1); color: #f5a524; }
+.pc-dial-val small + b + small { margin-top: 4px; }
 .pc-dial-chips { position: absolute; right: calc(100% + 6px); top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; gap: 5px; max-height: 100%; overflow-y: auto; }
 .pc-dial-chips button { min-width: 46px; padding: 7px 8px; border-radius: 999px; border: 1px solid rgba(255,255,255,.25); background: rgba(14,16,22,.82); color: #fff; font: 700 12px var(--mono, monospace); cursor: pointer; white-space: nowrap; }
 .pc-dial-chips button.on { background: #f5a524; border-color: #f5a524; color: #111; }
