@@ -93,26 +93,28 @@
             f.close();
           }
           try { if (writer) await writer.write(out); else out.close(); } catch (err) { try { out.close(); } catch (e2) {} }
-          postMessage({ z, zd, t: ts, w: W, h: H, ms: performance.now() - t0 });
+          postMessage({ z, zd, t: ts, w: W, h: H, ms: performance.now() - t0, dt });
         }
       }`;
     // เฝ้าดูว่าเครื่องประมวลผลซูมนุ่มทันไหม (มือถือรุ่นกลาง/GPU ช้า) — ไม่ทันต่อเนื่อง 4 วินาที = สลับไปใช้ซูมของเลนส์ให้เอง
-    const pipe = { n: 0, ms: 0, since: 0, slow: 0, started: 0, fps: 0, avg: 0 };
-    function watchPipe(ms) {
+    const pipe = { n: 0, ms: 0, gap: 0, since: 0, slow: 0, started: 0, fps: 0, avg: 0 };
+    function watchPipe(ms, dt) {
       const now = performance.now();
       if (!pipe.started) pipe.started = now;
       if (!pipe.since) pipe.since = now;
-      pipe.n++; pipe.ms += ms;
+      pipe.n++; pipe.ms += ms; pipe.gap += dt || 0;
       if (now - pipe.since < 1000) return;
       pipe.fps = pipe.n * 1000 / (now - pipe.since); pipe.avg = pipe.ms / pipe.n;
-      pipe.n = 0; pipe.ms = 0; pipe.since = now;
+      const interval = pipe.gap / pipe.n;
+      pipe.n = 0; pipe.ms = 0; pipe.gap = 0; pipe.since = now;
       root.dataset.pipe = `${pipe.avg.toFixed(1)}ms ${pipe.fps.toFixed(1)}fps`;
       if (document.hidden || now - pipe.started < 3000) return;
-      // เทียบกับเฟรมเรตจริงของกล้อง: ไม่ทัน = ส่งออกได้น้อยกว่ากล้องให้มา หรือใช้เวลาต่อเฟรมจนเกือบเต็มช่วงเฟรม
-      const cam = Math.min(fps, stream?.getVideoTracks()[0]?.getSettings?.().frameRate || fps), budget = 1000 / cam;
-      const slow = pipe.avg > budget * 0.95 || (pipe.fps < cam * 0.75 && pipe.avg > budget * 0.6);
+      // ไม่ทัน = ประมวลผลยุ่งเกือบตลอดช่วงเฟรม (จาก timestamp จริง) และส่งออกได้น้อยกว่าที่กล้องให้มา (เฟรมถูกทิ้ง) ต่อเนื่อง 5 วินาที
+      // (กล้องที่ให้เฟรมช้าเองตอนแสงน้อย ช่วงเฟรมยาวแต่เครื่องว่าง — ไม่นับว่าเครื่องช้า)
+      const cam = Math.min(fps, stream?.getVideoTracks()[0]?.getSettings?.().frameRate || fps);
+      const slow = interval > 0 && pipe.avg > interval * 0.85 && pipe.fps < cam * 0.8;
       pipe.slow = slow ? pipe.slow + 1 : 0;
-      if (pipe.slow >= 4 && smooth.on) {
+      if (pipe.slow >= 5 && smooth.on) {
         store.set('caller-smoothzoom', false);
         store.set('caller-smooth-auto-off', true);
         showMsgBrief('เครื่องนี้ประมวลผลซูมนุ่มไม่ทัน — สลับเป็นซูมของเลนส์ให้แล้ว (เปลี่ยนได้ที่ปุ่ม FPS)', 4000);
@@ -138,7 +140,7 @@
             if (smooth.vel || smooth.syncZ) { smooth.z = m.z; if (!smooth.vel) smooth.syncZ = false; }
             smooth.size = { width: m.w, height: m.h };
             trace(m.zd, m.t);
-            watchPipe(m.ms);
+            watchPipe(m.ms, m.dt);
           };
           Object.assign(smooth, {
             mode: 'worker', out: gen, worker: w,

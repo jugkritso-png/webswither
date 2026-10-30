@@ -230,15 +230,16 @@ const until = async (fn, ms = 15000) => { const end = Date.now() + ms; while (Da
   ok('…and says the mic is unavailable', await until(async () => /ไมค์ไม่ได้/.test(await fp.textContent('#caller-msg')), 4000), await fp.textContent('#caller-msg'));
   await fctx.close();
 
-  // ---- มือถือที่ประมวลผลซูมนุ่มไม่ทัน (จำลองเฟรมละ 60 ms) → สลับเป็นซูมของเลนส์เอง
+  // ---- มือถือที่ประมวลผลซูมนุ่มไม่ทัน (จำลองเฟรมละ 90 ms) → สลับเป็นซูมของเลนส์เอง
   const sctx = await b.newContext({ ...devices['Pixel 7'], permissions: ['camera', 'microphone'] }); await setup(sctx);
   await sctx.addInitScript(PROCAM);
-  await sctx.addInitScript(() => { if (!sessionStorage.getItem('slowSet')) { sessionStorage.setItem('slowSet', '1'); localStorage.setItem('webmix:test-pipe-delay', '60'); localStorage.removeItem('webmix:caller-smoothzoom'); } });
+  await sctx.addInitScript(() => { if (!sessionStorage.getItem('slowSet')) { sessionStorage.setItem('slowSet', '1'); localStorage.setItem('webmix:test-pipe-delay', '90'); localStorage.removeItem('webmix:caller-smoothzoom'); } });
   const sp = await sctx.newPage(); sp.on('pageerror', e => errs.push('slow ' + e.message));
   await sp.goto(link.replace(/^https?:\/\/[^/]+\/[^?]*/, 'http://localhost:8765/index.html'));
-  ok('slow phone starts on smooth zoom', await until(() => sp.evaluate(() => document.querySelector('#caller').dataset.zoomPipe === 'worker'), 8000));
-  ok('…and switches itself to the lens zoom when it cannot keep up', await until(() => sp.evaluate(() => localStorage.getItem('webmix:caller-smoothzoom') === 'false' && !document.querySelector('#caller').dataset.zoomPipe && document.querySelector('#caller-video').videoWidth > 0), 20000), await sp.evaluate(() => localStorage.getItem('webmix:caller-smoothzoom')));
-  ok('…and tells the operator why', await until(async () => /ไม่ทัน/.test(await sp.textContent('#caller-msg')), 6000), await sp.textContent('#caller-msg'));
+  ok('slow phone starts on smooth zoom', await until(() => sp.evaluate(() => document.querySelector('#caller')?.dataset.zoomPipe === 'worker').catch(() => false), 8000));
+  // (หน้าโหลดใหม่ระหว่างตรวจ — อ่านแบบไม่พังถ้ากำลังเปลี่ยนหน้า)
+  ok('…and switches itself to the lens zoom when it cannot keep up', await until(() => sp.evaluate(() => localStorage.getItem('webmix:caller-smoothzoom') === 'false' && !document.querySelector('#caller')?.dataset.zoomPipe && document.querySelector('#caller-video')?.videoWidth > 0).catch(() => false), 25000), await sp.evaluate(() => localStorage.getItem('webmix:caller-smoothzoom')).catch(() => '?'));
+  ok('…and tells the operator why', await until(async () => /ไม่ทัน/.test(await sp.textContent('#caller-msg').catch(() => '')), 8000), await sp.textContent('#caller-msg').catch(() => ''));
   await sctx.close();
 
   ok('no page errors', errs.length === 0, JSON.stringify(errs));
