@@ -104,6 +104,7 @@ const until = async (fn, ms = 15000) => { const end = Date.now() + ms; while (Da
     const rough = pairs.filter(x => x > 1.6).length, frozen = rate.filter((x, i) => i > 0 && i < rate.length - 1 && x === 0 && rate[i - 1] > top * 0.3 && rate[i + 1] > top * 0.3).length;
     ok('zoom is digital and moves every frame evenly in time (no lens steps, no frozen frames)', tr.length >= 30 && pairs.length >= 10 && rough <= Math.max(1, pairs.length * 0.15) && frozen === 0 && !(await ph.evaluate(() => window.__applied.some(a => 'zoom' in a))), `${tr.length} frames, ${rough}/${pairs.length} uneven pairs, ${frozen} frozen`);
   }
+  ok('zoom runs in a background worker (camera frames never touch the page thread)', await ph.evaluate(() => document.querySelector('#caller').dataset.zoomPipe) === 'worker', await ph.evaluate(() => document.querySelector('#caller').dataset.zoomPipe));
   ok('the studio still receives video', await host.evaluate(i => window.webmix.inputs.find(x => x.id === i).el.videoWidth > 0, id));
   // ช่วงต้น/ท้ายต้องค่อย ๆ เร่งและผ่อน (ก้าวแรก ๆ เล็กกว่าก้าวกลาง)
   { const st = zs.slice(1).map((z, i) => z - zs[i]); const mid = Math.max(...st); ok('zoom ramps up and eases to a stop (no jump)', st.length > 6 && st[0] < mid * 0.6 && st[st.length - 1] < mid * 0.6, JSON.stringify(st.map(x => +x.toFixed(3)))); }

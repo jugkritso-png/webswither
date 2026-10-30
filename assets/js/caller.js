@@ -50,46 +50,109 @@
     // กล้องมือถือของทีมงาน: เลือกเลนส์ (deviceId) และเฟรมเรตได้จากแผงกล้องโปร
     let lensId = null, fps = guestSlot ? 30 : [24, 25, 30, 50, 60].includes(+store.get('caller-fps', 30)) ? +store.get('caller-fps', 30) : 30;
     // ซูมนุ่ม (ดิจิทัล): เลนส์มือถือที่สั่งผ่านเบราว์เซอร์ซูมได้ทีละขั้น (มัก 0.1× ≈ กระโดด 10%) และหน่วง ภาพจึงกระตุก
-    // จึงเปิดกล้องละเอียดกว่าที่ส่ง แล้วครอปขยายเองทุกเฟรม (ค่าซูมเปลี่ยนต่อเนื่องทุกเฟรม) — ภาพที่ส่ง/บันทึก/แสดงคือภาพที่ครอปแล้ว
+    // จึงเปิดกล้องละเอียดกว่าที่ส่งเล็กน้อย แล้วครอปขยายเองทุกเฟรม — ภาพที่ส่ง/บันทึก/แสดงคือภาพที่ครอปแล้ว
+    // ทำในเธรดแยก (Worker + MediaStreamTrackProcessor/Generator) ไม่แย่งเวลากับหน้าจอ · เบราว์เซอร์ที่ไม่มี ใช้ canvas บนเธรดหลักแทน
     // ปิดได้ในหน้า FPS (กลับไปใช้ซูมของเลนส์) · แขกรับเชิญไม่ใช้
-    const smooth = { on: !guestSlot && store.get('caller-smoothzoom', true) !== false, z: 1, max: 8, vel: 0, src: null, cv: null, g: null, out: null, outStream: null, raf: 0 };
-    const capSize = () => smooth.on ? (quality.label === 'HD' ? { w: 1920, h: 1080 } : { w: 3840, h: 2160 }) : { w: quality.w, h: quality.h };
+    const smooth = { on: !guestSlot && store.get('caller-smoothzoom', true) !== false, z: 1, max: 8, vel: 0, out: null, outStream: null, size: null, mode: '' };
+    // เผื่อความละเอียดไว้ซูม ~1.3× โดยภาพไม่เสีย แต่ไม่เปิด 4K (มือถือหลายรุ่นได้เฟรมเรตต่ำและหน่วงที่ 4K)
+    const capSize = () => smooth.on ? (quality.label === 'HD' ? { w: 1920, h: 1080 } : quality.label === '4K' ? { w: 3840, h: 2160 } : { w: 2560, h: 1440 }) : { w: quality.w, h: quality.h };
     const sendStream = () => smooth.outStream || stream;
+    const outDims = (vw, vh) => { const land = vw >= vh, k = Math.min(1, (land ? quality.w : quality.h) / vw); return { W: Math.round(vw * k / 2) * 2, H: Math.round(vh * k / 2) * 2 }; };
+    const trace = (z, t) => { if (window.__zoomTrace) { window.__zoomTrace.push(+z.toFixed(4)); (window.__zoomTimes || (window.__zoomTimes = [])).push(t); } };
+    // งานในเธรดแยก: อ่านเฟรมจากกล้อง → ครอป/ย่อบน OffscreenCanvas → ส่งเป็นแทร็กใหม่ · เวลาของเฟรม = เวลาที่กล้องถ่าย (frame.timestamp)
+    const WORKER_SRC = `
+      let reader = null, writer = null, cv = null, g = null, outW = 1920, outH = 1080, max = 8, z = 1, zd = 1, vel = 0, last = 0, gen = 0;
+      const clamp = v => Math.min(max, Math.max(1, v));
+      onmessage = e => {
+        const m = e.data;
+        if (m.type === 'out') writer = m.writable.getWriter();
+        else if (m.type === 'src') { if (reader) reader.cancel().catch(() => {}); reader = m.readable.getReader(); run(reader, ++gen); }
+        else if (m.type === 'cfg') { outW = m.w; outH = m.h; max = m.max; }
+        else if (m.type === 'z') { vel = 0; z = clamp(m.z); }
+        else if (m.type === 'vel') vel = m.v;
+      };
+      async function run(r, id) {
+        for (;;) {
+          let res;
+          try { res = await r.read(); } catch (err) { return; }
+          if (res.done || id !== gen) { if (res.value) res.value.close(); return; }
+          const f = res.value, vw = f.displayWidth, vh = f.displayHeight, ts = f.timestamp / 1000;
+          const dt = last ? Math.max(0, Math.min(200, ts - last)) : 0; last = ts;
+          if (vel) { z = clamp(Math.exp(Math.log(z) + vel * Math.min(dt, 100))); if (z >= max || z <= 1) vel = 0; zd = z; }
+          else { const lz = Math.log(zd), k = 1 - Math.exp(-dt / 70); zd = Math.abs(Math.log(z) - lz) < 1e-3 ? z : Math.exp(lz + (Math.log(z) - lz) * k); }
+          const land = vw >= vh, kk = Math.min(1, (land ? outW : outH) / vw), W = Math.round(vw * kk / 2) * 2, H = Math.round(vh * kk / 2) * 2;
+          if (!cv || cv.width !== W || cv.height !== H) { cv = new OffscreenCanvas(W, H); g = cv.getContext('2d', { alpha: false }); g.imageSmoothingQuality = 'high'; }
+          const sw = vw / zd, sh = vh / zd;
+          g.drawImage(f, (vw - sw) / 2, (vh - sh) / 2, sw, sh, 0, 0, W, H);
+          const out = new VideoFrame(cv, { timestamp: f.timestamp });
+          f.close();
+          try { if (writer) await writer.write(out); else out.close(); } catch (err) { try { out.close(); } catch (e2) {} }
+          postMessage({ z, zd, t: ts, w: W, h: H });
+        }
+      }`;
     function startSmooth() {
       if (!smooth.on || smooth.out || !stream) return;
-      const src = document.createElement('video');
-      src.muted = true; src.playsInline = true; src.autoplay = true;
-      src.srcObject = new MediaStream(stream.getVideoTracks());
+      const cam = stream.getVideoTracks()[0];
+      if (!cam) return;
+      if (window.MediaStreamTrackProcessor && window.MediaStreamTrackGenerator && window.OffscreenCanvas && window.VideoFrame && window.Worker) {
+        try {
+          const w = new Worker(URL.createObjectURL(new Blob([WORKER_SRC], { type: 'text/javascript' })));
+          const gen = new MediaStreamTrackGenerator({ kind: 'video' });
+          w.postMessage({ type: 'cfg', w: quality.w, h: quality.h, max: smooth.max });
+          w.postMessage({ type: 'out', writable: gen.writable }, [gen.writable]);
+          const src = t => { const p = new MediaStreamTrackProcessor({ track: t }); w.postMessage({ type: 'src', readable: p.readable }, [p.readable]); };
+          src(cam);
+          w.onmessage = e => {
+            const m = e.data;
+            // ค่าซูมจริงอยู่ที่ worker (คำนวณตามเวลาเฟรม) — ระหว่างซูม servo ให้ฝั่งหน้าจอตามค่านั้น
+            if (smooth.vel || smooth.syncZ) { smooth.z = m.z; if (!smooth.vel) smooth.syncZ = false; }
+            smooth.size = { width: m.w, height: m.h };
+            trace(m.zd, m.t);
+          };
+          Object.assign(smooth, {
+            mode: 'worker', out: gen, worker: w,
+            setZ: v => w.postMessage({ type: 'z', z: v }), setVel: v => w.postMessage({ type: 'vel', v }),
+            source: t => src(t), cfg: () => w.postMessage({ type: 'cfg', w: quality.w, h: quality.h, max: smooth.max })
+          });
+          smooth.outStream = new MediaStream([gen, ...stream.getAudioTracks()]);
+          root.dataset.zoomPipe = 'worker';
+          return;
+        } catch (e) { smooth.out = null; }
+      }
+      // สำรอง: canvas บนเธรดหลัก
+      const srcV = document.createElement('video');
+      srcV.muted = true; srcV.playsInline = true; srcV.autoplay = true;
+      srcV.srcObject = new MediaStream([cam]);
       const cv = document.createElement('canvas');
       cv.width = quality.w; cv.height = quality.h;
       const g = cv.getContext('2d', { alpha: false, desynchronized: true });
-      Object.assign(smooth, { src, cv, g });
+      let at = 0, zd = 1;
       const draw = () => {
-        const vw = src.videoWidth, vh = src.videoHeight;
+        const vw = srcV.videoWidth, vh = srcV.videoHeight;
         if (vw && vh) {
-          // ขนาดภาพที่ส่ง = คุณภาพที่เลือก ตามแนวของกล้อง (แนวนอน/แนวตั้ง) ไม่เกินความละเอียดจริงของกล้อง
-          const land = vw >= vh, k = Math.min(1, (land ? quality.w : quality.h) / vw);
-          const W = Math.round(vw * k / 2) * 2, H = Math.round(vh * k / 2) * 2;
+          const { W, H } = outDims(vw, vh);
           if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H; }
-          // ค่าซูมที่วาดไล่ตามค่าเป้าหมายแบบนุ่มตามเวลาจริงของเฟรม (log scale, ~70 ms) — ทุกเฟรมขยับเท่า ๆ กัน ไม่กระตุกแม้จอกับกล้องรีเฟรชไม่ตรงกัน
-          const now = performance.now(), dt = smooth.at ? Math.min(200, now - smooth.at) : 1000; smooth.at = now;
-          // ซูม servo: ความเร็ว (log ต่อ ms) คูณเวลาจริงของเฟรมนี้ — ภาพเคลื่อนตามเวลาจริงทุกเฟรม แม้เฟรมมาไม่สม่ำเสมอ
-          if (smooth.vel) { smooth.z = Math.min(smooth.max, Math.max(1, Math.exp(Math.log(smooth.z) + smooth.vel * Math.min(dt, 100)))); if (smooth.z >= smooth.max || smooth.z <= 1) smooth.vel = 0; if (!smooth.zd) smooth.zd = smooth.z; }
-          const target = Math.max(1, smooth.z), lz = Math.log(smooth.zd || target), kz = 1 - Math.exp(-dt / 70);
-          // ระหว่างซูม servo ภาพตามค่าจริงทันที (คำนวณจากเวลาแล้ว) · ค่าที่กระโดด (ปุ่ม/สตูดิโอ) ไล่ตามแบบนุ่ม
-          smooth.zd = smooth.vel || Math.abs(Math.log(target) - lz) < 1e-3 ? target : Math.exp(lz + (Math.log(target) - lz) * kz);
-          const z = smooth.zd, sw = vw / z, sh = vh / z;
+          smooth.size = { width: W, height: H };
+          const now = performance.now(), dt = at ? Math.min(200, now - at) : 1000; at = now;
+          if (smooth.vel) { smooth.z = Math.min(smooth.max, Math.max(1, Math.exp(Math.log(smooth.z) + smooth.vel * Math.min(dt, 100)))); if (smooth.z >= smooth.max || smooth.z <= 1) smooth.vel = 0; zd = smooth.z; }
+          else { const lz = Math.log(zd), k = 1 - Math.exp(-dt / 70); zd = Math.abs(Math.log(smooth.z) - lz) < 1e-3 ? smooth.z : Math.exp(lz + (Math.log(smooth.z) - lz) * k); }
+          const sw = vw / zd, sh = vh / zd;
           g.imageSmoothingQuality = 'high';
-          g.drawImage(src, (vw - sw) / 2, (vh - sh) / 2, sw, sh, 0, 0, W, H);
-          if (window.__zoomTrace) { window.__zoomTrace.push(+z.toFixed(4)); (window.__zoomTimes || (window.__zoomTimes = [])).push(now); }
+          g.drawImage(srcV, (vw - sw) / 2, (vh - sh) / 2, sw, sh, 0, 0, W, H);
+          trace(zd, now);
         }
         next();
       };
-      const next = () => { if (stopped) return; if (src.requestVideoFrameCallback) src.requestVideoFrameCallback(draw); else smooth.raf = requestAnimationFrame(draw); };
-      src.play().catch(() => {});
+      const next = () => { if (stopped) return; if (srcV.requestVideoFrameCallback) srcV.requestVideoFrameCallback(draw); else requestAnimationFrame(draw); };
+      srcV.play().catch(() => {});
       next();
-      smooth.out = cv.captureStream(fps).getVideoTracks()[0];
+      Object.assign(smooth, {
+        mode: 'canvas', out: cv.captureStream(fps).getVideoTracks()[0],
+        setZ: () => {}, setVel: () => {},
+        source: t => { srcV.srcObject = new MediaStream([t]); srcV.play().catch(() => {}); }, cfg: () => {}
+      });
       smooth.outStream = new MediaStream([smooth.out, ...stream.getAudioTracks()]);
+      root.dataset.zoomPipe = 'canvas';
     }
     // เปิดกล้องให้ได้ทุกเครื่อง: ลองค่าที่ต้องการก่อน แล้วค่อย ๆ ผ่อนเงื่อนไข (เลนส์ที่เลือก → ด้านหน้า/หลัง → กล้องตัวไหนก็ได้)
     // และถ้าไมค์ใช้ไม่ได้ (ไม่มี / ถูกแอปอื่นจับอยู่) ยังส่งภาพได้
@@ -150,7 +213,8 @@
       }
       await applyBitrate();
       paintQuality();
-      const s = smooth.cv ? { width: smooth.cv.width, height: smooth.cv.height } : track?.getSettings();
+      if (smooth.cfg) smooth.cfg();
+      const s = smooth.size || track?.getSettings();
       if (s?.width) showMsgBrief(`ส่งภาพ ${s.width}×${s.height}${s.height < quality.h ? ' (กล้องรองรับสูงสุดเท่านี้)' : ''}`);
     }
     let briefTimer = null;
@@ -202,7 +266,12 @@
         getStream: () => stream,
         getOutStream: () => sendStream(),
         // ซูมดิจิทัลแบบนุ่ม (null = ใช้ซูมของเลนส์)
-        digitalZoom: smooth.on ? { get: () => smooth.z, set: v => { smooth.vel = 0; smooth.z = Math.min(smooth.max, Math.max(1, +v || 1)); }, setVel: v => { smooth.vel = +v || 0; }, max: () => smooth.max, outSize: () => smooth.cv ? { width: smooth.cv.width, height: smooth.cv.height } : null } : null,
+        digitalZoom: smooth.on ? {
+          get: () => smooth.z,
+          set: v => { smooth.vel = 0; smooth.z = Math.min(smooth.max, Math.max(1, +v || 1)); smooth.setZ && smooth.setZ(smooth.z); },
+          setVel: v => { if (smooth.vel && !v) smooth.syncZ = true; smooth.vel = +v || 0; if (smooth.setVel) smooth.setVel(smooth.vel); },
+          max: () => smooth.max, outSize: () => smooth.size
+        } : null,
         smoothZoom: () => smooth.on,
         setSmoothZoom(on) { store.set('caller-smoothzoom', !!on); location.reload(); },
         getPeerConnection: () => call?.peerConnection || null,
@@ -304,6 +373,7 @@
       try { peer && peer.destroy(); } catch (e) {}
       stream && stream.getTracks().forEach(t => t.stop());
       if (smooth.out) smooth.out.stop();
+      if (smooth.worker) smooth.worker.terminate();
       video.srcObject = null;
       returnVideo.srcObject = null;
       returnVideo.hidden = true;
@@ -339,7 +409,7 @@
       }
       stream.addTrack(track);
       // ซูมนุ่ม: เปลี่ยนแค่ภาพต้นทาง — แทร็กที่ส่ง/บันทึกเป็นแทร็กเดิม สตูดิโอไม่สะดุด
-      if (smooth.src) { smooth.src.srcObject = new MediaStream([track]); smooth.src.play().catch(() => {}); }
+      if (smooth.source) smooth.source(track);
       else { video.srcObject = stream; if (sender) await sender.replaceTrack(track); }
       paintQuality();
       if (pro) pro.afterTrackChange();
