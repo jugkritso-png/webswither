@@ -60,6 +60,7 @@
     const outDims = (vw, vh) => { const land = vw >= vh, k = Math.min(1, (land ? quality.w : quality.h) / vw); return { W: Math.round(vw * k / 2) * 2, H: Math.round(vh * k / 2) * 2 }; };
     const trace = (z, t) => { if (window.__zoomTrace) { window.__zoomTrace.push(+z.toFixed(4)); (window.__zoomTimes || (window.__zoomTimes = [])).push(t); } };
     // งานในเธรดแยก: อ่านเฟรมจากกล้อง → ครอป/ย่อบน OffscreenCanvas → ส่งเป็นแทร็กใหม่ · เวลาของเฟรม = เวลาที่กล้องถ่าย (frame.timestamp)
+    // ซูม 1× และขนาดเท่ากัน: ส่งเฟรมจากกล้องต่อไปเลย ไม่ต้องวาด · (ห้ามเขียนคอมเมนต์ภาษาไทยในสตริงโค้ดของ worker — ชุดตรวจคำแปลจะนับเป็นข้อความ)
     const WORKER_SRC = `
       let reader = null, writer = null, cv = null, g = null, outW = 1920, outH = 1080, max = 8, z = 1, zd = 1, vel = 0, last = 0, gen = 0, delay = 0;
       const clamp = v => Math.min(max, Math.max(1, v));
@@ -84,7 +85,6 @@
           const land = vw >= vh, kk = Math.min(1, (land ? outW : outH) / vw), W = Math.round(vw * kk / 2) * 2, H = Math.round(vh * kk / 2) * 2;
           if (!cv || cv.width !== W || cv.height !== H) { cv = new OffscreenCanvas(W, H); g = cv.getContext('2d', { alpha: false }); g.imageSmoothingQuality = 'high'; }
           let out;
-          // ซูม 1× และขนาดเท่ากัน: ส่งเฟรมจากกล้องต่อไปเลย ไม่ต้องวาด (ไม่เสียเวลาเลย)
           if (zd < 1.0005 && vw === W && vh === H) out = f;
           else {
             const sw = vw / zd, sh = vh / zd;
