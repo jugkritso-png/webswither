@@ -61,13 +61,13 @@
     const trace = (z, t) => { if (window.__zoomTrace) { window.__zoomTrace.push(+z.toFixed(4)); (window.__zoomTimes || (window.__zoomTimes = [])).push(t); } };
     // งานในเธรดแยก: อ่านเฟรมจากกล้อง → ครอป/ย่อบน OffscreenCanvas → ส่งเป็นแทร็กใหม่ · เวลาของเฟรม = เวลาที่กล้องถ่าย (frame.timestamp)
     const WORKER_SRC = `
-      let reader = null, writer = null, cv = null, g = null, outW = 1920, outH = 1080, max = 8, z = 1, zd = 1, vel = 0, last = 0, gen = 0;
+      let reader = null, writer = null, cv = null, g = null, outW = 1920, outH = 1080, max = 8, z = 1, zd = 1, vel = 0, last = 0, gen = 0, delay = 0;
       const clamp = v => Math.min(max, Math.max(1, v));
       onmessage = e => {
         const m = e.data;
         if (m.type === 'out') writer = m.writable.getWriter();
         else if (m.type === 'src') { if (reader) reader.cancel().catch(() => {}); reader = m.readable.getReader(); run(reader, ++gen); }
-        else if (m.type === 'cfg') { outW = m.w; outH = m.h; max = m.max; }
+        else if (m.type === 'cfg') { outW = m.w; outH = m.h; max = m.max; delay = m.delay || 0; }
         else if (m.type === 'z') { vel = 0; z = clamp(m.z); }
         else if (m.type === 'vel') vel = m.v;
       };
@@ -76,20 +76,50 @@
           let res;
           try { res = await r.read(); } catch (err) { return; }
           if (res.done || id !== gen) { if (res.value) res.value.close(); return; }
-          const f = res.value, vw = f.displayWidth, vh = f.displayHeight, ts = f.timestamp / 1000;
+          const f = res.value, vw = f.displayWidth, vh = f.displayHeight, ts = f.timestamp / 1000, t0 = performance.now();
+          if (delay) while (performance.now() - t0 < delay) {}
           const dt = last ? Math.max(0, Math.min(200, ts - last)) : 0; last = ts;
           if (vel) { z = clamp(Math.exp(Math.log(z) + vel * Math.min(dt, 100))); if (z >= max || z <= 1) vel = 0; zd = z; }
           else { const lz = Math.log(zd), k = 1 - Math.exp(-dt / 70); zd = Math.abs(Math.log(z) - lz) < 1e-3 ? z : Math.exp(lz + (Math.log(z) - lz) * k); }
           const land = vw >= vh, kk = Math.min(1, (land ? outW : outH) / vw), W = Math.round(vw * kk / 2) * 2, H = Math.round(vh * kk / 2) * 2;
           if (!cv || cv.width !== W || cv.height !== H) { cv = new OffscreenCanvas(W, H); g = cv.getContext('2d', { alpha: false }); g.imageSmoothingQuality = 'high'; }
-          const sw = vw / zd, sh = vh / zd;
-          g.drawImage(f, (vw - sw) / 2, (vh - sh) / 2, sw, sh, 0, 0, W, H);
-          const out = new VideoFrame(cv, { timestamp: f.timestamp });
-          f.close();
+          let out;
+          // ซูม 1× และขนาดเท่ากัน: ส่งเฟรมจากกล้องต่อไปเลย ไม่ต้องวาด (ไม่เสียเวลาเลย)
+          if (zd < 1.0005 && vw === W && vh === H) out = f;
+          else {
+            const sw = vw / zd, sh = vh / zd;
+            g.drawImage(f, (vw - sw) / 2, (vh - sh) / 2, sw, sh, 0, 0, W, H);
+            out = new VideoFrame(cv, { timestamp: f.timestamp });
+            f.close();
+          }
           try { if (writer) await writer.write(out); else out.close(); } catch (err) { try { out.close(); } catch (e2) {} }
-          postMessage({ z, zd, t: ts, w: W, h: H });
+          postMessage({ z, zd, t: ts, w: W, h: H, ms: performance.now() - t0 });
         }
       }`;
+    // เฝ้าดูว่าเครื่องประมวลผลซูมนุ่มทันไหม (มือถือรุ่นกลาง/GPU ช้า) — ไม่ทันต่อเนื่อง 4 วินาที = สลับไปใช้ซูมของเลนส์ให้เอง
+    const pipe = { n: 0, ms: 0, since: 0, slow: 0, started: 0, fps: 0, avg: 0 };
+    function watchPipe(ms) {
+      const now = performance.now();
+      if (!pipe.started) pipe.started = now;
+      if (!pipe.since) pipe.since = now;
+      pipe.n++; pipe.ms += ms;
+      if (now - pipe.since < 1000) return;
+      pipe.fps = pipe.n * 1000 / (now - pipe.since); pipe.avg = pipe.ms / pipe.n;
+      pipe.n = 0; pipe.ms = 0; pipe.since = now;
+      root.dataset.pipe = `${pipe.avg.toFixed(1)}ms ${pipe.fps.toFixed(1)}fps`;
+      if (document.hidden || now - pipe.started < 3000) return;
+      // เทียบกับเฟรมเรตจริงของกล้อง: ไม่ทัน = ส่งออกได้น้อยกว่ากล้องให้มา หรือใช้เวลาต่อเฟรมจนเกือบเต็มช่วงเฟรม
+      const cam = Math.min(fps, stream?.getVideoTracks()[0]?.getSettings?.().frameRate || fps), budget = 1000 / cam;
+      const slow = pipe.avg > budget * 0.95 || (pipe.fps < cam * 0.75 && pipe.avg > budget * 0.6);
+      pipe.slow = slow ? pipe.slow + 1 : 0;
+      if (pipe.slow >= 4 && smooth.on) {
+        store.set('caller-smoothzoom', false);
+        store.set('caller-smooth-auto-off', true);
+        showMsgBrief('เครื่องนี้ประมวลผลซูมนุ่มไม่ทัน — สลับเป็นซูมของเลนส์ให้แล้ว (เปลี่ยนได้ที่ปุ่ม FPS)', 4000);
+        setTimeout(() => location.reload(), 1500);
+        smooth.on = false;
+      }
+    }
     function startSmooth() {
       if (!smooth.on || smooth.out || !stream) return;
       const cam = stream.getVideoTracks()[0];
@@ -98,7 +128,7 @@
         try {
           const w = new Worker(URL.createObjectURL(new Blob([WORKER_SRC], { type: 'text/javascript' })));
           const gen = new MediaStreamTrackGenerator({ kind: 'video' });
-          w.postMessage({ type: 'cfg', w: quality.w, h: quality.h, max: smooth.max });
+          w.postMessage({ type: 'cfg', w: quality.w, h: quality.h, max: smooth.max, delay: +store.get('test-pipe-delay', 0) || 0 });
           w.postMessage({ type: 'out', writable: gen.writable }, [gen.writable]);
           const src = t => { const p = new MediaStreamTrackProcessor({ track: t }); w.postMessage({ type: 'src', readable: p.readable }, [p.readable]); };
           src(cam);
@@ -108,11 +138,12 @@
             if (smooth.vel || smooth.syncZ) { smooth.z = m.z; if (!smooth.vel) smooth.syncZ = false; }
             smooth.size = { width: m.w, height: m.h };
             trace(m.zd, m.t);
+            watchPipe(m.ms);
           };
           Object.assign(smooth, {
             mode: 'worker', out: gen, worker: w,
             setZ: v => w.postMessage({ type: 'z', z: v }), setVel: v => w.postMessage({ type: 'vel', v }),
-            source: t => src(t), cfg: () => w.postMessage({ type: 'cfg', w: quality.w, h: quality.h, max: smooth.max })
+            source: t => src(t), cfg: () => w.postMessage({ type: 'cfg', w: quality.w, h: quality.h, max: smooth.max, delay: +store.get('test-pipe-delay', 0) || 0 })
           });
           smooth.outStream = new MediaStream([gen, ...stream.getAudioTracks()]);
           root.dataset.zoomPipe = 'worker';
@@ -161,8 +192,11 @@
       : { echoCancellation: false, noiseSuppression: false, autoGainControl: false };
     async function getCamera(withAudio) {
       const cs = capSize(), size = { width: { ideal: cs.w }, height: { ideal: cs.h }, frameRate: { ideal: fps } };
+      // เฟรมเรตคงที่แบบงานถ่ายทอดสด: ห้ามกล้องลดเหลือ ~15 fps ตอนแสงน้อย (Android หลายรุ่นทำเอง ภาพดูหน่วง) — ภาพมืดลงแทน
+      const fixed = { ...size, frameRate: { ideal: fps, min: Math.min(24, fps) } };
       const tries = [
-        ...(lensId ? [{ deviceId: { exact: lensId }, ...size }] : []),
+        ...(lensId ? [{ deviceId: { exact: lensId }, ...fixed }, { deviceId: { exact: lensId }, ...size }] : []),
+        { facingMode: facing, ...fixed },
         { facingMode: facing, ...size },
         { facingMode: { ideal: facing } },
         true
@@ -172,7 +206,7 @@
         for (const v of tries) {
           try {
             const st = await navigator.mediaDevices.getUserMedia({ video: v, audio });
-            if (v !== tries[0] && lensId) lensId = null;
+            if (lensId && !(v && v.deviceId)) lensId = null;
             if (withAudio && !audio) setTimeout(() => showMsgBrief('ใช้ไมค์ไม่ได้ — ส่งเฉพาะภาพ (ตรวจสิทธิ์ไมค์ หรือปิดแอปอื่นที่ใช้ไมค์อยู่)'), 1500);
             return st;
           } catch (e) {
@@ -258,6 +292,7 @@
         return;
       }
       startSmooth();
+      if (store.get('caller-smooth-auto-off', false)) { store.set('caller-smooth-auto-off', false); setTimeout(() => showMsgBrief('เครื่องนี้ประมวลผลซูมนุ่มไม่ทัน — ใช้ซูมของเลนส์แทน (เปลี่ยนได้ที่ปุ่ม FPS)', 5000), 1200); }
       video.srcObject = sendStream();
       paintQuality();
       keepScreenOn(true);
@@ -273,6 +308,7 @@
           max: () => smooth.max, outSize: () => smooth.size
         } : null,
         smoothZoom: () => smooth.on,
+        pipeStats: () => smooth.on && pipe.avg ? { ms: pipe.avg, fps: pipe.fps } : null,
         setSmoothZoom(on) { store.set('caller-smoothzoom', !!on); location.reload(); },
         getPeerConnection: () => call?.peerConnection || null,
         send: msg => { if (conn && conn.open) { try { conn.send(msg); } catch (e) {} } },

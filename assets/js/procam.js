@@ -380,6 +380,7 @@
           <div class="pc-label">ความละเอียดที่ส่งเข้าสตูดิโอ</div>${seg('quality', ctx.qualities().map(q => [q, q]), ctx.getQuality())}
           <div class="pc-label">ความเร็วซูม / ดึงโฟกัสเมื่อกดปุ่ม</div>${seg('glide', [[0, 'ทันที'], [600, 'เร็ว'], [1500, 'ปานกลาง'], [3000, 'ช้า']], prefs.glide)}
           ${ctx.setSmoothZoom ? `<div class="pc-label">วิธีซูม</div>${seg('zoomMode', [['smooth', 'นุ่ม (ดิจิทัล)'], ['lens', 'เลนส์กล้อง']], ctx.smoothZoom() ? 'smooth' : 'lens')}
+          ${ctx.pipeStats && ctx.pipeStats() ? `<p class="pc-note">ตอนนี้ประมวลผลภาพ ${ctx.pipeStats().ms.toFixed(1)} ms/เฟรม · ${Math.round(ctx.pipeStats().fps)} fps</p>` : ''}
           <p class="pc-note">นุ่ม = ครอปขยายจากกล้องความละเอียดสูงทุกเฟรม ซูมลื่นไม่กระตุก (ค่าเริ่มต้น) · เลนส์กล้อง = ใช้ซูมของมือถือ คมกว่าตอนซูมไกลแต่บางรุ่นซูมเป็นขั้น ๆ — เปลี่ยนแล้วหน้าจะโหลดใหม่</p>` : ''}
           <p class="pc-note">ตอนนี้ ${s.width || '?'}×${s.height || '?'} @ ${Math.round(s.frameRate || 0)} fps · ใช้ 25 / 50 fps ให้ตรงไฟบ้าน 50 Hz</p>`;
       }

@@ -2262,6 +2262,9 @@
     "ZOOM / FOCUS = วงล้อเลนส์ครึ่งวงกลมด้านข้าง (แบบ Final Cut บน iPad) · ชั้นนอก = ซูมต่อเนื่องแบบเลนส์ broadcast: ดันขึ้น (T) / ลง (W) ค้างไว้ — ยิ่งดันมากยิ่งซูมเร็ว ปล่อยแล้วหยุดนุ่ม · ชั้นใน = วงแหวนโฟกัส หมุนตามโค้ง · ปุ่มข้างวงล้อ: 1× 2× 3× 5× เลือกเลนส์ และ AF / ระยะโฟกัส": "ZOOM / FOCUS = a half-circle lens wheel at the side (like Final Cut on iPad) · outer ring = continuous broadcast-style zoom: push up (T) / down (W) and hold — the further you push, the faster it zooms; release to stop smoothly · inner ring = focus, turn it along the curve · buttons next to it: 1× 2× 3× 5×, lens choice, AF / focus distance",
     "วิธีซูม": "Zoom method", "นุ่ม (ดิจิทัล)": "Smooth (digital)", "เลนส์กล้อง": "Camera lens",
     "นุ่ม = ครอปขยายจากกล้องความละเอียดสูงทุกเฟรม ซูมลื่นไม่กระตุก (ค่าเริ่มต้น) · เลนส์กล้อง = ใช้ซูมของมือถือ คมกว่าตอนซูมไกลแต่บางรุ่นซูมเป็นขั้น ๆ — เปลี่ยนแล้วหน้าจะโหลดใหม่": "Smooth = crops from a high-resolution camera feed every frame, so zoom glides without stutter (default) · Camera lens = the phone's own zoom, sharper when zoomed far in but stepped on some phones — changing this reloads the page",
+    "เครื่องนี้ประมวลผลซูมนุ่มไม่ทัน — สลับเป็นซูมของเลนส์ให้แล้ว (เปลี่ยนได้ที่ปุ่ม FPS)": "This phone can't keep up with smooth zoom — switched to the lens zoom (change it under FPS)",
+    "เครื่องนี้ประมวลผลซูมนุ่มไม่ทัน — ใช้ซูมของเลนส์แทน (เปลี่ยนได้ที่ปุ่ม FPS)": "This phone can't keep up with smooth zoom — using the lens zoom instead (change it under FPS)",
+    "ตอนนี้ประมวลผลภาพ {} ms/เฟรม · {} fps": "Processing now {1} ms/frame · {2} fps",
     "ทีวี": "TV", "หน้า": "Page", "รายการ": "Item", "ความยาว": "Length", "เหลือ": "Remain", "สไลด์": "Slides"
   });
 })(window.WebMix = window.WebMix || {});
