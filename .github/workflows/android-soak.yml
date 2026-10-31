@@ -1,0 +1,72 @@
+name: Android soak
+
+# ทดสอบแอป Android ซ้ำหลายเครื่องพร้อมกัน ด้วย APK ที่ build แล้วจากรอบ "Desktop app" (ไม่ build ใหม่)
+# ใช้หาสาเหตุของปัญหาที่เกิดบางรอบ เช่น ไลฟ์เบื้องหลังหลุดตอนกดโฮม / ปิดจอ
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: 'เลขรอบ Desktop app ที่มี APK (artifact WebMix-Pro-Android)'
+        required: true
+      copies:
+        description: 'จำนวนเครื่องทดสอบพร้อมกัน (1–8)'
+        default: '6'
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    outputs:
+      idx: ${{ steps.m.outputs.idx }}
+    steps:
+      - id: m
+        run: |
+          n=$(( ${{ inputs.copies }} )); [ $n -ge 1 ] && [ $n -le 8 ] || n=6
+          echo "idx=$(seq -s, 1 $n | sed 's/^/[/;s/$/]/')" >> "$GITHUB_OUTPUT"
+  soak:
+    needs: plan
+    name: Emulator ${{ matrix.i }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        i: ${{ fromJSON(needs.plan.outputs.idx) }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - uses: actions/download-artifact@v4
+        with:
+          name: WebMix-Pro-Android
+          path: dist-android
+          run-id: ${{ inputs.run_id }}
+          github-token: ${{ github.token }}
+      - name: Install ffmpeg
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Self-test on emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          emulator-options: -no-window -gpu swiftshader_indirect -no-boot-anim -camera-back none -camera-front none
+          disable-animations: true
+          script: bash desktop/android/emulator-test.sh dist-android/WebMix-Pro_*_android-x86_64.apk test-output/android
+      - name: Upload test output
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: android-soak-${{ matrix.i }}
+          path: test-output/
+          if-no-files-found: ignore
+          retention-days: 7
