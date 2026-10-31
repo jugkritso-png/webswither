@@ -2492,6 +2492,7 @@
     "ข่าว / พอดแคสต์ / ขายของ / กีฬา / งานพิธี — เพิ่มกราฟิกที่ต้องใช้ให้ครบในครั้งเดียว": "News / podcast / selling / sports / ceremony — add every graphic you need in one go",
     "{} · กำลังโหลด…": "{1} · loading…",
     "{}เทมเพลตโชว์": "{1}Show templates",
+    "วิดเจ็ตข้อมูลสด: สภาพอากาศ / ราคาคริปโต / อัตราแลกเปลี่ยน / ค่าจาก API (JSON) ใดก็ได้ อัปเดตเองตามรอบ · เทมเพลตโชว์สำเร็จรูป (ข่าว / พอดแคสต์ / ขายของ / กีฬา / งานพิธี) เพิ่มกราฟิกที่ต้องใช้ครบในครั้งเดียว · แหล่งภาพที่ไม่ได้ออกอากาศจะอัปเดตภาพตัวอย่างช้าลงเพื่อประหยัดเครื่อง": "Live data widgets: weather / crypto prices / exchange rates / any JSON API value, refreshed automatically · Show templates (news / podcast / selling / sports / ceremony) add every graphic you need in one go · Sources that are not on air refresh their thumbnails less often to save power",
     "ทีวี": "TV", "หน้า": "Page", "รายการ": "Item", "ความยาว": "Length", "เหลือ": "Remain", "สไลด์": "Slides"
   });
 })(window.WebMix = window.WebMix || {});
