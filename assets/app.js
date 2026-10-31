@@ -7918,9 +7918,11 @@
     release(peerId) {
       this.blocked.add(peerId);
       const conn = this.conns.get(peerId);
-      if (conn && conn.open) { try { conn.send({ type: 'removed' }); } catch (e) {} }
+      const sent = conn && conn.open && (() => { try { conn.send({ type: 'removed' }); return true; } catch (e) { return false; } })();
       const inp = inputs.find(i => i.peerId === peerId);
-      if (inp && inp.call) inp.call.close();
+      // ให้ข้อความ “นำออกแล้ว” ถึงมือถือก่อนตัดสายภาพ — ไม่อย่างนั้นมือถือเห็นสายหลุดก่อน แล้วพยายามต่อใหม่
+      const call = inp && inp.call;
+      if (call) sent ? setTimeout(() => call.close(), 500) : call.close();
       if (inp) this.camReturn(inp, false);
     },
     connectedCount() { return inputs.filter(i => i.type === 'wireless' && i.status === 'live').length; },
