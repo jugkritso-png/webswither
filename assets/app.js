@@ -1105,6 +1105,11 @@
     feedReplay();
   }
 
+  function keepAudioAwake() {
+    const ctx = audio.ctx;
+    if (!ctx || ctx.state === 'running' || ctx.state === 'closed' || !(streamer.ws || streamer.reconnecting || rec.active)) return;
+    ctx.resume().then(() => console.info('[webmix] audio context resumed'), e => console.warn('[webmix] audio resume failed', e?.message));
+  }
   /* ----------------------------------------------------------- render loop */
   const thumbs = new Map();
   let lastFrame = 0, lastThumbs = 0, frameCount = 0, fps = 0, fpsSince = performance.now(), renderMs = 0, frameNo = 0;
@@ -7107,7 +7112,10 @@
         this.setLimiter(this.masterStrip.limiter);
         this.buf = new Float32Array(1024);
         this.applyMaster();
-        ctx.onstatechange = updateStatus;
+        // Android ปิดจอ / สลับแอป: ระบบอาจพัก AudioContext — ระหว่างไลฟ์/บันทึกต้องปลุกทันที
+        // ไม่อย่างนั้นแทร็กเสียงหยุด แล้วเวลาของไฟล์ที่ส่งออกเดินช้ากว่าเวลาจริง (ภาพที่ปลายทางได้สั้นลง)
+        ctx.onstatechange = () => { console.info('[webmix] audio context', ctx.state); updateStatus(); keepAudioAwake(); };
+        setInterval(keepAudioAwake, 1000);
         // Noise Gate ทำงานใน AudioWorklet (ต้องเป็น https/localhost) — ไม่มีก็ใช้ส่วนอื่นได้ตามปกติ
         this.gateReady = ctx.audioWorklet ? ctx.audioWorklet.addModule('assets/js/gate-worklet.js').then(() => true, e => { console.warn('gate worklet', e); return false; }) : Promise.resolve(false);
         lufs.start();

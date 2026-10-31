@@ -159,6 +159,8 @@ node -e '
   grep -E "encoder|✕|✓|→|restart|libx264|exited" "$OUT/logcat-bg-gateway.txt" | tail -30
   echo "--- logcat ของแอป (WebMix)"
   grep -vE "glBindAttrib|s_gl|Non-monotonic|backward in time" "$OUT/logcat-bg-webmix.txt" | tail -40
+  echo "--- console ของหน้าเว็บ (สถานะเสียง / ตัวจับเวลา)"
+  grep -E "CONSOLE|\[webmix\]" "$OUT/logcat-bg-all.txt" | grep -vE "glBindAttrib|s_gl" | tail -30
   echo "--- logcat ที่เกี่ยวข้อง"
   grep -iE "webmix|gateway|ffmpeg|LiveService|ActivityManager.*(kill|died|Process)|lowmemory|chromium.*(crash|renderer|gone)|freez|cached app" "$OUT/logcat-bg-all.txt" | grep -vE "glBindAttrib|s_gl|Non-monotonic|backward in time" | tail -80
   exit 1

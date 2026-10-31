@@ -34,6 +34,10 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 
   // ระหว่างบันทึก: หลุด → ยังไม่ตัดก่อน 1 วินาที → ตัดไป Bars
   await p.click('[data-action=record]'); await p.waitForFunction(() => window.webmix.rec.active, null, { timeout: 8000 });
+  // ระหว่างบันทึก ระบบพัก AudioContext (เช่น Android ปิดจอ) → ปลุกกลับเองภายในราว 1 วินาที
+  const ac0 = await p.evaluate(async () => { const c = window.webmix.audio.ctx; if (!c) return 'none'; await c.suspend(); return c.state; });
+  await sleep(1600);
+  ok('audio engine suspended while recording wakes up by itself', ac0 === 'suspended' && await p.evaluate(() => window.webmix.audio.ctx.state) === 'running', ac0);
   await drop(); await sleep(400);
   ok('waits the set time before switching', await pgm() === cam);
   await sleep(1300);
