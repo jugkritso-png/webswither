@@ -10141,42 +10141,54 @@ onmessage = async e => {
   });
 
 
-  /* ---- คลิปไฮไลต์ 9:16: บัฟเฟอร์ภาพ Program + เสียงมาสเตอร์ย้อนหลัง (เครื่องบันทึก 2 ตัวสลับกันทุก 60 วินาที
-     ตัวที่เก่ากว่ามีภาพ 60–120 วินาทีเสมอ) → กดตัด = เล่นช่วงท้ายของบัฟเฟอร์ วาดลงแคนวาสแนวตั้ง แล้วบันทึกเป็นไฟล์
+  /* ---- คลิปไฮไลต์ 9:16: บัฟเฟอร์ภาพ Program + เสียงมาสเตอร์ย้อนหลัง — เครื่องบันทึกตัวเดียว ทุก 60 วินาทีปิดเป็นไฟล์ (ช่วงก่อนหน้า)
+     แล้วเริ่มช่วงใหม่ทันที → มีภาพย้อนหลัง 60–120 วินาทีเสมอ โดยเข้ารหัสทีละตัว (ไม่ซ้อน 2 ตัวให้เครื่องหนัก)
+     กดตัด = เก็บช่วงท้ายไว้ทันที (ไม่เข้ารหัสใหม่) · ทำคลิป = เล่นช่วงนั้น (ข้ามรอยต่อ 2 ไฟล์ได้) วาดลงแคนวาสแนวตั้งแล้วบันทึกเป็นไฟล์
      กรอบภาพ: ครอปกลาง (เลื่อนซ้าย/ขวาได้) หรือภาพเต็มบนพื้นเบลอ · ไฟล์ลงโฟลเดอร์ REC ถ้าเลือกไว้ ไม่อย่างนั้นดาวน์โหลด */
-  const HL_LENS = [15, 30, 60], HL_SPAN = 60000;
-  const hl = { on: false, recs: [], timer: null, mime: '', list: [], busy: null, cfg: { len: 30, frame: 'blur', x: 0.5, title: '' } };
+  const HL_LENS = [15, 30, 60];
+  // span = ความยาวต่อช่วง (ชุดทดสอบตั้งให้สั้นลงได้)
+  const hl = { on: false, span: 60000, cur: null, prev: null, timer: null, mime: '', list: [], busy: null, cfg: { len: 30, frame: 'blur', x: 0.5, title: '' } };
   try { Object.assign(hl.cfg, store.get('hl-cfg', {})); } catch (e) {}
   const hlSupported = () => !!window.MediaRecorder && !(window.WebMix.wcrec && window.WebMix.wcrec.preferred());
+  function hlSegment() {
+    if (!hl.on) return;
+    const old = hl.cur;
+    try {
+      const r = new MediaRecorder(output.get(), { ...(hl.mime ? { mimeType: hl.mime } : {}), videoBitsPerSecond: 4000000, audioBitsPerSecond: 128000 });
+      const seg = { r, chunks: [], t0: performance.now(), type: r.mimeType || hl.mime || 'video/webm' };
+      r.ondataavailable = e => { if (e.data.size) seg.chunks.push(e.data); };
+      r.start(500);
+      hl.cur = seg;
+    } catch (e) { console.warn('highlight buffer', e); }
+    if (old) {
+      // ปิดช่วงเดิมเป็นไฟล์ที่เลื่อนตำแหน่งได้ — แทนที่ช่วงก่อนหน้าเมื่อพร้อม
+      // (ยังไม่ซ่อมไฟล์ตรงนี้ — ซ่อมเฉพาะตอนกดตัด ไม่ให้เธรดหลักสะดุดทุกนาทีระหว่างไลฟ์)
+      old.r.onstop = () => {
+        const blob = new Blob(old.chunks, { type: old.type });
+        old.chunks = [];
+        if (hl.on) hl.prev = { blob, t0: old.t0, t1: performance.now(), type: old.type };
+      };
+      try { old.r.requestData(); old.r.stop(); } catch (e) {}
+    }
+  }
   function hlStart() {
     if (hl.on) return true;
     if (!hlSupported()) return false;
     hl.on = true;
     hl.mime = ['video/webm;codecs=vp8,opus', 'video/webm;codecs=vp9,opus', 'video/webm'].find(t => MediaRecorder.isTypeSupported(t)) || '';
-    const spawn = () => {
-      if (!hl.on) return;
-      try {
-        const r = new MediaRecorder(output.get(), { ...(hl.mime ? { mimeType: hl.mime } : {}), videoBitsPerSecond: 4000000, audioBitsPerSecond: 128000 });
-        const rec = { r, chunks: [], t0: performance.now(), type: r.mimeType || hl.mime || 'video/webm' };
-        r.ondataavailable = e => { if (e.data.size) rec.chunks.push(e.data); };
-        r.start(500);
-        hl.recs.push(rec);
-      } catch (e) { console.warn('highlight buffer', e); }
-      while (hl.recs.length > 2) { const old = hl.recs.shift(); try { old.r.stop(); } catch (e) {} old.chunks = []; }
-    };
-    spawn();
-    hl.timer = setInterval(spawn, HL_SPAN);
+    hlSegment();
+    hl.timer = setInterval(hlSegment, hl.span);
     return true;
   }
   function hlStop() {
     hl.on = false;
     clearInterval(hl.timer); hl.timer = null;
-    for (const rec of hl.recs) { try { rec.r.stop(); } catch (e) {} rec.chunks = []; }
-    hl.recs = [];
+    if (hl.cur) { try { hl.cur.r.stop(); } catch (e) {} hl.cur.chunks = []; }
+    hl.cur = hl.prev = null;
     output.reset();
   }
   // วินาทีที่มีในบัฟเฟอร์ตอนนี้
-  const hlBuffered = () => hl.recs[0] ? Math.min(HL_SPAN * 2, performance.now() - hl.recs[0].t0) / 1000 : 0;
+  const hlBuffered = () => !hl.cur ? 0 : (performance.now() - (hl.prev ? hl.prev.t0 : hl.cur.t0)) / 1000;
   // ตัวจับเวลาใน Worker: วาดต่อได้แม้สลับไปแท็บอื่น (setInterval ในหน้าถูกหน่วงเหลือวินาทีละครั้ง)
   function workerTimer(ms, fn) {
     try {
@@ -10208,57 +10220,86 @@ onmessage = async e => {
       ctx.restore();
     }
   }
-  // ขั้นที่ 1 (เร็ว ไม่เข้ารหัสใหม่): เก็บไฟล์ย้อนหลังของเครื่องบันทึกตัวเก่า + จุดเริ่มของช่วงที่ต้องการ
+  // ขั้นที่ 1 (เร็ว ไม่เข้ารหัสใหม่): เก็บไฟล์ของช่วงปัจจุบัน (+ ช่วงก่อนหน้าถ้าต้องย้อนไกลกว่า)
   async function hlGrab(len) {
-    const rec = hl.recs[0];
-    if (!rec) throw new Error('ยังไม่ได้เปิดบัฟเฟอร์ไฮไลต์');
-    try { rec.r.requestData(); } catch (e) {}
+    const cur = hl.cur;
+    if (!cur) throw new Error('ยังไม่ได้เปิดบัฟเฟอร์ไฮไลต์');
+    try { cur.r.requestData(); } catch (e) {}
     await new Promise(r => setTimeout(r, 300));
-    const have = (performance.now() - rec.t0) / 1000;
-    if (!rec.chunks.length || have < 3) throw new Error('ภาพย้อนหลังยังไม่พอ — รอสักครู่แล้วลองใหม่');
-    const src = await seekableClip(new Blob(rec.chunks, { type: rec.type }), rec.type);
-    return { src, have, len: Math.min(len, have) };
+    const curSec = (performance.now() - cur.t0) / 1000, prevSec = hl.prev ? (hl.prev.t1 - hl.prev.t0) / 1000 : 0;
+    const have = curSec + prevSec;
+    if (!cur.chunks.length || have < 3) throw new Error('ภาพย้อนหลังยังไม่พอ — รอสักครู่แล้วลองใหม่');
+    const want = Math.min(len, have);
+    const segs = [];
+    // ช่วงก่อนหน้าใส่ไว้ด้วยเมื่อช่วงปัจจุบันอาจไม่พอ — แบ่งความยาวจริงตอนทำคลิป (เวลาในไฟล์ ไม่ใช่เวลานาฬิกา)
+    if (hl.prev && want > curSec - 3) segs.push(await seekableClip(hl.prev.blob, hl.prev.type));
+    segs.push(await seekableClip(new Blob(cur.chunks, { type: cur.type }), cur.type));
+    return { segs, have, len: want };
   }
-  // ขั้นที่ 2 (ใช้เครื่องหนัก): เล่นช่วงนั้น วาดลงกรอบแนวตั้ง แล้วเข้ารหัสเป็นไฟล์
-  async function hlRender(raw, cfg, onProgress) {
-    const url = URL.createObjectURL(raw.src);
+  const hlLoad = blob => new Promise((res, rej) => {
     const v = document.createElement('video');
     v.playsInline = true; v.preload = 'auto';
-    await new Promise((res, rej) => { v.onloadedmetadata = res; v.onerror = () => rej(new Error('เปิดภาพย้อนหลังไม่ได้')); v.src = url; });
-    const dur = isFinite(v.duration) && v.duration > 0 ? v.duration : raw.have;
-    const len = Math.min(raw.len, dur), start = Math.max(0, dur - len);
-    // 1080×1920 (ต้นทางเล็กกว่า 1080p ใช้ 720×1280)
-    const big = (v.videoHeight || H) >= 900, cw = big ? 1080 : 720, ch = big ? 1920 : 1280;
+    v.onloadedmetadata = () => res(v); v.onerror = () => rej(new Error('เปิดภาพย้อนหลังไม่ได้'));
+    v.src = URL.createObjectURL(blob);
+  });
+  // ขั้นที่ 2 (ใช้เครื่องหนัก): เล่นช่วงนั้นต่อกัน วาดลงกรอบแนวตั้ง แล้วเข้ารหัสเป็นไฟล์
+  async function hlRender(raw, cfg, onProgress) {
+    const vids = [];
+    for (const blob of raw.segs) vids.push(await hlLoad(blob));
+    const first = vids[vids.length - 1];
+    const big = (first.videoHeight || H) >= 900, cw = big ? 1080 : 720, ch = big ? 1920 : 1280;
     const canvas = document.createElement('canvas'); canvas.width = cw; canvas.height = ch;
     const ctx = canvas.getContext('2d');
     // เสียงของคลิป: ผ่าน Web Audio ไปลงไฟล์เท่านั้น ไม่ดังออกลำโพง
-    const ac = audio.ensure();
-    const node = ac.createMediaElementSource(v), dest = ac.createMediaStreamDestination();
-    node.connect(dest);
+    const ac = audio.ensure(), dest = ac.createMediaStreamDestination();
+    const nodes = vids.map(v => { const n = ac.createMediaElementSource(v); n.connect(dest); return n; });
     const stream = new MediaStream([...canvas.captureStream(30).getVideoTracks(), ...dest.stream.getAudioTracks()]);
     const mime = ['video/mp4;codecs=avc1,mp4a.40.2', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'].find(t => MediaRecorder.isTypeSupported(t)) || '';
     const out = new MediaRecorder(stream, { ...(mime ? { mimeType: mime } : {}), videoBitsPerSecond: big ? 8000000 : 5000000, audioBitsPerSecond: 160000 });
     const parts = [];
     out.ondataavailable = e => { if (e.data.size) parts.push(e.data); };
-    v.currentTime = start;
-    await new Promise(res => { v.onseeked = res; setTimeout(res, 2000); });
-    hlDrawFrame(ctx, v, cw, ch, cfg);
-    const stopTimer = workerTimer(1000 / 30, () => { hlDrawFrame(ctx, v, cw, ch, cfg); onProgress?.(Math.min(1, (v.currentTime - start) / len)); });
-    const done = new Promise(res => { out.onstop = res; });
+    const durOf = v => isFinite(v.duration) && v.duration > 0 ? v.duration : 0;
+    const seek = (v, t) => new Promise(res => { v.onseeked = res; v.currentTime = t; setTimeout(res, 2000); });
+    // แบ่งความยาวจากท้าย: ไฟล์ล่าสุดก่อน ที่เหลือเอาจากไฟล์ก่อนหน้า
+    const starts = [], takes = [];
+    let remain = raw.len;
+    for (let i = vids.length - 1; i >= 0; i--) { const d = durOf(vids[i]); const t = Math.max(0, Math.min(remain, d)); takes[i] = t; starts[i] = Math.max(0, d - t); remain -= t; }
+    const order = vids.map((v, i) => i).filter(i => takes[i] > 0.05);
+    const total = order.reduce((a, i) => a + takes[i], 0) || raw.len;
+    // เลื่อนทุกไฟล์ไปจุดเริ่มไว้ก่อน
+    for (const i of order) await seek(vids[i], starts[i]);
+    let k = 0, done0 = 0, cur = vids[order[0]];
+    hlDrawFrame(ctx, cur, cw, ch, cfg);
+    const stopTimer = workerTimer(1000 / 30, () => { hlDrawFrame(ctx, cur, cw, ch, cfg); onProgress?.(Math.min(1, (done0 + cur.currentTime - starts[order[k]]) / total)); });
+    const finished = new Promise(res => { out.onstop = res; });
     out.start(1000);
-    await v.play().catch(() => {});
-    await new Promise(res => {
-      const end = () => res();
-      v.onended = end;
-      const t = setInterval(() => { if (v.currentTime >= dur - 0.05 || v.ended || v.paused) { clearInterval(t); end(); } }, 100);
-    });
+    await cur.play().catch(() => {});
+    for (; k < order.length; k++) {
+      const i = order[k], v = vids[i], next = k + 1 < order.length ? vids[order[k + 1]] : null;
+      // ใกล้จบไฟล์นี้: เริ่มเล่นไฟล์ถัดไปแบบปิดเสียงไว้ก่อน แล้วสลับเมื่อภาพเดินแล้ว — ภาพไม่ค้างตรงรอยต่อ
+      await new Promise(res => {
+        const t = setInterval(() => { if (v.ended || v.paused || v.currentTime >= starts[i] + takes[i] - (next ? 0.25 : 0.05)) { clearInterval(t); res(); } }, 20);
+      });
+      if (next) {
+        next.muted = true;
+        await next.play().catch(() => {});
+        const s0 = starts[order[k + 1]];
+        await new Promise(res => { const t0 = performance.now(), t = setInterval(() => { if (next.currentTime > s0 + 0.02 || v.ended || performance.now() - t0 > 1500) { clearInterval(t); res(); } }, 10); });
+        await new Promise(res => { const t = setInterval(() => { if (v.ended || v.paused || v.currentTime >= starts[i] + takes[i] - 0.03) { clearInterval(t); res(); } }, 10); });
+        next.muted = false; v.pause();
+        done0 += takes[i];
+        cur = next;
+      }
+    }
     stopTimer();
     out.stop();
-    await done;
-    v.pause(); node.disconnect(); URL.revokeObjectURL(url);
+    await finished;
+    // ปิดทุกอย่างที่ใช้ทำคลิป (แทร็กแคนวาส ตัวถอดรหัสวิดีโอ) — ไม่ให้ค้างกินเครื่องระหว่างไลฟ์ต่อ
+    stream.getTracks().forEach(t => t.stop());
+    vids.forEach((v, i) => { v.pause(); nodes[i].disconnect(); URL.revokeObjectURL(v.src); v.removeAttribute('src'); v.load(); });
     const type = out.mimeType || mime || 'video/webm';
     const blob = new Blob(parts, { type });
-    return { blob: type.includes('webm') ? await seekableClip(blob, type) : blob, len, ext: type.includes('mp4') ? 'mp4' : 'webm', w: cw, h: ch };
+    return { blob: type.includes('webm') ? await seekableClip(blob, type) : blob, len: total, ext: type.includes('mp4') ? 'mp4' : 'webm', w: cw, h: ch };
   }
   async function hlSave(item) {
     if (recFolder) {

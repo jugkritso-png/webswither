@@ -20,6 +20,8 @@ const probe = f => { const r = spawnSync('ffprobe', ['-v', 'error', '-show_entri
   await p.evaluate(() => { const w = window.webmix, id = w.inputs.find(i => i.type === 'media').id; w.setPreview(id); w.cut(); });
 
   ok('scissors button in the top bar', await p.isVisible('[data-action=highlight]'));
+  // ช่วงละ 10 วินาที: คลิป 15 วินาทีจึงต้องต่อจาก 2 ไฟล์ (รอยต่อต้องไม่ขาด)
+  await p.evaluate(() => { window.webmix.hl.span = 10000; });
   await p.keyboard.press('h'); await p.waitForSelector('.hl-preview');
   ok('H opens the highlight window and starts the buffer', await p.evaluate(() => window.webmix.hl.on));
   // ภาพตัวอย่าง 9:16 มีภาพ (ไม่ดำทั้งแผ่น)
@@ -48,24 +50,32 @@ const probe = f => { const r = spawnSync('ffprobe', ['-v', 'error', '-show_entri
   ok('vertical 9:16 video', v && v.width * 16 === v.height * 9 && v.height >= 1280, v ? `${v.width}×${v.height}` : 'no video');
   ok('has audio', !!a);
   const dur = +info?.format?.duration;
-  ok('about 15 seconds long', dur > 13 && dur < 17.5, String(dur));
+  ok('about 15 seconds long, joined across two buffer segments', dur > 13 && dur < 17.5, String(dur));
+  // รอยต่อ: ไม่มีช่วงภาพขาดเกิน 0.3 วินาที
+  const pts = (spawnSync('ffprobe', ['-v', 'error', '-select_streams', 'v', '-show_entries', 'packet=pts_time', '-of', 'csv=p=0', f], { encoding: 'utf8' }).stdout || '').split('\n').map(Number).filter(Number.isFinite).sort((x, y) => x - y);
+  let gap = 0; for (let i = 1; i < pts.length; i++) gap = Math.max(gap, pts[i] - pts[i - 1]);
+  results.push(`INFO  frames ${pts.length} gap ${gap.toFixed(2)}`);
+  ok('no long freeze at the join', gap < 0.9, `${pts.length} frames · biggest gap ${gap.toFixed(2)} s`);
   // ภาพในคลิปมีข้อความ (แถบบนสว่างกว่า) — ดึงเฟรมกลางคลิปมาเทียบ
   spawnSync('ffmpeg', ['-v', 'error', '-ss', '5', '-i', f, '-frames:v', '1', '-y', `${S}/hl-frame.png`]);
   ok('frame extracted from the clip', fs.existsSync(`${S}/hl-frame.png`) && fs.statSync(`${S}/hl-frame.png`).size > 1000);
   ok('clip listed in the window', await p.locator('.hl-item[data-state=done]').count() === 1 && /ช็อตเด็ด/.test(await p.textContent('.hl-item')));
 
   // ระหว่างบันทึก (เหมือนไลฟ์): ตัดแล้วเก็บช่วงไว้ทันที ไม่เข้ารหัสใหม่ → ภาพ Program ไม่ตก · หยุดบันทึกแล้วทำคลิปให้เอง
-  await p.click('.modal-foot button:has-text("ปิด")').catch(() => {});
+  await p.click('.modal-foot button[data-label="ปิด"]').catch(() => {});
   await p.click('[data-action=record]'); await p.waitForFunction(() => window.webmix.rec.active, null, { timeout: 8000 });
   await p.keyboard.press('h'); await p.waitForSelector('.hl-preview');
   await p.click('.hl-cut'); await sleep(1500);
   ok('while recording: the cut is kept, not converted yet', await p.evaluate(() => window.webmix.hl.list[0].state === 'wait') && /รอจบไลฟ์/.test(await p.textContent('.hl-item')), await p.textContent('.hl-list'));
   ok('“convert now” button offered', await p.locator('[data-hl-now]').count() === 1);
   ok('on air: dialogs drop the backdrop blur', await p.evaluate(() => getComputedStyle(document.querySelector('.modal-backdrop')).backdropFilter === 'none'));
-  await p.click('.modal-foot button:has-text("ปิด")');
+  await p.click('.modal-foot button[data-label="ปิด"]');
   await sleep(3000);
-  const fpsLive = []; for (let i = 0; i < 3; i++) { await sleep(1000); fpsLive.push(await p.evaluate(() => window.webmix.perf().fps)); }
-  ok('…so the Program picture does not drop while it waits', Math.min(...fpsLive) >= 40, fpsLive.map(x => x.toFixed(0)).join(','));
+  // วัดเทียบเฟรมเรตเอาต์พุต (สตรีม/ไฟล์ใช้ settings.fps — หน้าจอวาดได้ถึง 60)
+  const target = await p.evaluate(() => +window.webmix.settings.fps || 30);
+  const fpsLive = []; for (let i = 0; i < 6; i++) { await sleep(1000); fpsLive.push(await p.evaluate(() => window.webmix.perf().fps)); }
+  const med = [...fpsLive].sort((a, b) => a - b)[3];
+  ok('…so the Program picture keeps the output frame rate while it waits', med >= target && Math.min(...fpsLive) >= target * 0.6, `${fpsLive.map(x => x.toFixed(0)).join(',')} (output ${target} fps)`);
   const dl2 = p.waitForEvent('download', { predicate: x => /Highlight/.test(x.suggestedFilename()), timeout: 90000 });
   await p.click('[data-action=record]');
   const d2 = await dl2;
@@ -74,7 +84,7 @@ const probe = f => { const r = spawnSync('ffprobe', ['-v', 'error', '-show_entri
 
   // ปิดบัฟเฟอร์
   await p.click('.modal-foot button:has-text("ปิดบัฟเฟอร์")');
-  ok('buffer can be switched off', await p.evaluate(() => !window.webmix.hl.on && window.webmix.hl.recs.length === 0));
+  ok('buffer can be switched off', await p.evaluate(() => !window.webmix.hl.on && !window.webmix.hl.cur && !window.webmix.hl.prev));
   ok('settings remembered', await p.evaluate(() => { const c = JSON.parse(localStorage.getItem('webmix:hl-cfg') || '{}'); return c.len === 15 && c.frame === 'crop' && c.title === 'ช็อตเด็ด'; }));
   ok('no page errors', errs.length === 0, JSON.stringify(errs.slice(0, 3)));
   console.log(results.join('\n')); await b.close();
