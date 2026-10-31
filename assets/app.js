@@ -259,6 +259,8 @@
     mixsrc: { icon: 'monitor', label: 'OUTPUT' },
     url: { icon: 'link', label: 'URL' },
     delay: { icon: 'clock', label: 'DELAY' },
+    vset: { icon: 'camera', label: 'VIRTUAL SET' },
+    lottie: { icon: 'film', label: 'LOTTIE' },
     slate: { icon: 'type', label: 'SLATE' },
     clock: { icon: 'clock', label: 'CLOCK' },
     image: { icon: 'image', label: 'IMAGE' },
@@ -445,6 +447,8 @@
         fillBlack(ctx, w, h); drawStills(ctx, inp, w, h);
         break;
       case 'color': fillBlack(ctx, w, h); drawColour(ctx, inp, w, h); break;
+      case 'vset': drawVset(ctx, inp, w, h); break;
+      case 'lottie': if (inp.status !== 'live' || !inp.lc) { drawNoSignal(ctx, w, h, inp); break; } fillBlack(ctx, w, h); drawFitColored(ctx, inp, inp.lc, inp.lc.width, inp.lc.height, w, h); break;
       case 'mixsrc': { const c = outCanvasOf(inp); fillBlack(ctx, w, h); drawFitColored(ctx, inp, c, c.width, c.height, w, h); break; }
       case 'delay': { const f = inp.status === 'live' && delayFrame(inp); if (!f) { drawNoSignal(ctx, w, h, inp); break; } fillBlack(ctx, w, h); drawFitColored(ctx, inp, f.c, f.c.width, f.c.height, w, h); break; }
       case 'image':
@@ -664,6 +668,8 @@
       case 'transparent': return;
       case 'imgseq': case 'photos': if (inp.status === 'live') drawStills(ctx, inp, w, h); return;
       case 'color': drawColour(ctx, inp, w, h); return;
+      case 'vset': drawVset(ctx, inp, w, h); return;
+      case 'lottie': if (inp.status === 'live' && inp.lc) drawFitColored(ctx, inp, inp.lc, inp.lc.width, inp.lc.height, w, h); return;
       case 'mixsrc': case 'delay': drawSource(ctx, inp, w, h); return;
       case 'title': case 'timer': case 'score': case 'ticker': case 'visualizer': case 'chat': case 'captions': drawGraphic(ctx, inp, w, h); return;
       case 'cg': {
@@ -835,6 +841,12 @@
         const c = outCanvasOf(inp), e = gpu.entry('mx:' + inp.id);
         if (e.stamp !== frameNo) { gpu.upload(e, c, c.width, c.height); e.stamp = frameNo; }
         return { e };
+      }
+      case 'vset':
+        return { e: genTexture('vs:' + inp.id, frameNo, GW, GH, (c, w, h) => drawVset(c, inp, w, h)), full: true };
+      case 'lottie': {
+        if (inp.status !== 'live' || !inp.lc) return noSignal();
+        return { e: genTexture('lt:' + inp.id, `${inp.lot.stamp}|${JSON.stringify(inp.color || '')}`, GW, GH, (c, w, h) => drawFitColored(c, inp, inp.lc, inp.lc.width, inp.lc.height, w, h)), full: true, under: transparent ? null : [0, 0, 0, 1] };
       }
       case 'delay': {
         const f = inp.status === 'live' && delayFrame(inp);
@@ -1076,6 +1088,7 @@
     stepBackgrounds(now);
     stepStills(now);
     stepDelays(now);
+    stepLotties(now);
     if (ftb.level !== ftb.target) {
       const step = dt / settings.duration;
       ftb.level = ftb.target > ftb.level ? Math.min(ftb.target, ftb.level + step) : Math.max(ftb.target, ftb.level - step);
@@ -1535,7 +1548,7 @@
     inputs.forEach((inp, i) => {
       const meta = TYPE_META[inp.type];
       const isMedia = (inp.type === 'media' || inp.type === 'url') && !inp.missing;
-      const canRelink = ['camera', 'screen', 'web', 'media', 'image', 'slides', 'imgseq', 'photos'].includes(inp.type) && (inp.missing || inp.status !== 'live');
+      const canRelink = ['camera', 'screen', 'web', 'media', 'image', 'slides', 'imgseq', 'photos', 'lottie'].includes(inp.type) && (inp.missing || inp.status !== 'live');
       const card = document.createElement('div');
       const tags = inputTags(inp);
       card.className = 'card' + (inp.status !== 'live' ? ' no-signal' : '') + (tags.length ? ' has-tag' : '') + (isSelected(inp.id) ? ' is-selected' : '');
@@ -1563,6 +1576,10 @@
               ${inp.type === 'photos' ? '<button class="mini txt" data-card="qprev" title="รูปก่อนหน้า">‹</button>' : ''}
               <button class="mini ${inp.st.playing ? 'is-on' : ''}" data-card="qplay" title="เล่น / หยุดชั่วคราว">${icon(inp.st.playing ? 'pause' : 'play')}</button>
               ${inp.type === 'photos' ? '<button class="mini txt" data-card="qnext" title="รูปถัดไป">›</button>' : '<button class="mini" data-card="qrestart" title="เล่นใหม่ตั้งแต่เฟรมแรก">' + icon('restart') + '</button>'}` : ''}
+            ${inp.type === 'vset' ? VSHOTS.map((sh, k) => `<button class="mini txt ${inp.vset.shot === k ? 'is-on' : ''}" data-card="vs${k}" title="มุมกล้อง${sh.n}">${sh.k}</button>`).join('') : ''}
+            ${inp.type === 'lottie' && inp.lc ? `
+              <button class="mini ${inp.lot.playing ? 'is-on' : ''}" data-card="lplay" title="เล่น / หยุดชั่วคราว">${icon(inp.lot.playing ? 'pause' : 'play')}</button>
+              <button class="mini" data-card="lrestart" title="เล่นใหม่ตั้งแต่ต้น">${icon('restart')}</button>` : ''}
             ${inp.type === 'slides' && inp.slides.count ? `
               <button class="mini txt" data-card="slprev" title="หน้าก่อนหน้า (← / Page Up)">‹</button>
               <button class="mini txt" data-card="slnext" title="หน้าถัดไป (→ / Page Down)">›</button>` : ''}
@@ -1674,6 +1691,9 @@
       else if (act === 'cap') { inp.capRun?.on ? captionStop(inp) : captionStart(inp); renderInputs(); }
       else if (act === 'slprev' || act === 'slnext') slideGo(inp, inp.slides.page + (act === 'slnext' ? 1 : -1));
       else if (act === 'qplay') stillsPlay(inp);
+      else if (/^vs\d$/.test(act)) vsetShot(inp, +act.slice(2));
+      else if (act === 'lplay') lottiePlay(inp);
+      else if (act === 'lrestart') lottiePlay(inp, true, true);
       else if (act === 'qprev' || act === 'qnext') stillsGo(inp, inp.st.index + (act === 'qnext' ? 1 : -1));
       else if (act === 'qrestart') { stillsGo(inp, 0); stillsPlay(inp, true); }
       else if (act === 'rspd') { const i = REPLAY_SPEEDS.indexOf(inp.replay.speed); inp.replay.speed = REPLAY_SPEEDS[(i + 1) % REPLAY_SPEEDS.length]; inp.el.playbackRate = inp.replay.speed; actionBtn.textContent = speedLabel(inp.replay.speed); }
@@ -2033,6 +2053,8 @@
     if (inp.type === 'media' || inp.type === 'image') mediaStore.del(inp.id);
     if (inp.type === 'playlist') for (const it of inp.list.items) mediaStore.del(it.key);
     if (inp.type === 'imgseq' || inp.type === 'photos') for (let i = 0; i < (inp.storedCount || 0); i++) mediaStore.del(stillKey(inp, i));
+    if (inp.type === 'lottie') mediaStore.del(inp.id);
+    if (inp.type === 'vset') mediaStore.del(inp.id + '-bg');
   }
   function undoRemoveInput(raw, was) {
     if (byId(raw.id)) return;
@@ -2085,6 +2107,12 @@
     if (inp.type === 'slides' && inp.pdf) { try { inp.pdf.destroy(); } catch (e) {} inp.pdf = null; }
     if (inp.bm) { for (const b of inp.bm.values()) b.close && b.close(); inp.bm.clear(); }
     if (inp.hls) { try { inp.hls.destroy(); } catch (e) {} inp.hls = null; }
+    if (inp.anim) { try { inp.anim.destroy(); } catch (e) {} inp.anim = null; }
+    if (inp.lbox) { inp.lbox.remove(); inp.lbox = null; }
+    if (inp.vsImg) { inp.vsImg.close(); inp.vsImg = null; }
+    vsBgCache.delete(inp.id);
+    if (forget && inp.type === 'lottie') mediaStore.del(inp.id);
+    if (forget && inp.type === 'vset') mediaStore.del(inp.id + '-bg');
     if (inp.ring) inp.ring.length = 0;
     if (forget && (inp.type === 'imgseq' || inp.type === 'photos')) for (let i = 0; i < (inp.storedCount || 0); i++) mediaStore.del(stillKey(inp, i));
     if (inp.type === 'playlist') playlist.dispose(inp, forget);
@@ -2123,6 +2151,8 @@
     if (inp.type === 'color') return openColourDialog(inp);
     if (inp.type === 'url') return openUrlDialog(inp);
     if (inp.type === 'delay') return openDelayDialog(inp);
+    if (inp.type === 'vset') return openVsetDialog(inp);
+    if (inp.type === 'lottie') return openLottieDialog(inp);
     if (inp.type === 'visualizer') return openVizDialog(inp);
     if (inp.type === 'chat') return openChatInputDialog(inp);
     if (inp.type === 'captions') return openCaptionsDialog(inp);
@@ -2439,6 +2469,7 @@
     }
     if (inp.type === 'screen') return addScreen(inp);
     if (inp.type === 'web') return openWebSource(inp.url || 'about:blank', inp);
+    if (inp.type === 'lottie') return pickFiles('.json,application/json', files => { if (!inp.removed) setLottieFile(inp, files[0], true); });
     if (inp.type === 'imgseq' || inp.type === 'photos') return pickFiles('image/*', files => { const imgs = files.filter(f => /^image\//.test(f.type) || /\.(png|jpe?g|gif|webp|avif|bmp)$/i.test(f.name)).sort(natSort); if (imgs.length && !inp.removed) setStillsFiles(inp, imgs, true); });
     if (inp.type === 'slides') return pickFiles('application/pdf,.pdf', files => { if (!inp.removed) loadSlides(inp, files[0], true); });
     if (inp.type === 'media' || inp.type === 'image') {
@@ -4835,6 +4866,272 @@
     inp.ring.length = 0;
     renderInputs(); refreshSourceSelects(); show.autosave();
     return inp;
+  }
+
+  /* ------------------------------------------- ฉากเสมือน (Virtual Set)
+     กล้องฉากเขียว → คีย์ (ใช้ตัวคีย์ GPU เดียวกับ Overlay) → วางบนฉาก (วาดในแอป หรือรูปของเราเอง) → กล้องเสมือนครอปซูม
+     ฉากข่าวมีโต๊ะผู้ประกาศอยู่หน้าคน และจอทีวีหลังคนที่แสดงแหล่งภาพอื่นได้ · เปลี่ยนมุมกล้อง กว้าง/กลาง/ใกล้ แบบเคลื่อนนุ่ม */
+  const VSETS = { news: 'ห้องข่าว (โต๊ะ + จอ)', talk: 'ทอล์กโชว์', stage: 'เวที / คอนเสิร์ต', image: 'รูปของฉันเอง' };
+  const VSHOTS = [{ n: 'กว้าง', k: 'W', z: 1, x: 0.5, y: 0.5 }, { n: 'กลาง', k: 'M', z: 1.5, x: 0.45, y: 0.42 }, { n: 'ใกล้', k: 'C', z: 2.2, x: 0.4, y: 0.36 }];
+  const VSET_TALENT = { news: [0.4, 0.6, 0.8], talk: [0.5, 0.56, 0.86], stage: [0.5, 0.56, 0.9], image: [0.5, 0.56, 0.86] };
+  const WALL = { x: 0.56, y: 0.12, w: 0.38, h: 0.42 };
+  function sanitizeVset(v, setDefault = 'news') {
+    v = v || {};
+    const set = VSETS[v.set] ? v.set : setDefault, t = VSET_TALENT[set];
+    return { cam: String(v.cam || ''), set, wall: String(v.wall || ''), key: v.key === 'blue' ? 'blue' : 'green', tol: clamp(+v.tol || 60, 10, 150),
+      tx: clamp(+(v.tx ?? t[0]), 0, 1), ty: clamp(+(v.ty ?? t[1]), 0, 1), ts: clamp(+(v.ts ?? t[2]), 0.2, 2), move: clamp(+v.move || 1200, 0, 5000), shot: clamp(+v.shot || 0, 0, VSHOTS.length - 1), hasImg: !!v.hasImg };
+  }
+  const vsBgCache = new Map();
+  function drawVsetBack(g, set, w, h) {
+    const lin = (x0, y0, x1, y1, stops) => { const gr = g.createLinearGradient(x0, y0, x1, y1); stops.forEach(([o, c]) => gr.addColorStop(o, c)); return gr; };
+    const rad = (x, y, r, stops) => { const gr = g.createRadialGradient(x, y, 0, x, y, r); stops.forEach(([o, c]) => gr.addColorStop(o, c)); return gr; };
+    if (set === 'news') {
+      g.fillStyle = lin(0, 0, 0, h, [[0, '#0d2350'], [0.7, '#071228'], [1, '#040a17']]); g.fillRect(0, 0, w, h);
+      for (let i = 0; i < 9; i++) { g.fillStyle = `rgba(96,165,250,${0.05 + (i % 3) * 0.03})`; g.fillRect(i * w / 9 + w * 0.01, h * 0.06, w / 9 - w * 0.02, h * 0.62); }
+      g.fillStyle = 'rgba(56,189,248,.55)'; g.fillRect(0, h * 0.66, w, h * 0.006);
+      g.fillStyle = lin(0, h * 0.68, 0, h, [[0, '#0b1630'], [1, '#02050c']]); g.fillRect(0, h * 0.68, w, h * 0.32);
+      g.fillStyle = rad(w * 0.3, h * 0.35, w * 0.45, [[0, 'rgba(147,197,253,.18)'], [1, 'rgba(147,197,253,0)']]); g.fillRect(0, 0, w, h);
+    } else if (set === 'talk') {
+      g.fillStyle = lin(0, 0, w, 0, [[0, '#2a1a10'], [0.5, '#4a2e1b'], [1, '#2a1a10']]); g.fillRect(0, 0, w, h * 0.72);
+      for (let i = 0; i < 24; i++) { g.fillStyle = i % 2 ? 'rgba(0,0,0,.18)' : 'rgba(255,220,180,.06)'; g.fillRect(i * w / 24, 0, w / 48, h * 0.72); }
+      for (const [x, c] of [[0.12, '#7c3aed'], [0.76, '#0ea5e9']]) { g.fillStyle = 'rgba(0,0,0,.45)'; g.fillRect(w * x, h * 0.16, w * 0.12, h * 0.3); g.fillStyle = c; g.globalAlpha = 0.35; g.fillRect(w * x + 6, h * 0.16 + 6, w * 0.12 - 12, h * 0.3 - 12); g.globalAlpha = 1; }
+      g.fillStyle = lin(0, h * 0.72, 0, h, [[0, '#3b2516'], [1, '#140b06']]); g.fillRect(0, h * 0.72, w, h * 0.28);
+      for (const x of [0.25, 0.75]) { g.fillStyle = rad(w * x, 0, h * 0.9, [[0, 'rgba(255,214,150,.22)'], [1, 'rgba(255,214,150,0)']]); g.fillRect(0, 0, w, h); }
+    } else {
+      g.fillStyle = '#05050d'; g.fillRect(0, 0, w, h);
+      const cols = 16, rows = 7, cw = w / cols, ch = h * 0.6 / rows;
+      for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) { g.fillStyle = `hsla(${200 + c * 8 + r * 6},90%,${30 + ((c * 7 + r * 3) % 5) * 6}%,.85)`; g.fillRect(c * cw + 2, r * ch + 2, cw - 4, ch - 4); }
+      g.fillStyle = lin(0, h * 0.6, 0, h, [[0, '#14142a'], [1, '#020205']]); g.fillRect(0, h * 0.6, w, h * 0.4);
+      for (const x of [0.2, 0.5, 0.8]) { g.fillStyle = rad(w * x, -h * 0.1, h * 1.1, [[0, 'rgba(255,255,255,.22)'], [0.6, 'rgba(255,255,255,.05)'], [1, 'rgba(255,255,255,0)']]); g.fillRect(0, 0, w, h); }
+    }
+  }
+  function drawVsetDesk(g, set, w, h) {
+    if (set !== 'news') return;
+    g.save();
+    const top = h * 0.74;
+    g.beginPath(); g.moveTo(w * 0.1, top); g.quadraticCurveTo(w * 0.4, top - h * 0.03, w * 0.7, top); g.lineTo(w * 0.76, h); g.lineTo(w * 0.04, h); g.closePath();
+    const gr = g.createLinearGradient(0, top, 0, h); gr.addColorStop(0, '#1e3a8a'); gr.addColorStop(0.12, '#0f1f4d'); gr.addColorStop(1, '#050b1c');
+    g.fillStyle = gr; g.fill();
+    g.fillStyle = 'rgba(219,234,254,.85)'; g.fillRect(w * 0.1, top - 2, w * 0.6, Math.max(2, h * 0.008));
+    g.fillStyle = 'rgba(56,189,248,.9)'; g.fillRect(w * 0.1, top + h * 0.11, w * 0.62, Math.max(2, h * 0.006));
+    g.restore();
+  }
+  function vsetBg(inp, w, h) {
+    const v = inp.vset, key = `${inp.id}|${v.set}|${w}x${h}|${v.set === 'image' && inp.vsImg ? inp.vsImgStamp : ''}`;
+    let c = vsBgCache.get(inp.id);
+    if (c && c.key === key) return c.canvas;
+    const canvas = c?.canvas || document.createElement('canvas');
+    canvas.width = w; canvas.height = h;
+    const g = canvas.getContext('2d');
+    if (v.set === 'image') { g.fillStyle = '#000'; g.fillRect(0, 0, w, h); if (inp.vsImg) { const s = Math.max(w / inp.vsImg.width, h / inp.vsImg.height); g.drawImage(inp.vsImg, (w - inp.vsImg.width * s) / 2, (h - inp.vsImg.height * s) / 2, inp.vsImg.width * s, inp.vsImg.height * s); } }
+    else drawVsetBack(g, v.set, w, h);
+    vsBgCache.set(inp.id, { key, canvas });
+    return canvas;
+  }
+  // ฉากทั้งฉาก (ก่อนกล้องเสมือน) — วาดครั้งเดียวต่อเฟรม ใช้ร่วมกันทั้ง Program / Preview / การ์ด
+  function vsetStage(inp) {
+    const w = Math.min(W, 1920), h = Math.round(w * H / W);
+    const st = inp._vs || (inp._vs = { c: document.createElement('canvas'), frame: -1 });
+    if (st.frame === frameNo && st.c.width === w) return st.c;
+    if (st.c.width !== w || st.c.height !== h) { st.c.width = w; st.c.height = h; }
+    const g = st.c.getContext('2d'), v = inp.vset;
+    g.drawImage(vsetBg(inp, w, h), 0, 0);
+    if (v.set === 'news') {
+      const wall = byId(v.wall), r = { x: WALL.x * w, y: WALL.y * h, w: WALL.w * w, h: WALL.h * h };
+      g.save(); g.shadowColor = 'rgba(56,189,248,.8)'; g.shadowBlur = 18; g.fillStyle = '#020617'; g.fillRect(r.x - 4, r.y - 4, r.w + 8, r.h + 8); g.restore();
+      if (wall && wall !== inp && wall.type !== 'vset') { g.save(); g.beginPath(); g.rect(r.x, r.y, r.w, r.h); g.clip(); g.translate(r.x, r.y); drawSource(g, wall, r.w, r.h); g.restore(); }
+      else { const gr = g.createLinearGradient(r.x, r.y, r.x + r.w, r.y + r.h); gr.addColorStop(0, '#1d4ed8'); gr.addColorStop(1, '#0e7490'); g.fillStyle = gr; g.fillRect(r.x, r.y, r.w, r.h); }
+    }
+    const cam = byId(v.cam);
+    if (cam && cam !== inp && cam.type !== 'vset' && cam.status === 'live') {
+      const kc = keyedCanvas(cam, { scale: 1, key: v.key, tolerance: v.tol }), tw = w * v.ts, th = tw * kc.height / kc.width;
+      g.drawImage(kc, v.tx * w - tw / 2, v.ty * h - th / 2, tw, th);
+    }
+    drawVsetDesk(g, v.set, w, h);
+    st.frame = frameNo;
+    return st.c;
+  }
+  // กล้องเสมือน: ไล่จากมุมเดิมไปมุมใหม่แบบ ease-in-out
+  function vsetCamera(inp) {
+    const m = inp.vcam || (inp.vcam = { from: shotTarget(inp.vset, inp.vset.shot), to: shotTarget(inp.vset, inp.vset.shot), at: 0 });
+    const p = inp.vset.move ? clamp((performance.now() - m.at) / inp.vset.move, 0, 1) : 1, e = p < 0.5 ? 2 * p * p : 1 - Math.pow(-2 * p + 2, 2) / 2;
+    const lz = Math.log(m.from.z) + (Math.log(m.to.z) - Math.log(m.from.z)) * e;
+    return { z: Math.exp(lz), x: m.from.x + (m.to.x - m.from.x) * e, y: m.from.y + (m.to.y - m.from.y) * e };
+  }
+  // มุมกลาง/ใกล้ เล็งไปที่ช่วงบนของคน (ตามตำแหน่งที่วางไว้) ไม่ใช่กลางฉาก
+  const shotTarget = (v, i) => i === 0 ? VSHOTS[0] : { ...VSHOTS[i], x: v.tx, y: clamp(v.ty - v.ts * (i === 2 ? 0.2 : 0.12), 0, 1) };
+  function vsetShot(inp, i) {
+    const now = performance.now(), cur = vsetCamera(inp);
+    inp.vset.shot = i;
+    inp.vcam = { from: cur, to: shotTarget(inp.vset, i), at: now };
+    const card = $(`#inputs-grid .card[data-id="${inp.id}"]`);
+    if (card) { card.querySelectorAll('[data-card^="vs"]').forEach(b => b.classList.toggle('is-on', b.dataset.card === 'vs' + i)); const s = $('.card-sub', card); if (s) s.textContent = cardSub(inp); }
+  }
+  function drawVset(ctx, inp, w, h) {
+    const st = vsetStage(inp), c = vsetCamera(inp), sw = st.width / c.z, sh = st.height / c.z;
+    const sx = clamp(c.x * st.width - sw / 2, 0, st.width - sw), sy = clamp(c.y * st.height - sh / 2, 0, st.height - sh);
+    ctx.drawImage(st, sx, sy, sw, sh, 0, 0, w, h);
+  }
+  function addVsetInput(v) {
+    const n = inputs.filter(i => i.type === 'vset').length + 1;
+    return addInput({ type: 'vset', name: `VIRTUAL SET ${n}`, status: 'live', vset: sanitizeVset(v) });
+  }
+  async function setVsetImage(inp, file, store) {
+    try {
+      const b = await createImageBitmap(file);
+      if (inp.removed) { b.close(); return; }
+      if (inp.vsImg) inp.vsImg.close();
+      inp.vsImg = b; inp.vsImgStamp = Date.now(); inp.vset.hasImg = true;
+      if (store) mediaStore.put(inp.id + '-bg', file);
+    } catch (e) { toast('เปิดรูปฉากไม่ได้', 'error'); }
+  }
+  async function openVsetDialog(inp) {
+    const cams = inputs.filter(i => !['vset', 'delay', 'mixsrc', 'transparent', 'black', 'color', 'bars'].includes(i.type));
+    const isNew = !inp;
+    const v = sanitizeVset(inp ? inp.vset : { cam: (cams.find(i => ['camera', 'wireless', 'guest', 'srt', 'screen', 'web', 'url'].includes(i.type)) || cams[0] || {}).id });
+    const keep = inp ? { ...inp.vset } : null;
+    const opt = (list, cur, none) => (none ? `<option value="">${none}</option>` : '') + list.map(i => `<option value="${i.id}" ${i.id === cur ? 'selected' : ''}>${esc(i.name)}</option>`).join('');
+    const sl = (name, label, min, max, step, val, fmt) => `<label class="field"><span>${label} <b class="mono" data-vv="${name}">${fmt(val)}</b></span><input name="${name}" type="range" min="${min}" max="${max}" step="${step}" value="${val}"></label>`;
+    let tmp = inp;
+    if (isNew) tmp = addVsetInput(v);
+    const r = await dialog({
+      title: isNew ? 'เพิ่มฉากเสมือน (Virtual Set)' : `ฉากเสมือน — ${inp.name}`,
+      body: `
+        <label class="field"><span>ชื่อแหล่งภาพ</span><input name="name" class="input" maxlength="40" value="${esc(tmp.name)}"></label>
+        <div class="grid-2">
+          <label class="field"><span>กล้อง (ฉากเขียว / ฟ้า)</span><select name="cam" class="select">${opt(cams, v.cam, '— ไม่มี —')}</select></label>
+          <label class="field"><span>ฉาก</span><select name="set" class="select">${Object.entries(VSETS).map(([k, l]) => `<option value="${k}" ${k === v.set ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+        </div>
+        <div class="vs-img-row"><button type="button" class="btn btn-sm" data-vs="img">${icon('image')}เลือกรูปฉาก…</button> <small class="note">${tmp.vsImg ? 'มีรูปฉากแล้ว' : 'ยังไม่มีรูป — แนะนำ 1920×1080'}</small></div>
+        <label class="field vs-wall"><span>จอหลังผู้ประกาศแสดง</span><select name="wall" class="select">${opt(inputs.filter(i => i.type !== 'vset'), v.wall, 'กราฟิกฉาก')}</select></label>
+        <div class="grid-2">
+          <label class="field"><span>สีฉากหลังกล้อง</span><select name="key" class="select"><option value="green" ${v.key === 'green' ? 'selected' : ''}>เขียว</option><option value="blue" ${v.key === 'blue' ? 'selected' : ''}>ฟ้า</option></select></label>
+          ${sl('tol', 'ความแรงคีย์', 10, 150, 1, v.tol, x => Math.round(x))}
+        </div>
+        <div class="grid-3">${sl('tx', 'ตำแหน่งคน ซ้าย-ขวา', 0, 1, 0.01, v.tx, x => Math.round(x * 100) + '%')}${sl('ty', 'สูง-ต่ำ', 0, 1, 0.01, v.ty, x => Math.round(x * 100) + '%')}${sl('ts', 'ขนาด', 0.2, 2, 0.01, v.ts, x => Math.round(x * 100) + '%')}</div>
+        <label class="field"><span>ความเร็วเปลี่ยนมุมกล้อง</span><select name="move" class="select">${[[0, 'ตัดทันที'], [700, 'เร็ว'], [1200, 'ปานกลาง'], [2500, 'ช้า']].map(([ms, l]) => `<option value="${ms}" ${ms === v.move ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+        <canvas class="vs-prev" width="384" height="216"></canvas>
+        <p class="note">ปรับแล้วเห็นผลทันทีในภาพตัวอย่าง · บนการ์ดมีปุ่ม W / M / C เปลี่ยนมุมกล้องเสมือน (กว้าง / กลาง / ใกล้) แบบเคลื่อนนุ่ม</p>`,
+      wide: true,
+      actions: [{ label: 'ยกเลิก' }, { label: isNew ? 'เพิ่ม' : 'บันทึก', primary: true, value: 'ok' }],
+      onOpen(modal) {
+        const fm = $('form', modal), cv = $('.vs-prev', modal), g = cv.getContext('2d');
+        const sync = () => {
+          const nv = sanitizeVset({ ...tmp.vset, cam: fm.cam.value, set: fm.set.value, wall: fm.wall.value, key: fm.key.value, tol: fm.tol.value, tx: fm.tx.value, ty: fm.ty.value, ts: fm.ts.value, move: fm.move.value, hasImg: tmp.vset.hasImg });
+          tmp.vset = nv;
+          for (const k of ['tol', 'tx', 'ty', 'ts']) { const b = $(`[data-vv="${k}"]`, modal); if (b) b.textContent = k === 'tol' ? Math.round(nv[k]) : Math.round(nv[k] * 100) + '%'; }
+          $('.vs-img-row', modal).hidden = nv.set !== 'image';
+          $('.vs-wall', modal).hidden = nv.set !== 'news';
+        };
+        fm.addEventListener('input', sync); fm.addEventListener('change', e => {
+          // เปลี่ยนฉาก → วางคนตามตำแหน่งที่เหมาะกับฉากนั้น
+          if (e.target.name === 'set') { const t = VSET_TALENT[fm.set.value]; fm.tx.value = t[0]; fm.ty.value = t[1]; fm.ts.value = t[2]; }
+          sync();
+        });
+        $('[data-vs="img"]', modal).addEventListener('click', () => pickFiles('image/*', files => setVsetImage(tmp, files[0], true).then(() => { $('.vs-img-row small', modal).textContent = 'มีรูปฉากแล้ว'; })));
+        const loop = () => { if (!modal.isConnected) return; g.clearRect(0, 0, 384, 216); drawVset(g, tmp, 384, 216); requestAnimationFrame(loop); };
+        sync(); loop();
+      }
+    });
+    if (!r || r.value !== 'ok') {
+      if (isNew) { disposeInput(tmp, true); resetAfterRemoval(tmp.id); renderInputs(); refreshSourceSelects(); }
+      else inp.vset = keep;
+      return null;
+    }
+    tmp.name = r.form.name.value.trim().slice(0, 40) || tmp.name;
+    renderInputs(); refreshSourceSelects(); show.autosave();
+    return tmp;
+  }
+
+  /* ------------------------------------------- แอนิเมชัน Lottie (.json จาก After Effects / LottieFiles)
+     ใช้ตัวเล่นแบบ light (ไม่รัน expression ในไฟล์ — ปลอดภัยกับไฟล์จากภายนอก) วาดลงแคนวาสตามเวลา · พื้นโปร่งใสซ้อนบน Overlay ได้ */
+  let lottieLoading = null;
+  const loadLottie = () => lottieLoading || (lottieLoading = new Promise((resolve, reject) => {
+    const el = document.createElement('script');
+    el.src = 'assets/vendor/lottie-light-canvas-5.12.2.min.js';
+    el.onload = () => resolve(window.lottie || window.bodymovin); el.onerror = () => { lottieLoading = null; reject(new Error('โหลดตัวเล่น Lottie ไม่สำเร็จ')); };
+    document.head.appendChild(el);
+  }));
+  function createLottieInput(props) {
+    return addInput({ type: 'lottie', status: 'nosignal', ...props, lot: { loop: true, speed: 1, playing: true, t0: performance.now(), held: 0, frame: -1, frames: 0, fr: 30, ...(props.lot || {}) } });
+  }
+  async function setLottieFile(inp, file, store) {
+    try {
+      const data = JSON.parse(await file.text());
+      if (!data || !Array.isArray(data.layers) || !(+data.w > 0) || !(+data.h > 0) || !(+data.op > +data.ip)) throw new Error('bad');
+      const L = await loadLottie();
+      if (inp.removed) return false;
+      if (inp.anim) { try { inp.anim.destroy(); } catch (e) {} }
+      // ตัวเล่นแบบ canvas วาดถูกต้องเมื่อมีกล่องที่มีขนาดจริงในหน้า — ใช้กล่องนอกจอ
+      if (inp.lbox) inp.lbox.remove();
+      const k = Math.min(1, 1920 / data.w, 1920 / data.h) / (window.devicePixelRatio || 1), box = document.createElement('div');
+      box.style.cssText = `position:fixed;left:-20000px;top:0;width:${Math.max(2, Math.round(data.w * k))}px;height:${Math.max(2, Math.round(data.h * k))}px;pointer-events:none`;
+      document.body.appendChild(box);
+      const anim = L.loadAnimation({ container: box, renderer: 'canvas', loop: false, autoplay: false, animationData: data, rendererSettings: { clearCanvas: true, preserveAspectRatio: 'xMidYMid meet' } });
+      const c = box.querySelector('canvas');
+      if (!c) throw new Error('no canvas');
+      Object.assign(inp, { anim, lc: c, lbox: box, missing: false });
+      Object.assign(inp.lot, { frames: anim.totalFrames, fr: anim.frameRate || +data.fr || 30, frame: -1, t0: performance.now(), held: 0 });
+      if (file.name && !inp.fileName) inp.fileName = file.name;
+      anim.goToAndStop(0, true);
+      setInputStatus(inp, 'live');
+      renderInputs();
+      if (store) mediaStore.put(inp.id, file);
+      return true;
+    } catch (e) {
+      toast(`เปิด “${file.name || inp.name}” ไม่ได้ — ไม่ใช่ไฟล์ Lottie (.json) ที่อ่านได้`, 'error', 6000);
+      return false;
+    }
+  }
+  function stepLotties(now) {
+    for (const inp of inputs) {
+      if (inp.type !== 'lottie' || !inp.anim) continue;
+      const l = inp.lot;
+      let f = l.held + (l.playing ? (now - l.t0) / 1000 * l.fr * l.speed : 0);
+      if (l.loop) f = ((f % l.frames) + l.frames) % l.frames;
+      else if (f >= l.frames - 1) { f = l.frames - 1; if (l.playing) { l.playing = false; l.held = f; paintLottieCard(inp); } }
+      if (Math.abs(f - l.frame) < 0.25) continue;
+      l.frame = f;
+      try { inp.anim.goToAndStop(f, true); } catch (e) {}
+      l.stamp = (l.stamp || 0) + 1;
+    }
+  }
+  function paintLottieCard(inp) {
+    const pb = $(`#inputs-grid .card[data-id="${inp.id}"] [data-card="lplay"]`);
+    if (pb) { pb.classList.toggle('is-on', inp.lot.playing); pb.innerHTML = icon(inp.lot.playing ? 'pause' : 'play'); }
+  }
+  function lottiePlay(inp, on, restart) {
+    const l = inp.lot, now = performance.now();
+    if (restart) { l.held = 0; l.t0 = now; l.playing = true; paintLottieCard(inp); return; }
+    if (on === undefined) on = !l.playing;
+    l.held = Math.max(0, l.frame);
+    if (on && !l.loop && l.held >= l.frames - 1) l.held = 0;
+    l.t0 = now; l.playing = on;
+    paintLottieCard(inp);
+  }
+  function addLottieFiles(files) {
+    for (const file of files.slice(0, 4)) {
+      const inp = createLottieInput({ name: baseName(file.name || 'LOTTIE').toUpperCase() });
+      setLottieFile(inp, file, true).then(ok => { if (!ok) { disposeInput(inp, true); resetAfterRemoval(inp.id); renderInputs(); refreshSourceSelects(); } });
+    }
+  }
+  async function openLottieDialog(inp) {
+    const l = inp.lot;
+    const r = await dialog({
+      title: `แอนิเมชัน Lottie — ${inp.name}`,
+      body: `
+        <label class="field"><span>ชื่อแหล่งภาพ</span><input name="name" class="input" maxlength="40" value="${esc(inp.name)}"></label>
+        <label class="field"><span>ความเร็ว</span><select name="speed" class="select">${[0.5, 0.75, 1, 1.5, 2].map(s => `<option value="${s}" ${s === l.speed ? 'selected' : ''}>${s}×</option>`).join('')}</select></label>
+        <label class="check"><input type="checkbox" name="loop" ${l.loop ? 'checked' : ''}> เล่นวนซ้ำ (ไม่ติ๊ก = เล่นครั้งเดียวแล้วค้างเฟรมสุดท้าย)</label>
+        <p class="note">${l.frames ? `${Math.round(l.frames)} เฟรม @ ${Math.round(l.fr)} fps · ` : ''}<button type="button" class="btn btn-sm" data-lt="pick">เลือกไฟล์ใหม่…</button></p>`,
+      actions: [{ label: 'ยกเลิก' }, { label: 'บันทึก', primary: true, value: 'ok' }],
+      onOpen(modal) { $('[data-lt="pick"]', modal).addEventListener('click', () => pickFiles('.json,application/json', files => setLottieFile(inp, files[0], true))); }
+    });
+    if (!r || r.value !== 'ok' || inp.removed) return;
+    inp.name = r.form.name.value.trim().slice(0, 40) || inp.name;
+    l.held = Math.max(0, l.frame); l.t0 = performance.now();
+    l.speed = clamp(+r.form.speed.value || 1, 0.25, 4); l.loop = r.form.loop.checked;
+    renderInputs(); refreshSourceSelects(); show.autosave();
   }
 
   function addSlidesFiles(files) {
@@ -9679,7 +9976,7 @@ onmessage = async e => {
     const out = [];
     const add = (state, name, detail, fix) => out.push({ state, name, detail, fix });
     const list = settings.destinations.filter(d => d.enabled);
-    const srcs = inputs.filter(i => !['color', 'mixsrc', 'delay', 'bars', 'clock', 'black', 'transparent', 'title', 'timer', 'score', 'ticker'].includes(i.type));
+    const srcs = inputs.filter(i => !['color', 'mixsrc', 'delay', 'vset', 'bars', 'clock', 'black', 'transparent', 'title', 'timer', 'score', 'ticker'].includes(i.type));
     const dead = srcs.filter(i => i.status !== 'live');
     add(dead.length ? 'warn' : 'ok', 'แหล่งภาพทุกตัวมีสัญญาณ', dead.length ? `“${dead.map(i => i.name).slice(0, 3).join('”, “')}” ยังไม่มีสัญญาณ` : `${srcs.length || inputs.length} แหล่ง${inputs.some(i => i.type === 'wireless') ? ` · กล้องมือถือ ${inputs.filter(i => i.type === 'wireless').length} เครื่อง` : ''}`);
     const mics = audio.channels.filter(c => !c.muted && c.kind !== 'player' && c.kind !== 'pad');
@@ -11270,6 +11567,7 @@ onmessage = async e => {
       ['clock', 'นาฬิกานับถอยหลัง / จับเวลา', 'นับถอยหลังก่อนเริ่ม หรือจับเวลาการแข่ง', addTimerInput],
       ['grid', 'ป้ายคะแนน', 'คะแนนสองทีม พร้อมเวลาแข่ง', addScoreInput],
       ['type', 'ตัววิ่งข่าว', 'ข้อความวิ่งด้านล่างจอ', addTickerInput],
+      ['film', 'แอนิเมชัน Lottie (.json)', 'กราฟิกเคลื่อนไหวจาก After Effects / LottieFiles พื้นโปร่งใส คมทุกขนาด', () => pickFiles('.json,application/json', addLottieFiles)],
       ['sliders', 'Audio Visualizer', 'กราฟิกขยับตามเสียง สำหรับพอดแคสต์ / เพลง / แขกที่ไม่เปิดกล้อง', addVizInput],
       ['type', 'คอมเมนต์ผู้ชม', 'ดึงแชต YouTube / Twitch แล้วเลือกขึ้นจอ', () => addChatInput()],
       ['mic', 'คำบรรยายสด (Captions)', 'แปลงเสียงพูดเป็นตัวหนังสือบนจอแบบเรียลไทม์ ภาษาไทย / อังกฤษ', addCaptionsInput]]],
@@ -11278,6 +11576,7 @@ onmessage = async e => {
     ['จากในรายการ', [
       ['monitor', 'ภาพ Program', 'ภาพที่กำลังออกอากาศ ใส่ในซีน / PIP ได้ เช่น จอทีวีหลังผู้ประกาศ', () => addMixInput('program')],
       ['monitor', 'ภาพ Preview', 'ภาพที่เตรียมไว้ถัดไป เป็นแหล่งภาพ', () => addMixInput('preview')],
+      ['camera', 'ฉากเสมือน (Virtual Set)', 'กล้องฉากเขียว + ฉากข่าว / ทอล์กโชว์ / เวที หรือรูปของเราเอง + มุมกล้องเสมือนเคลื่อนนุ่ม', () => openVsetDialog()],
       ['clock', 'ภาพหน่วงเวลา (Video Delay)', 'หน่วงภาพจากแหล่งอื่น 0.04–5 วินาที แก้ภาพกับเสียงไม่ตรงกัน', () => openDelayDialog()]]],
     ['ภาพพื้นฐาน', [
       ['type', 'Slate ข้อความ', 'จอข้อความ เช่น “เริ่มเร็ว ๆ นี้”', () => addGenerator('slate')],
@@ -11394,6 +11693,8 @@ onmessage = async e => {
     if (inp.type === 'web' && inp.status !== 'live') return 'WEB · กด 🔗 เพื่อเปิดเว็บและเลือกแท็บ';
     if (inp.type === 'delay' && inp.status !== 'live') return byId(inp.delay.src) ? `กำลังเติมบัฟเฟอร์ ${inp.delay.ms} ms…` : 'แหล่งต้นทางถูกลบ';
     if (inp.status !== 'live') return 'ไม่มีสัญญาณ';
+    if (inp.type === 'vset') return `${VSETS[inp.vset.set]} · ${VSHOTS[inp.vset.shot].n}${byId(inp.vset.cam) ? '' : ' · ยังไม่เลือกกล้อง'}`;
+    if (inp.type === 'lottie') return `LOTTIE · ${Math.round(inp.lot.frames / (inp.lot.fr || 30) * 10) / 10}s${inp.lot.loop ? '' : ' · ครั้งเดียว'}`;
     if (inp.type === 'color') return `COLOUR · ${inp.fill.grad === 'none' ? inp.fill.a.toUpperCase() : 'ไล่สี'}${inp.fill.alpha < 1 ? ` · ${Math.round(inp.fill.alpha * 100)}%` : ''}`;
     if (inp.type === 'mixsrc') return inp.mix === 'preview' ? 'ภาพ PREVIEW' : 'ภาพ PROGRAM';
     if (inp.type === 'delay') return `หน่วง ${inp.delay.ms} ms · ${byId(inp.delay.src)?.name || '—'}`;
@@ -11641,7 +11942,7 @@ onmessage = async e => {
      - ไฟล์วิดีโอ/รูปเก็บสำเนาไว้ในพื้นที่ของเบราว์เซอร์ (OPFS) จึงไม่ต้องเลือกไฟล์ใหม่
      - บันทึกเป็นไฟล์ .webmix.json เพื่อย้ายเครื่องหรือเก็บหลายรายการ (ไฟล์สื่อไม่ได้รวมอยู่ในไฟล์ ต้องเลือกใหม่บนเครื่องอื่น) */
 
-  const SHOW_TYPES = ['bars', 'black', 'transparent', 'imgseq', 'photos', 'web', 'color', 'mixsrc', 'url', 'delay', 'slate', 'clock', 'image', 'media', 'camera', 'screen', 'wireless', 'srt', 'title', 'guest', 'timer', 'score', 'ticker', 'cg', 'playlist', 'scene', 'replay', 'slides', 'visualizer', 'chat', 'captions'];
+  const SHOW_TYPES = ['bars', 'black', 'transparent', 'imgseq', 'photos', 'web', 'color', 'mixsrc', 'url', 'delay', 'vset', 'lottie', 'slate', 'clock', 'image', 'media', 'camera', 'screen', 'wireless', 'srt', 'title', 'guest', 'timer', 'score', 'ticker', 'cg', 'playlist', 'scene', 'replay', 'slides', 'visualizer', 'chat', 'captions'];
   const show = {
     ready: false, last: '', savedAt: 0,
     get name() { return store.get('showName', '') || 'โชว์ใหม่'; },
@@ -11685,6 +11986,8 @@ onmessage = async e => {
           if (i.type === 'color') o.fill = { ...i.fill };
           if (i.type === 'mixsrc') o.mix = i.mix;
           if (i.type === 'delay') o.delay = { ...i.delay };
+          if (i.type === 'vset') o.vset = { ...i.vset };
+          if (i.type === 'lottie') o.lot = { loop: i.lot.loop, speed: i.lot.speed, file: i.fileName || '' };
           if (i.layout) o.layout = JSON.parse(JSON.stringify(i.layout));
           if (i.color) o.color = { ...i.color };
           if (typeof i.vx === 'number' && i.vx !== 0.5) o.vx = i.vx;
@@ -11883,6 +12186,15 @@ onmessage = async e => {
           const inp = createUrlInput({ ...base });
           if (u) setUrlSource(inp, u);
           break;
+        }
+        case 'vset': {
+          const inp = addInput({ type: 'vset', ...base, status: 'live', vset: sanitizeVset(raw.vset) });
+          if (inp.vset.hasImg) return mediaStore.get(inp.id + '-bg').then(f => { if (f && !inp.removed) return setVsetImage(inp, f, false); });
+          break;
+        }
+        case 'lottie': {
+          const inp = createLottieInput({ ...base, missing: true, fileName: String(raw.lot?.file || '').slice(0, 120), lot: { loop: raw.lot?.loop !== false, speed: clamp(+raw.lot?.speed || 1, 0.25, 4) } });
+          return mediaStore.get(inp.id).then(f => { if (f && !inp.removed) return setLottieFile(inp, f, false); });
         }
         case 'delay':
           // แหล่งต้นทางอาจยังไม่ถูกสร้าง (ลำดับในโชว์) — อ้างด้วย id จึงต่อกันเองเมื่อครบ
@@ -12175,7 +12487,8 @@ onmessage = async e => {
     show.autosave(true);
     setInterval(() => show.autosave(), 1500);
     addEventListener('pagehide', () => show.autosave());
-    mediaStore.prune(new Set(['stinger', ...inputs.filter(i => i.type === 'media' || i.type === 'image' || i.type === 'slides').map(i => i.id),
+    mediaStore.prune(new Set(['stinger', ...inputs.filter(i => i.type === 'media' || i.type === 'image' || i.type === 'slides' || i.type === 'lottie').map(i => i.id),
+      ...inputs.filter(i => i.type === 'vset').map(i => i.id + '-bg'),
       ...inputs.filter(i => i.type === 'imgseq' || i.type === 'photos').flatMap(i => Array.from({ length: i.storedCount || 0 }, (_, k) => stillKey(i, k))), ...playlist.keys(), ...audioSourceKeys(), ...library.keys()]));
 
     bindChatPane();

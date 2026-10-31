@@ -3086,3 +3086,13 @@ html.is-card-drag, html.is-card-drag * { cursor: grabbing !important; }
 .src-sel-n { font: 700 12px/1 var(--font); margin-right: auto; white-space: nowrap; }
 .card.is-selected { outline: 2px solid #4f86f0; outline-offset: 2px; }
 .card.is-selected::after { content: '✓'; position: absolute; top: 6px; left: 6px; z-index: 3; width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; background: #4f86f0; color: #fff; font: 700 12px/1 var(--font); pointer-events: none; }
+
+/* หน้าต่างตั้งค่าแหล่งภาพ: ช่องแบ่งคอลัมน์ + ภาพตัวอย่าง (สีพื้น / ฉากเสมือน) */
+.modal .grid-2, .modal .grid-3 { display: grid; gap: 10px; }
+.modal .grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.modal .grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+@media (max-width: 560px) { .modal .grid-2, .modal .grid-3 { grid-template-columns: minmax(0, 1fr); } }
+.modal .vs-prev, .modal .col-prev { display: block; width: 100%; max-width: 480px; aspect-ratio: 16 / 9; height: auto; border-radius: 8px; border: 1px solid var(--line-2, #2a2f3a); background: #000; }
+.modal .col-presets { display: flex; flex-wrap: wrap; gap: 6px; }
+.modal .col-presets button { flex: 1 1 auto; }
+.modal input[type=color] { width: 100%; height: 36px; border: 1px solid var(--line-2, #2a2f3a); border-radius: 8px; background: transparent; padding: 2px; }
