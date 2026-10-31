@@ -69,6 +69,8 @@
     destinations: [], rememberKey: false,
     // บันทึกสำรองอัตโนมัติเมื่อเริ่มไลฟ์ · บันทึกแยกทุกกล้อง (ISO) พร้อมกับการบันทึก Program
     autoRec: false, isoRec: false,
+    // ภาพบน Program หลุด (กล้อง / มือถือ / แขก / สัญญาณเครือข่าย) ระหว่างไลฟ์หรือบันทึก → ตัดไปแหล่งสำรองให้เอง
+    failover: { id: '', sec: 2, back: false },
     // ลดบิตเรตเองเมื่อเน็ตส่งไม่ทัน (ข้อมูลค้างส่ง) แทนที่ภาพจะค้าง/หลุด
     abr: true,
     title: { headline: 'BREAKING NEWS', subtitle: defText('รายงานสดจากสตูดิโอ WebMix Pro'), color: '#ef4444' },
@@ -95,6 +97,7 @@
   settings.midi = { on: !!settings.midi?.on, map: Object.fromEntries(Object.entries(settings.midi?.map || {}).filter(([k, v]) => /^[a-z0-9]{2,12}$/.test(k) && /^(note|cc):\d{1,2}:\d{1,3}$/.test(v))) };
   settings.stinger = { name: String(settings.stinger?.name || '').slice(0, 80), cutAt: clamp(+settings.stinger?.cutAt || 0.5, 0.05, 0.95) };
   if (![500, 1000, 2000].includes(+settings.duration)) settings.duration = 1000;
+  settings.failover = { id: typeof settings.failover?.id === 'string' ? settings.failover.id.slice(0, 40) : '', sec: clamp(+settings.failover?.sec || 2, 0.5, 10), back: !!settings.failover?.back };
   if (!['auto', 'gpu', 'cpu'].includes(settings.renderer)) settings.renderer = 'auto';
   settings.titlePresets = (Array.isArray(settings.titlePresets) ? settings.titlePresets : [])
     .filter(t => t && typeof t === 'object').slice(0, 24)
@@ -10448,6 +10451,49 @@ onmessage = async e => {
   }
 
   const alertDismissed = new Set(), trouble = { lowFps: 0 }, wideAlerts = matchMedia('(min-width: 761px) and (min-height: 501px)');
+  /* ---- แหล่งสำรอง: ภาพบน Program หลุดเกิน N วินาทีระหว่างไลฟ์/บันทึก → ตัดไปแหล่งสำรอง
+     ภาพเดิมกลับมา: มีปุ่ม “กลับไป…” (หรือตัดกลับเองเมื่อสัญญาณนิ่ง 3 วินาที ถ้าเปิดไว้) · ผู้คุมสลับภาพเองระหว่างนั้น = ยกเลิก */
+  const FAILOVER_TYPES = ['camera', 'wireless', 'guest', 'ndi', 'omt', 'srt', 'rtsp', 'rtmp', 'url', 'web'];
+  const failover = { from: null, to: null, lostSince: 0, backSince: 0, offered: false };
+  function failoverBack(manual) {
+    const orig = byId(failover.from);
+    failover.from = failover.to = null;
+    if (!orig) return;
+    setPreview(orig.id); cut();
+    toast(manual ? `กลับไป ${orig.name} แล้ว` : `${orig.name} กลับมาแล้ว — ตัดกลับให้แล้ว`, 'success', 4000);
+    renderAlerts();
+  }
+  function failoverTick() {
+    const cfg = settings.failover, now = Date.now();
+    for (const i of inputs) if (FAILOVER_TYPES.includes(i.type) && i.status === 'live') i.wasLive = true;
+    if (failover.from) {
+      const orig = byId(failover.from);
+      // ผู้คุมเปลี่ยนภาพเอง / ลบแหล่งภาพ = ไม่ต้องดูแลต่อ
+      if (!orig || state.programId !== failover.to) { failover.from = failover.to = null; renderAlerts(); return; }
+      if (orig.status !== 'live') { failover.backSince = 0; return; }
+      failover.backSince ||= now;
+      if (!failover.offered) {
+        failover.offered = true;
+        toast(`${orig.name} กลับมาแล้ว`, 'info', 15000, { label: `กลับไป ${orig.name}`, run: () => failover.from === orig.id && failoverBack(true) });
+        renderAlerts();
+      }
+      if (cfg.back && now - failover.backSince >= 3000) failoverBack(false);
+      return;
+    }
+    const pgm = byId(state.programId), backup = byId(cfg.id);
+    const onAir = !!(streamer.ws || streamer.reconnecting || rec.active);
+    if (!onAir || !pgm || !backup || pgm.id === backup.id || !FAILOVER_TYPES.includes(pgm.type) || pgm.status === 'live' || !pgm.wasLive) { failover.lostSince = 0; return; }
+    failover.lostSince ||= now;
+    if (now - failover.lostSince < cfg.sec * 1000) return;
+    // แหล่งสำรองก็ไม่มีภาพ = ตัดไปก็ไม่ช่วย
+    if (FAILOVER_TYPES.includes(backup.type) && backup.status !== 'live') return;
+    failover.from = pgm.id; failover.to = backup.id; failover.lostSince = 0; failover.backSince = 0; failover.offered = false;
+    setPreview(backup.id); cut();
+    toast(`${pgm.name} หลุด — ตัดไป ${backup.name} ให้แล้ว`, 'warn', 6000);
+    renderAlerts();
+  }
+  setInterval(failoverTick, 250);
+
   function renderAlerts() {
     renderNetBanner();
     const box = $('#m-alerts');
@@ -10466,6 +10512,11 @@ onmessage = async e => {
       const d = settings.destinations.find(z => z.id === id);
       const others = [...streamer.dests.values()].filter(x => x.state === 'live').length;
       list.push({ key: 'dest-' + id, level: 'amber', title: `${destLabel(d) || id} หลุด — กำลังเชื่อมต่อใหม่`, text: (st.message ? st.message + ' · ' : '') + (others ? `ปลายทางอื่นยังออกอากาศปกติ (${others})` : 'ลองใหม่อัตโนมัติ'), action: { label: 'หยุดเฉพาะช่องนี้', run: () => stopDestination(id) } });
+    }
+    if (failover.from && byId(failover.from) && byId(failover.to)) {
+      const o = byId(failover.from), b = byId(failover.to);
+      list.push({ key: 'failover', level: 'amber', title: `ตัดไป ${b.name} แล้ว — ${o.name} หลุด`, text: o.status === 'live' ? 'สัญญาณกลับมาแล้ว' : 'รอสัญญาณกลับมา…',
+        action: o.status === 'live' ? { label: `กลับไป ${o.name}`, run: () => failoverBack(true) } : null });
     }
     // กล้อง / มือถือ / แขก หลุดหลังจากเคยมีภาพ
     for (const inp of inputs) {
@@ -11017,6 +11068,11 @@ onmessage = async e => {
           <label class="check"><input type="checkbox" name="autoRec" ${settings.autoRec ? 'checked' : ''}> บันทึกสำรองอัตโนมัติเมื่อเริ่มไลฟ์ — หยุดไลฟ์ครบทุกช่องแล้วหยุดบันทึกให้ (เน็ตหลุดก็ยังมีไฟล์)</label>
           <label class="check"><input type="checkbox" name="abr" ${settings.abr ? 'checked' : ''}> ปรับบิตเรตอัตโนมัติเมื่อเน็ตส่งไม่ทัน — ลดคุณภาพลงชั่วคราวแทนที่ไลฟ์จะค้างหรือหลุด</label>
           <label class="check"><input type="checkbox" name="isoRec" ${settings.isoRec ? 'checked' : ''}> บันทึกแยกทุกกล้อง (ISO) — ไฟล์ละกล้องพร้อมไฟล์ Program สำหรับตัดต่อทีหลัง (ใช้ CPU และพื้นที่เพิ่มตามจำนวนกล้อง)</label>
+          <div class="grid-2">
+            <label class="field"><span>เมื่อภาพบน Program หลุดระหว่างไลฟ์ / บันทึก</span><select name="failId" class="select"><option value="">ไม่ต้องตัด (แจ้งเตือนอย่างเดียว)</option>${inputs.map((i, n) => `<option value="${i.id}" ${i.id === settings.failover.id ? 'selected' : ''}>ตัดไป ${n + 1}. ${esc(i.name)}</option>`).join('')}</select></label>
+            <label class="field"><span>รอก่อนตัด (วินาที)</span><input name="failSec" type="number" min="0.5" max="10" step="0.5" class="input" value="${settings.failover.sec}"></label>
+          </div>
+          <label class="check"><input type="checkbox" name="failBack" ${settings.failover.back ? 'checked' : ''}> กลับภาพเดิมให้เองเมื่อสัญญาณกลับมานิ่ง 3 วินาที (ไม่ติ๊ก = มีปุ่มให้กดกลับเอง)</label>
           <p class="note">ระหว่างบันทึก ไฟล์ถูกเขียนลง${recFolder ? 'โฟลเดอร์ที่เลือก' : canUseOpfs ? 'ดิสก์ (พื้นที่ชั่วคราวของเบราว์เซอร์) แล้วดาวน์โหลดเมื่อหยุด' : ' RAM — บันทึกนาน ๆ ควรใช้ Chrome หรือ Edge'} จึงบันทึกนานหลายชั่วโมงได้โดยไม่กินหน่วยความจำ</p>
           <p class="note warn res-4k-note" ${RESOLUTIONS[settings.resolution][1] >= 1440 ? '' : 'hidden'}>ความละเอียด 1440p/4K ต้องใช้คอมพิวเตอร์แรง (แนะนำ CPU 8 คอร์ขึ้นไปหรือมีการ์ดจอแยก) และอินเทอร์เน็ตขาขึ้นอย่างน้อย 1.5 เท่าของบิตเรต · Stream Gateway ควรมี 8 vCPU ขึ้นไป · Facebook และ Twitch รับสูงสุด 1080p ส่วน YouTube รับได้ถึง 4K</p>
         </div>
@@ -11201,6 +11257,7 @@ onmessage = async e => {
       if (readDests) settings.destinations = readDests();
       settings.rememberKey = f.rememberKey.checked;
       settings.autoRec = f.autoRec.checked;
+      if (f.failId) settings.failover = { id: f.failId.value, sec: clamp(+f.failSec.value || 2, 0.5, 10), back: f.failBack.checked };
       settings.isoRec = f.isoRec.checked;
       settings.abr = f.abr.checked;
       if (['auto', 'gpu', 'cpu'].includes(f.renderer.value)) settings.renderer = f.renderer.value;
@@ -12750,7 +12807,7 @@ onmessage = async e => {
     $$('#seg-cardsize button').forEach(b => { b.classList.toggle('is-active', b.dataset.size === cardSize()); b.addEventListener('click', () => setCardSize(b.dataset.size)); });
 
     // สำหรับดีบัก/ทดสอบอัตโนมัติ
-    window.webmix = { perf: () => ({ fps, renderMs, frameNo, thumbs: thumbs.size, inputs: inputs.length }), chatFeed, chatAdd, chatShow, chatHide, playlist, dataSources, timerControl, multiview, renderer, gpu, setRenderer: v => { settings.renderer = v; renderer.resolve(); updateStatus(); }, show, ovl, setChannel, toggleInputOverlay, useRecFolder: dir => { recFolder = dir; }, inputs, state, settings, overlays, audio, rec, iso, stinger, replayCapture, slideGo, midi, checkAppUpdate, checkWebUpdate, appUpdate, macros, runMacro, openCamControl, abr: { state: abr, decide: abrDecide, apply: abrApply, tick: abrTick }, openDeskSummary, openDeskPreflight, liveStats, openDryRun, openFacebookDialog, fb, setDryRunSeconds: n => { DRY_RUN_SEC = n; }, disk, diskTick, setDiskFree: b => { disk.fake = b; return diskTick(); }, streamer, wireless, cut, autoTransition, setPreview, tr, ftb, padFire, chanKey, remote: remoteCtl, lufs, layoutSize, renderInputs, renderAlerts, openOutputWindow, setOrient };
+    window.webmix = { failover, perf: () => ({ fps, renderMs, frameNo, thumbs: thumbs.size, inputs: inputs.length }), chatFeed, chatAdd, chatShow, chatHide, playlist, dataSources, timerControl, multiview, renderer, gpu, setRenderer: v => { settings.renderer = v; renderer.resolve(); updateStatus(); }, show, ovl, setChannel, toggleInputOverlay, useRecFolder: dir => { recFolder = dir; }, inputs, state, settings, overlays, audio, rec, iso, stinger, replayCapture, slideGo, midi, checkAppUpdate, checkWebUpdate, appUpdate, macros, runMacro, openCamControl, abr: { state: abr, decide: abrDecide, apply: abrApply, tick: abrTick }, openDeskSummary, openDeskPreflight, liveStats, openDryRun, openFacebookDialog, fb, setDryRunSeconds: n => { DRY_RUN_SEC = n; }, disk, diskTick, setDiskFree: b => { disk.fake = b; return diskTick(); }, streamer, wireless, cut, autoTransition, setPreview, tr, ftb, padFire, chanKey, remote: remoteCtl, lufs, layoutSize, renderInputs, renderAlerts, openOutputWindow, setOrient };
   }
 
   boot();

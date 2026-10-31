@@ -2493,6 +2493,20 @@
     "{} · กำลังโหลด…": "{1} · loading…",
     "{}เทมเพลตโชว์": "{1}Show templates",
     "วิดเจ็ตข้อมูลสด: สภาพอากาศ / ราคาคริปโต / อัตราแลกเปลี่ยน / ค่าจาก API (JSON) ใดก็ได้ อัปเดตเองตามรอบ · เทมเพลตโชว์สำเร็จรูป (ข่าว / พอดแคสต์ / ขายของ / กีฬา / งานพิธี) เพิ่มกราฟิกที่ต้องใช้ครบในครั้งเดียว · แหล่งภาพที่ไม่ได้ออกอากาศจะอัปเดตภาพตัวอย่างช้าลงเพื่อประหยัดเครื่อง": "Live data widgets: weather / crypto prices / exchange rates / any JSON API value, refreshed automatically · Show templates (news / podcast / selling / sports / ceremony) add every graphic you need in one go · Sources that are not on air refresh their thumbnails less often to save power",
+    "กลับไป {} แล้ว": "Back to {1}",
+    "{} กลับมาแล้ว — ตัดกลับให้แล้ว": "{1} is back — switched back to it",
+    "{} กลับมาแล้ว": "{1} is back",
+    "กลับไป {}": "Back to {1}",
+    "{} หลุด — ตัดไป {} ให้แล้ว": "{1} lost — switched to {2}",
+    "ตัดไป {} แล้ว — {} หลุด": "Switched to {1} — {2} lost",
+    "สัญญาณกลับมาแล้ว": "Signal is back",
+    "รอสัญญาณกลับมา…": "Waiting for the signal…",
+    "ตัดไป {}. {}": "Switch to {1}. {2}",
+    "เมื่อภาพบน Program หลุดระหว่างไลฟ์ / บันทึก": "If the Program source is lost while live / recording",
+    "ไม่ต้องตัด (แจ้งเตือนอย่างเดียว)": "Don't switch (alert only)",
+    "รอก่อนตัด (วินาที)": "Wait before switching (seconds)",
+    "กลับภาพเดิมให้เองเมื่อสัญญาณกลับมานิ่ง 3 วินาที (ไม่ติ๊ก = มีปุ่มให้กดกลับเอง)": "Switch back automatically once the signal is steady for 3 seconds (unticked = a button to switch back)",
+    "แหล่งสำรอง: ตั้งค่า → เอาต์พุต → “เมื่อภาพบน Program หลุด” เลือกแหล่งภาพสำรอง (เช่นภาพกว้าง หรือ Slate “กลับมาในอีกสักครู่”) — ระหว่างไลฟ์หรือบันทึก ถ้ากล้อง / มือถือ / แขก / สัญญาณเครือข่ายที่อยู่บน Program หลุดเกินเวลาที่ตั้ง ระบบตัดไปแหล่งสำรองให้ แล้วมีปุ่ม “กลับไป…” เมื่อสัญญาณกลับมา (หรือติ๊กให้ตัดกลับเอง)": "Backup source: Settings → Output → “If the Program source is lost” picks a backup (e.g. a wide shot or a “back in a moment” Slate) — while live or recording, if the camera / phone / guest / network feed on Program is lost for longer than the set time, WebMix switches to the backup, then offers a “Back to…” button when the signal returns (or tick to switch back automatically)",
     "ทีวี": "TV", "หน้า": "Page", "รายการ": "Item", "ความยาว": "Length", "เหลือ": "Remain", "สไลด์": "Slides"
   });
 })(window.WebMix = window.WebMix || {});
