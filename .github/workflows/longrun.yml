@@ -1,0 +1,50 @@
+name: Long run
+
+# ไลฟ์ยาวต่อเนื่อง (ค่าเริ่มต้น 120 นาที) ผ่าน Gateway ไปปลายทาง RTMP — ตรวจหน่วยความจำรั่ว fps ตก สตรีมหลุด และเสียงเหลื่อมภาพ
+# รันเองจากหน้า Actions หรืออัตโนมัติทุกวันอาทิตย์
+on:
+  workflow_dispatch:
+    inputs:
+      minutes:
+        description: 'ความยาว (นาที)'
+        default: '120'
+  schedule:
+    - cron: '17 19 * * 0'
+
+permissions:
+  contents: read
+
+jobs:
+  longrun:
+    name: Long live session
+    runs-on: ubuntu-24.04
+    timeout-minutes: 200
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Install ffmpeg
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+      - name: Install gateway dependencies
+        working-directory: server
+        run: npm ci
+      - name: Install test dependencies
+        working-directory: tests
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+      - name: Long run
+        working-directory: tests
+        env:
+          LONGRUN_MIN: ${{ inputs.minutes || '120' }}
+          VERBOSE: '1'
+        run: npm test -- longrun
+      - name: Upload output
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: longrun-output
+          path: tests/.work/
+          include-hidden-files: true
+          retention-days: 7

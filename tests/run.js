@@ -81,7 +81,7 @@ function runSuite(name) {
     let output = '';
     child.stdout.on('data', d => { output += d; });
     child.stderr.on('data', d => { output += d; });
-    const timer = setTimeout(() => { output += '\nCRASH suite timed out'; try { process.kill(-child.pid, 'SIGKILL'); } catch (e) {} }, SUITE_TIMEOUT);
+    const timer = setTimeout(() => { output += '\nCRASH suite timed out'; try { process.kill(-child.pid, 'SIGKILL'); } catch (e) {} }, SUITE_TIMEOUT + (name === 'longrun' ? Math.max(2, +process.env.LONGRUN_MIN || 10) * 60000 : 0));
     child.on('close', code => {
       clearTimeout(timer);
       try { process.kill(-child.pid, 'SIGKILL'); } catch (e) {}
