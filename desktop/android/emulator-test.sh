@@ -187,6 +187,12 @@ if [ -n "$FFMPEG" ]; then
     adb shell /data/local/tmp/webmix-ffmpeg -hide_banner -loglevel info -f lavfi -i color=c=black:s=1280x720:r=30 -frames:v 30 \
       -c:v h264_mediacodec -ndk_codec 1 -pix_fmt $pf -b:v 2000k -g 60 -f null - 2>&1 | grep -viE "^ *(Stream|Metadata|encoder|Input|Output|Duration)" | tail -8 || true
   done
+  # ปุ่ม “ทดสอบ” ของปลายทาง: คำสั่งเดียวกับ probe_args ใน desktop/gateway/src/lib.rs — ต้องถอดเสียงทดสอบได้ด้วยตัวถอดที่มีในแอป
+  if ! adb shell /data/local/tmp/webmix-ffmpeg -hide_banner -nostdin -loglevel error -f lavfi -i anullsrc=r=44100:cl=mono,aformat=sample_fmts=s16 -t 0 -c:a aac -f flv /data/local/tmp/probe.flv > "$OUT/probe.txt" 2>&1; then
+    echo "ปุ่มทดสอบปลายทาง: ffmpeg ในแอปสร้างเสียงทดสอบไม่ได้"; cat "$OUT/probe.txt"; exit 1
+  fi
+  grep -qiE "decoder|Invalid argument|Error" "$OUT/probe.txt" && { echo "ปุ่มทดสอบปลายทาง: ffmpeg ในแอปแจ้งข้อผิดพลาด"; cat "$OUT/probe.txt"; exit 1; }
+  echo "ปุ่มทดสอบปลายทาง: ffmpeg ในแอปสร้างเสียงทดสอบได้"
   adb shell /data/local/tmp/webmix-ffmpeg -hide_banner -loglevel verbose -re -f lavfi -i color=c=blue:s=640x360:r=30 -t 6 \
     -c:v libx264 -preset ultrafast -g 60 -f flv "$FB" > "$OUT/rtmps.txt" 2>&1 || true
   echo "--- ffmpeg ของเครื่อง CI"; grep -iE "tls|rtmp|resolve|error|connect" "$OUT/rtmps-host.txt" | grep -v "^ *Stream" | tail -8

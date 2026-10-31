@@ -423,8 +423,7 @@ async fn probe_dest(ffmpeg: &str, url: &str) -> (bool, String) {
         let msg = if l.starts_with("ndi://") || l.starts_with("omt://") { "ส่งออกในวง LAN — ไม่ต้องตรวจรหัส" } else { "URL ต้องเป็น rtmp://, rtmps:// หรือ srt://host:port" };
         return (false, msg.into());
     }
-    let mut args: Vec<String> = ["-hide_banner", "-nostdin", "-loglevel", "error", "-f", "lavfi", "-i", "anullsrc=r=44100:cl=mono", "-t", "0", "-c:a", "aac"].iter().map(|s| s.to_string()).collect();
-    args.extend(output_args(url));
+    let args = probe_args(url);
     let child = quiet(Command::new(ffmpeg).args(&args)).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::piped()).kill_on_drop(true).spawn();
     let Ok(child) = child else { return (false, "เปิด ffmpeg ไม่ได้".into()) };
     match tokio::time::timeout(Duration::from_secs(15), child.wait_with_output()).await {
@@ -436,6 +435,16 @@ async fn probe_dest(ffmpeg: &str, url: &str) -> (bool, String) {
             (false, explain_ffmpeg_error(&lines))
         }
     }
+}
+
+/// เสียงเปล่าสำหรับตรวจปลายทาง — แปลงเป็น s16 ใน lavfi เอง: anullsrc ให้ u8 ซึ่ง ffmpeg ของแอป Android ไม่มีตัวถอด (pcm_u8)
+/// (desktop/android/build-ffmpeg.sh เปิดเฉพาะ pcm_s16le / pcm_f32le) · emulator-test.sh รันคำสั่งเดียวกันกับ ffmpeg ของ Android
+const PROBE_AUDIO: &str = "anullsrc=r=44100:cl=mono,aformat=sample_fmts=s16";
+
+fn probe_args(url: &str) -> Vec<String> {
+    let mut args: Vec<String> = ["-hide_banner", "-nostdin", "-loglevel", "error", "-f", "lavfi", "-i", PROBE_AUDIO, "-t", "0", "-c:a", "aac"].iter().map(|s| s.to_string()).collect();
+    args.extend(output_args(url));
+    args
 }
 
 fn is_rtmp(url: &str) -> bool {
@@ -1326,6 +1335,16 @@ mod tests {
         let key = explain_ffmpeg_error(&l(&["[rtmp @ 0x1] Server error: rtmps://live-api-s.facebook.com:443/rbtmp/FB-123-SECRET bad"]));
         assert!(!key.contains("SECRET") && key.contains("***"), "{key}");
         assert_eq!(explain_ffmpeg_error(&[]), "");
+    }
+
+    #[test]
+    fn probe_audio_needs_only_android_decoders() {
+        // ffmpeg ของแอป Android มีตัวถอดเสียง PCM แค่ s16le / f32le — lavfi ต้องส่ง s16 ไม่ใช่ u8 (ค่าเริ่มต้นของ anullsrc)
+        let a = probe_args("rtmp://127.0.0.1/live/x");
+        let i = a.iter().position(|x| x == "-i").unwrap();
+        assert!(a[i + 1].contains("aformat=sample_fmts=s16"), "{:?}", a);
+        let build = include_str!("../../android/build-ffmpeg.sh");
+        assert!(build.contains("pcm_s16le"), "Android ffmpeg must keep the pcm_s16le decoder");
     }
 
     #[tokio::test]
