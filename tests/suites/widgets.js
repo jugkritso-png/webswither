@@ -42,11 +42,11 @@ const results = []; const ok = (n, c, x = '') => results.push(`${c ? 'PASS' : 'F
   await p.evaluate(() => { const w = window.webmix; w.state.programId = w.inputs.find(i => i.type === 'bars').id; });
   await p.evaluate(id => window.webmix.toggleInputOverlay(id, 0), w1.id);
   // รอจนแผงวาดเสร็จ (CI ช้ากว่าเครื่อง)
-  await p.waitForFunction(() => { const c = document.querySelector('#pgm-canvas'); return Array.from(c.getContext('2d').getImageData(Math.floor(c.width * 0.1), Math.floor(c.height * 0.88), 1, 1).data.slice(0, 3)).every(v => v < 70); }, null, { timeout: 8000 }).catch(() => {});
-  const px = (x, y) => p.evaluate(([x, y]) => { const c = document.querySelector('#pgm-canvas'); return Array.from(c.getContext('2d').getImageData(Math.floor(c.width * x), Math.floor(c.height * y), 1, 1).data.slice(0, 3)); }, [x, y]);
-  const panel = await px(0.1, 0.88), top = await px(0.1, 0.1);
-  const diag = panel.every(v => v < 70) ? '' : await p.evaluate(id => { const w = window.webmix, i = w.inputs.find(x => x.id === id), c = document.querySelector('#pgm-canvas'); return { ovl: JSON.stringify(w.ovl[0]), on: JSON.stringify(w.ovl.map(o => [o.on, o.inputId, o.anim])), renderer: w.renderer && w.renderer.mode, gpu: !!w.gpu, soft: w.gpu && w.gpu.software, pgm: w.state.programId, wd: i.wd, widget: i.widget, cw: c.width, ch: c.height }; }, w1.id);
-  ok('widget panel drawn bottom-left over the picture', panel.every(v => v < 70) && top.some(v => v > 150), JSON.stringify({ panel, top, diag }));
+  await p.waitForFunction(() => { const c = document.querySelector('#pgm-canvas'); const v = Array.from(c.getContext('2d').getImageData(Math.round(c.height * 0.045) + 2, Math.floor(c.height * 0.88), 1, 1).data.slice(0, 3)); return v[0] > 200 && v[2] < 90; }, null, { timeout: 8000 }).catch(() => {});
+  // แถบสีส้มด้านซ้ายของแผง (accent) — ไม่ขึ้นกับภาพพื้นหลัง
+  const acc = await p.evaluate(() => { const c = document.querySelector('#pgm-canvas'), m = Math.round(c.height * 0.045) + 2, g = (x, y) => Array.from(c.getContext('2d').getImageData(x, y, 1, 1).data.slice(0, 3)); return { bl: g(m, Math.floor(c.height * 0.88)), tl: g(m, Math.floor(c.height * 0.1)) }; });
+  const orange = v => v[0] > 200 && v[1] > 120 && v[1] < 200 && v[2] < 90;
+  ok('widget panel drawn bottom-left over the picture', orange(acc.bl) && !orange(acc.tl), JSON.stringify(acc));
 
   // เน็ตหลุด: ค่าล่าสุดยังอยู่ พร้อมบอกว่าเชื่อมต่อไม่ได้
   apiDown = true; btc = 1;
