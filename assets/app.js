@@ -2892,7 +2892,7 @@
 
   /* ------------------------------------------------------ viewer comments */
   // คอมเมนต์จาก YouTube / Twitch / พิมพ์เอง เข้ารายการในแท็บ "คอมเมนต์" — กดคอมเมนต์เพื่อขึ้นจอผ่านแหล่งภาพ COMMENTS
-  const chatFeed = { list: [], conns: {}, status: { youtube: ['off', ''], twitch: ['off', ''], facebook: ['off', ''] }, shown: null, at: 0, hideAt: 0, autoHide: +store.get('chat-autohide', 0) || 0 };
+  const chatFeed = { list: [], conns: {}, viewers: {}, status: { youtube: ['off', ''], twitch: ['off', ''], facebook: ['off', ''] }, shown: null, at: 0, hideAt: 0, autoHide: +store.get('chat-autohide', 0) || 0 };
   chatFeed.clean = !!store.get('chat-clean', true);
   const CHAT_AUTOHIDE = [0, 8, 10, 15, 30];
   // กรองคำหยาบ (ไทย / อังกฤษ) — แทนด้วย *** ก่อนเข้ารายการ จึงไม่มีทางขึ้นจอ
@@ -2946,13 +2946,24 @@
     }
     setChannel(i, true);
   }
+  // ผู้ชมขณะนี้จากแพลตฟอร์มที่เชื่อมคอมเมนต์ไว้ (YouTube / Facebook) — เกิน 90 วินาทีไม่อัปเดต = ไม่นับ
+  function chatViewers(platform, n) {
+    if (!Number.isFinite(n) || n < 0) return;
+    chatFeed.viewers[platform] = { n, at: Date.now() };
+    const s = liveStats.session;
+    if (s) s.peakViewers = Math.max(s.peakViewers || 0, viewersNow().total);
+  }
+  function viewersNow() {
+    const fresh = Object.entries(chatFeed.viewers).filter(([, v]) => Date.now() - v.at < 90000);
+    return { total: fresh.reduce((a, [, v]) => a + v.n, 0), parts: fresh, any: fresh.length > 0 };
+  }
   function chatStatus(platform, st, text) {
     chatFeed.status[platform] = [st, text];
     renderChatConn();
   }
   function chatConnect(cfg) {
     for (const k of ['youtube', 'twitch']) { chatFeed.conns[k]?.stop(); delete chatFeed.conns[k]; chatFeed.status[k] = ['off', '']; }
-    const on = platform => ({ message: chatAdd, status: (st, text) => chatStatus(platform, st, text) });
+    const on = platform => ({ message: chatAdd, status: (st, text) => chatStatus(platform, st, text), viewers: n => chatViewers(platform, n) });
     if (cfg.yt) chatFeed.conns.youtube = chatLib.connectYouTube({ video: cfg.yt, key: cfg.key }, on('youtube'));
     if (cfg.tw) chatFeed.conns.twitch = chatLib.connectTwitch(cfg.tw, on('twitch'));
     renderChatConn();
@@ -3069,7 +3080,7 @@
     if (!pg) return;
     store.set('fb-page', pg.id);
     chatFeed.conns.facebook = chatLib.connectFacebook({ token: pg.token, page: pg.id, video: fb.mode === 'link' ? fb.video : '' },
-      { message: chatAdd, status: (st, text) => chatStatus('facebook', st, text) });
+      { message: chatAdd, status: (st, text) => chatStatus('facebook', st, text), viewers: n => chatViewers('facebook', n) });
   }
   function fbDisconnect(forget) {
     chatFeed.conns.facebook?.stop();
@@ -10326,7 +10337,8 @@ onmessage = async e => {
       ['ข้อมูลที่ส่ง', fmtBytes(s.bytes), `${dests.length} ปลายทาง`],
       ['บิตเรตเฉลี่ย', avgKbps ? (avgKbps / 1000).toFixed(1) + ' Mbps' : '—', `เป้า ${(settings.videoKbps / 1000).toFixed(1)} Mbps`],
       ['ภาพเฉลี่ย', avgFps ? avgFps.toFixed(1) + ' fps' : '—', `ตั้งไว้ ${settings.fps} fps`],
-      ['หลุด / ต่อใหม่', `${s.reconnects} ครั้ง`, s.reconnects ? 'ต่อกลับอัตโนมัติ' : 'ไม่หลุดเลย']
+      ['หลุด / ต่อใหม่', `${s.reconnects} ครั้ง`, s.reconnects ? 'ต่อกลับอัตโนมัติ' : 'ไม่หลุดเลย'],
+      ...(s.peakViewers ? [['ผู้ชมสูงสุด', s.peakViewers.toLocaleString(), 'จาก YouTube / Facebook ที่เชื่อมคอมเมนต์']] : [])
     ];
     // กราฟ: เส้นประ = เป้าบิตเรต · เส้นแนวตั้ง = เหตุการณ์ (เน็ตหลุด / ลดบิตเรต / ปลายทางต่อใหม่)
     const GWd = 976, GHt = 140, max = Math.max(settings.videoKbps * 1.25, ...series, 1);
@@ -10616,7 +10628,8 @@ onmessage = async e => {
           <div><small>ระยะเวลา</small><b>${fmtDuration(s.duration)}</b></div>
           <div><small>ข้อมูลที่ส่ง</small><b>${fmtBytes(s.bytes)}</b></div>
           <div><small>ภาพเฉลี่ย</small><b>${avgFps ? avgFps.toFixed(1) + ' fps' : '—'}</b></div>
-          <div><small>หลุด / เชื่อมต่อใหม่</small><b>${s.reconnects} ครั้ง</b></div>
+          <div><small>หลุด / เชื่อมต่อใหม่</small><b>${s.reconnects} ครั้ง</b></div>${s.peakViewers ? `
+          <div><small>ผู้ชมสูงสุด</small><b>${s.peakViewers.toLocaleString()}</b></div>` : ''}
         </div>
         ${dests.length ? `<div class="sum-dests">${dests.map(d => `<div><span>${esc(d.label)}</span><span class="${d.drops || d.down > 5 ? 'warn' : 'ok'}">${d.drops ? `หลุด ${d.drops} ครั้ง` : d.down > 5 ? `ขาด ${d.down} วินาที` : 'ครบทั้งรายการ'}</span></div>`).join('')}</div>` : ''}
         ${recLine}`,
@@ -11945,7 +11958,7 @@ onmessage = async e => {
       const { live, active, errors } = destCounts();
       const enc = streamer.encoder && streamer.encoder.speed ? ` · ENC ${streamer.encoder.speed.toFixed(2)}x` : '';
       const encSlow = streamer.encoder && streamer.encoder.speed && streamer.encoder.speed < 0.95;
-      setStat('#st-stream', `LIVE ${fmtDuration(Date.now() - streamer.start)} · ${streamer.kbps} kbps · ${live}/${active} ปลายทาง${enc}${abr.kbps ? ` · ลดบิตเรต ${abr.kbps}/${settings.videoKbps}` : ''}${slow ? ' · เน็ตช้า' : ''}`, slow || errors || encSlow || abr.kbps ? 'warn' : 'live');
+      setStat('#st-stream', `LIVE ${fmtDuration(Date.now() - streamer.start)} · ${streamer.kbps} kbps · ${live}/${active} ปลายทาง${enc}${abr.kbps ? ` · ลดบิตเรต ${abr.kbps}/${settings.videoKbps}` : ''}${slow ? ' · เน็ตช้า' : ''}${viewersNow().any ? ` · ผู้ชม ${viewersNow().total.toLocaleString()}` : ''}`, slow || errors || encSlow || abr.kbps ? 'warn' : 'live');
     } else {
       const n = settings.destinations.filter(d => d.enabled).length;
       setStat('#st-stream', streamer.reconnecting ? `RECONNECTING… (ครั้งที่ ${streamer.attempt})` : streamer.state === 'connecting' ? 'CONNECTING…' : gatewayUrl() ? `READY · ${n} ปลายทาง` : 'NOT SET',
@@ -12807,7 +12820,7 @@ onmessage = async e => {
     $$('#seg-cardsize button').forEach(b => { b.classList.toggle('is-active', b.dataset.size === cardSize()); b.addEventListener('click', () => setCardSize(b.dataset.size)); });
 
     // สำหรับดีบัก/ทดสอบอัตโนมัติ
-    window.webmix = { failover, perf: () => ({ fps, renderMs, frameNo, thumbs: thumbs.size, inputs: inputs.length }), chatFeed, chatAdd, chatShow, chatHide, playlist, dataSources, timerControl, multiview, renderer, gpu, setRenderer: v => { settings.renderer = v; renderer.resolve(); updateStatus(); }, show, ovl, setChannel, toggleInputOverlay, useRecFolder: dir => { recFolder = dir; }, inputs, state, settings, overlays, audio, rec, iso, stinger, replayCapture, slideGo, midi, checkAppUpdate, checkWebUpdate, appUpdate, macros, runMacro, openCamControl, abr: { state: abr, decide: abrDecide, apply: abrApply, tick: abrTick }, openDeskSummary, openDeskPreflight, liveStats, openDryRun, openFacebookDialog, fb, setDryRunSeconds: n => { DRY_RUN_SEC = n; }, disk, diskTick, setDiskFree: b => { disk.fake = b; return diskTick(); }, streamer, wireless, cut, autoTransition, setPreview, tr, ftb, padFire, chanKey, remote: remoteCtl, lufs, layoutSize, renderInputs, renderAlerts, openOutputWindow, setOrient };
+    window.webmix = { failover, chatViewers: (p, n) => chatViewers(p, n), viewersNow: () => viewersNow(), perf: () => ({ fps, renderMs, frameNo, thumbs: thumbs.size, inputs: inputs.length }), chatFeed, chatAdd, chatShow, chatHide, playlist, dataSources, timerControl, multiview, renderer, gpu, setRenderer: v => { settings.renderer = v; renderer.resolve(); updateStatus(); }, show, ovl, setChannel, toggleInputOverlay, useRecFolder: dir => { recFolder = dir; }, inputs, state, settings, overlays, audio, rec, iso, stinger, replayCapture, slideGo, midi, checkAppUpdate, checkWebUpdate, appUpdate, macros, runMacro, openCamControl, abr: { state: abr, decide: abrDecide, apply: abrApply, tick: abrTick }, openDeskSummary, openDeskPreflight, liveStats, openDryRun, openFacebookDialog, fb, setDryRunSeconds: n => { DRY_RUN_SEC = n; }, disk, diskTick, setDiskFree: b => { disk.fake = b; return diskTick(); }, streamer, wireless, cut, autoTransition, setPreview, tr, ftb, padFire, chanKey, remote: remoteCtl, lufs, layoutSize, renderInputs, renderAlerts, openOutputWindow, setOrient };
   }
 
   boot();

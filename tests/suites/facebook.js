@@ -25,6 +25,7 @@ const SDK = `window.FB = { init(o) { window.__fbInit = o; }, login(cb, o) { wind
       if (n > 1) data.unshift({ id: 'c2', from: { name: 'สมศรี' }, message: 'ขอเพลงเปิดอีกรอบได้ไหมคะ', created_time: new Date().toISOString() });
       return json({ data });
     }
+    if (path === 'v111111') return json({ id: 'v111111', live_views: 128 });
     if (path === '999999/comments') return json({ error: { code: 190, message: 'expired' } });
     return r.fulfill({ status: 404, body: '{}' });
   });
@@ -48,6 +49,7 @@ const SDK = `window.FB = { init(o) { window.__fbInit = o; }, login(cb, o) { wind
   ok('comments arrive in the panel', await until(() => p.evaluate(() => /ป้าแดง/.test(document.querySelector('.fb-list').textContent))));
   ok('poll status says connected', await until(() => p.evaluate(() => /ทุก 3 วินาที/.test(document.querySelector('.fb-poll').textContent))));
   ok('new comments keep coming', await until(() => p.evaluate(() => /สมศรี/.test(document.querySelector('.fb-list').textContent)), 9000));
+  ok('live viewer count read with the comments', await until(() => p.evaluate(() => window.webmix.chatFeed.viewers.facebook?.n === 128)), JSON.stringify(await p.evaluate(() => window.webmix.chatFeed.viewers)));
   ok('uses the page token for the live video', calls.some(c => /v111111\/comments PAGETOK1/.test(c)));
   ok('comments land in the chat feed as facebook, no duplicates', await p.evaluate(() => { const l = window.webmix.chatFeed.list.filter(m => m.platform === 'facebook'); return l.length === 2 && l[0].name === 'ป้าแดง'; }));
   await p.screenshot({ path: S + '/facebook.png' });

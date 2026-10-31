@@ -13,7 +13,7 @@ const results = []; const ok = (n, c, x = '') => results.push(`${c ? 'PASS' : 'F
     const u = new URL(r.request().url());
     const json = (status, body) => r.fulfill({ status, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify(body) });
     if (u.searchParams.get('key') !== 'GOOD') return json(400, { error: { message: 'API key not valid', errors: [{ reason: 'badRequest' }] } });
-    if (u.pathname.endsWith('/videos')) return json(200, { items: [{ id: u.searchParams.get('id'), liveStreamingDetails: { activeLiveChatId: 'CHAT1' } }] });
+    if (u.pathname.endsWith('/videos')) return json(200, { items: [{ id: u.searchParams.get('id'), liveStreamingDetails: { activeLiveChatId: 'CHAT1', concurrentViewers: '1234' } }] });
     polls++;
     const item = (id, name, text, extra = {}) => ({ id, snippet: { displayMessage: text, publishedAt: new Date().toISOString(), ...extra }, authorDetails: { displayName: name } });
     const items = polls === 1 ? [item('a1', 'สมชาย', 'สวัสดีครับ ฟังจากเชียงใหม่'), item('a2', 'Jane', 'Hello from London')]
@@ -66,6 +66,7 @@ const results = []; const ok = (n, c, x = '') => results.push(`${c ? 'PASS' : 'F
   ok('both platforms connected', /YouTube: เชื่อมต่อแล้ว/.test(conn) && /Twitch: เชื่อมต่อแล้ว/.test(conn), conn);
   const names = await p.evaluate(() => window.webmix.chatFeed.list.map(m => `${m.platform}:${m.name}`));
   ok('YouTube messages arrive (first page + next poll)', ['youtube:สมชาย', 'youtube:Jane', 'youtube:ผู้สนับสนุน'].every(n => names.includes(n)), JSON.stringify(names));
+  ok('YouTube viewer count read with the chat', await p.evaluate(() => window.webmix.viewersNow().total === 1234 && window.webmix.chatFeed.viewers.youtube?.n === 1234), JSON.stringify(await p.evaluate(() => window.webmix.chatFeed.viewers)));
   ok('Twitch message arrives with display name', names.includes('twitch:TwMod'), JSON.stringify(names));
   ok('Super Chat amount shown in the list', (await p.textContent('#chat-list')).includes('฿100.00'));
   ok('newest comment on top', (await p.locator('.chat-item').first().textContent()).includes('ผู้สนับสนุน') || (await p.locator('.chat-item').first().textContent()).includes('TwMod'));

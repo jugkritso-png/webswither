@@ -50,9 +50,14 @@
           if (!chatId) { on.status('connecting', 'ไลฟ์ยังไม่เริ่ม หรือปิดแชตอยู่ — จะลองใหม่ทุก 30 วินาที'); await sleep(30000); }
         } catch (e) { on.status('error', e.message); if (e.fatal) return; await sleep(15000); }
       }
-      let page = '', first = true;
+      let page = '', first = true, viewersAt = 0;
       while (!stopped) {
         let wait = 6000;
+        // จำนวนผู้ชมขณะนี้ (1 หน่วยโควตา ทุก 30 วินาที)
+        if (on.viewers && Date.now() - viewersAt >= 30000) {
+          viewersAt = Date.now();
+          try { const v = await api('videos', { part: 'liveStreamingDetails', id }); const n = v.items?.[0]?.liveStreamingDetails?.concurrentViewers; if (n != null) on.viewers(+n); } catch (e) { /* แชตยังทำงานต่อ */ }
+        }
         try {
           const r = await api('liveChat/messages', { liveChatId: chatId, part: 'snippet,authorDetails', maxResults: 200, ...(page ? { pageToken: page } : {}) });
           if (stopped) return;
@@ -155,8 +160,12 @@
           if (!id) { on.status('connecting', 'เพจยังไม่ได้ไลฟ์ — จะลองใหม่ทุก 20 วินาที'); await sleep(20000); }
         } catch (e) { on.status('error', e.message); if (e.fatal) return; await sleep(20000); }
       }
-      let first = true, wait = 3000;
+      let first = true, wait = 3000, viewersAt = 0;
       while (!stopped) {
+        if (on.viewers && Date.now() - viewersAt >= 30000) {
+          viewersAt = Date.now();
+          try { const v = await api(id, { fields: 'live_views' }); if (v.live_views != null) on.viewers(+v.live_views); } catch (e) { /* คอมเมนต์ยังทำงานต่อ */ }
+        }
         try {
           const r = await api(`${id}/comments`, { order: 'reverse_chronological', filter: 'stream', live_filter: 'no_filter', fields: 'id,from{name},message,created_time', limit: first ? 20 : 50 });
           if (stopped) return;

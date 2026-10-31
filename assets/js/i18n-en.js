@@ -2507,6 +2507,10 @@
     "รอก่อนตัด (วินาที)": "Wait before switching (seconds)",
     "กลับภาพเดิมให้เองเมื่อสัญญาณกลับมานิ่ง 3 วินาที (ไม่ติ๊ก = มีปุ่มให้กดกลับเอง)": "Switch back automatically once the signal is steady for 3 seconds (unticked = a button to switch back)",
     "แหล่งสำรอง: ตั้งค่า → เอาต์พุต → “เมื่อภาพบน Program หลุด” เลือกแหล่งภาพสำรอง (เช่นภาพกว้าง หรือ Slate “กลับมาในอีกสักครู่”) — ระหว่างไลฟ์หรือบันทึก ถ้ากล้อง / มือถือ / แขก / สัญญาณเครือข่ายที่อยู่บน Program หลุดเกินเวลาที่ตั้ง ระบบตัดไปแหล่งสำรองให้ แล้วมีปุ่ม “กลับไป…” เมื่อสัญญาณกลับมา (หรือติ๊กให้ตัดกลับเอง)": "Backup source: Settings → Output → “If the Program source is lost” picks a backup (e.g. a wide shot or a “back in a moment” Slate) — while live or recording, if the camera / phone / guest / network feed on Program is lost for longer than the set time, WebMix switches to the backup, then offers a “Back to…” button when the signal returns (or tick to switch back automatically)",
+    "ผู้ชมสูงสุด": "Peak viewers",
+    "จาก YouTube / Facebook ที่เชื่อมคอมเมนต์": "From the YouTube / Facebook comments you connected",
+    "· ผู้ชม {}": "· {1} viewers",
+    "จำนวนผู้ชมขณะนี้ (YouTube / Facebook ที่เชื่อมคอมเมนต์ไว้) แสดงในแถบสถานะระหว่างไลฟ์ อัปเดตทุก 30 วินาที และสรุป “ผู้ชมสูงสุด” หลังจบไลฟ์ · Twitch ต้องใช้บัญชีนักพัฒนาจึงยังไม่แสดงจำนวนผู้ชม": "Current viewers (YouTube / Facebook with comments connected) show in the status bar while live, updated every 30 seconds, and “Peak viewers” appears in the summary after the live · Twitch needs a developer account, so its viewer count isn't shown yet",
     "ทีวี": "TV", "หน้า": "Page", "รายการ": "Item", "ความยาว": "Length", "เหลือ": "Remain", "สไลด์": "Slides"
   });
 })(window.WebMix = window.WebMix || {});
