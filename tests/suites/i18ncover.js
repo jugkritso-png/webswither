@@ -12,7 +12,7 @@ const results = []; const ok = (n, c, x = '') => results.push(`${c ? 'PASS' : 'F
 
 const TH = /[฀-๿]/;
 const HOLE = '\u0002';
-const KEEP_THAI = new Set(['ไทย', 'ภาษาไทย']);
+const KEEP_THAI = new Set(['ไทย', 'ภาษาไทย', '฿']); // ฿ = สัญลักษณ์เงินบาท (ใช้ในภาษาอังกฤษด้วย)
 const SKIP_JS = new Set(['i18n.js', 'i18n-en.js', 'gate-worklet.js', 'lufs-worklet.js']);
 const files = ['index.html', 'cg-studio.html', 'assets/app.js',
   ...fs.readdirSync(path.join(ROOT, 'assets/js')).filter(f => f.endsWith('.js') && !SKIP_JS.has(f)).map(f => 'assets/js/' + f)];

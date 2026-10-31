@@ -261,6 +261,7 @@
     delay: { icon: 'clock', label: 'DELAY' },
     vset: { icon: 'camera', label: 'VIRTUAL SET' },
     lottie: { icon: 'film', label: 'LOTTIE' },
+    widget: { icon: 'bars', label: 'WIDGET' },
     slate: { icon: 'type', label: 'SLATE' },
     clock: { icon: 'clock', label: 'CLOCK' },
     image: { icon: 'image', label: 'IMAGE' },
@@ -296,6 +297,7 @@
     else if (inp.type === 'visualizer') drawViz(ctx, inp, w, h);
     else if (inp.type === 'chat') chatLib.drawChat(ctx, w, h, chatFeed.shown, inp.chat.style, chatAnim());
     else if (inp.type === 'captions') drawCaptions(ctx, w, h, inp);
+    else if (inp.type === 'widget') drawWidget(ctx, inp, w, h);
   }
 
   /* ---- Audio Visualizer: กราฟิกที่ขยับตามเสียง (แท่งความถี่ / คลื่นเสียง / วงกลมรอบรูป / แท่งสะท้อนกลางจอ) ----
@@ -432,7 +434,7 @@
       case 'black': case 'transparent': fillBlack(ctx, w, h); break;
       case 'slate': drawSlate(ctx, w, h, inp); break;
       case 'clock': drawClock(ctx, w, h, inp); break;
-      case 'title': case 'timer': case 'score': case 'ticker': case 'visualizer': case 'chat': case 'captions': fillBlack(ctx, w, h); drawGraphic(ctx, inp, w, h); break;
+      case 'title': case 'timer': case 'score': case 'ticker': case 'visualizer': case 'chat': case 'captions': case 'widget': fillBlack(ctx, w, h); drawGraphic(ctx, inp, w, h); break;
       case 'cg': fillBlack(ctx, w, h); window.WebMixCG.draw(ctx, inp.cg.design, w, h, { preview: true }); break;
       case 'scene': drawScene(ctx, inp, w, h); break;
       case 'slides': {
@@ -603,6 +605,31 @@
   const ovl = Array.from({ length: OVL_COUNT }, (_, i) => i).map(i => ({ n: i + 1, inputId: null, on: false, staged: false, anim: 0, effect: 'fade', duration: 500 }));
   const onOverlay = id => !!id && ovl.some(c => c.on && c.inputId === id);
   const isOnAir = id => !!id && (id === state.programId || onOverlay(id) || sceneHas(state.programId, id));
+  /* ประหยัดเครื่อง: แหล่งภาพที่ "กำลังใช้" = Program / Preview / Overlay (เปิด พัก หรือกำลังจาง) / PIP / Key
+     รวมแหล่งที่อยู่ข้างในของที่กำลังใช้ (ช่องในซีน · กล้องและจอของฉากเสมือน · ต้นทางของภาพหน่วง) · เปิด Multiview = ใช้ทุกแหล่ง
+     แหล่งที่ไม่ได้ใช้: แอนิเมชันเดินช้าลง ไม่ถอดรหัสเฟรมล่วงหน้า ภาพย่อบนการ์ดอัปเดต 2 ครั้งต่อวินาที */
+  let usedSet = new Set(), usedAt = -1;
+  function liveSet() {
+    if (usedAt === frameNo) return usedSet;
+    const s = new Set();
+    const add = id => {
+      const i = id && !s.has(id) && byId(id);
+      if (!i) return;
+      s.add(id);
+      if (i.type === 'scene') i.scene.slots.forEach(add);
+      if (i.type === 'vset') { add(i.vset.cam); add(i.vset.wall); }
+      if (i.type === 'delay') add(i.delay.src);
+    };
+    add(state.programId); add(state.previewId);
+    for (const c of ovl) if (c.on || c.staged || c.anim > 0) add(c.inputId);
+    if (overlays.pip.on) add(overlays.pip.sourceId);
+    if (overlays.key.on) add(overlays.key.sourceId);
+    try { if (multiview.win && !multiview.win.closed) inputs.forEach(i => s.add(i.id)); } catch (e) { /* ยังไม่สร้าง multiview */ }
+    usedSet = s; usedAt = frameNo;
+    return s;
+  }
+  const inUse = inp => liveSet().has(inp.id);
+  const HEAVY_THUMBS = new Set(['vset', 'lottie', 'imgseq', 'photos', 'delay', 'mixsrc', 'scene']);
 
   // ปรับสีต่อแหล่งภาพ (กล้อง/วิดีโอ/รูป): b ความสว่าง ×, c คอนทราสต์ ×, s ความอิ่มสี ×, t อุณหภูมิสี (−1 เย็น … +1 อุ่น)
   const COLOR_TYPES = ['camera', 'screen', 'wireless', 'guest', 'media', 'image', 'playlist', 'srt'];
@@ -671,7 +698,7 @@
       case 'vset': drawVset(ctx, inp, w, h); return;
       case 'lottie': if (inp.status === 'live' && inp.lc) drawFitColored(ctx, inp, inp.lc, inp.lc.width, inp.lc.height, w, h); return;
       case 'mixsrc': case 'delay': drawSource(ctx, inp, w, h); return;
-      case 'title': case 'timer': case 'score': case 'ticker': case 'visualizer': case 'chat': case 'captions': drawGraphic(ctx, inp, w, h); return;
+      case 'title': case 'timer': case 'score': case 'ticker': case 'visualizer': case 'chat': case 'captions': case 'widget': drawGraphic(ctx, inp, w, h); return;
       case 'cg': {
         const fallback = inp.cg.onAirSnapshot && cgSceneId === inp.cg.onAirSceneId && !inp.cg.design.scenes.some(scene => scene.id === cgSceneId) ? inp.cg.onAirSnapshot : null;
         const design = fallback ? { ...inp.cg.design, scenes: [fallback], activeSceneId: fallback.id } : inp.cg.design;
@@ -842,6 +869,8 @@
         if (e.stamp !== frameNo) { gpu.upload(e, c, c.width, c.height); e.stamp = frameNo; }
         return { e };
       }
+      case 'widget':
+        return { e: genTexture('wd:' + inp.id, `${inp.wd?.stamp}|${JSON.stringify(inp.widget)}|${window.WebMix.i18n?.lang}`, W, H, (c, w, h) => drawWidget(c, inp, w, h)), full: true, under: transparent ? null : [0, 0, 0, 1] };
       case 'vset':
         return { e: genTexture('vs:' + inp.id, frameNo, GW, GH, (c, w, h) => drawVset(c, inp, w, h)), full: true };
       case 'lottie': {
@@ -1132,7 +1161,10 @@
       lufs.render();
       for (const inp of inputs) {
         const ctx = thumbs.get(inp.id);
-        if (ctx) drawThumb(ctx, inp, ctx.canvas.width, ctx.canvas.height);
+        if (!ctx) continue;
+        // ภาพย่อของแหล่งที่วาดหนัก แต่ยังไม่ได้ใช้: อัปเดต 2 ครั้งต่อวินาทีพอ
+        if (HEAVY_THUMBS.has(inp.type) && !inUse(inp)) { if (now - (inp._thumbAt || 0) < 500) continue; inp._thumbAt = now; }
+        drawThumb(ctx, inp, ctx.canvas.width, ctx.canvas.height);
       }
     }
     audio.tick(now);
@@ -2153,6 +2185,7 @@
     if (inp.type === 'delay') return openDelayDialog(inp);
     if (inp.type === 'vset') return openVsetDialog(inp);
     if (inp.type === 'lottie') return openLottieDialog(inp);
+    if (inp.type === 'widget') return openWidgetDialog(inp);
     if (inp.type === 'visualizer') return openVizDialog(inp);
     if (inp.type === 'chat') return openChatInputDialog(inp);
     if (inp.type === 'captions') return openCaptionsDialog(inp);
@@ -4575,8 +4608,8 @@
       } else if (inp.type === 'photos' && st.playing && n > 1 && now - st.since >= st.sec * 1000) {
         stillsGo(inp, st.index + 1, now);
       }
-      const keep = new Set();
-      for (let d = -cfg.behind; d <= cfg.ahead; d++) { const k = st.loop ? ((st.index + d) % n + n) % n : st.index + d; if (k >= 0 && k < n) keep.add(k); }
+      const keep = new Set(), used = inUse(inp);
+      for (let d = used ? -cfg.behind : 0; d <= (used ? cfg.ahead : 0); d++) { const k = st.loop ? ((st.index + d) % n + n) % n : st.index + d; if (k >= 0 && k < n) keep.add(k); }
       if (inp.type === 'photos' && st.prev >= 0) keep.add(st.prev);
       for (const k of keep) decodeStill(inp, k);
       for (const [k, b] of inp.bm) if (!keep.has(k)) { b.close && b.close(); inp.bm.delete(k); }
@@ -5087,6 +5120,8 @@
     for (const inp of inputs) {
       if (inp.type !== 'lottie' || !inp.anim) continue;
       const l = inp.lot;
+      // ไม่ได้ใช้: เวลายังเดินตามปกติ (กลับมาใช้แล้วตรงจังหวะ) แต่วาดเฟรมแค่ 4 ครั้งต่อวินาทีสำหรับภาพย่อ
+      if (!inUse(inp)) { if (now - (l.idleAt || 0) < 250) continue; l.idleAt = now; }
       let f = l.held + (l.playing ? (now - l.t0) / 1000 * l.fr * l.speed : 0);
       if (l.loop) f = ((f % l.frames) + l.frames) % l.frames;
       else if (f >= l.frames - 1) { f = l.frames - 1; if (l.playing) { l.playing = false; l.held = f; paintLottieCard(inp); } }
@@ -5132,6 +5167,197 @@
     l.held = Math.max(0, l.frame); l.t0 = performance.now();
     l.speed = clamp(+r.form.speed.value || 1, 0.25, 4); l.loop = r.form.loop.checked;
     renderInputs(); refreshSourceSelects(); show.autosave();
+  }
+
+  /* ------------------------------------------- วิดเจ็ตข้อมูลสด (สภาพอากาศ / คริปโต / อัตราแลกเปลี่ยน / JSON จาก API ใดก็ได้)
+     ดึงข้อมูลจากบริการฟรีที่ไม่ต้องใช้ key (Open-Meteo, CoinGecko, open.er-api) ตามรอบเวลา แล้ววาดเป็นป้ายพื้นโปร่งใส ซ้อนบน Overlay ได้ */
+  const WIDGET_KINDS = { weather: 'สภาพอากาศ', crypto: 'ราคาคริปโต', fx: 'อัตราแลกเปลี่ยน', json: 'ข้อมูลจาก API (JSON)' };
+  const WIDGET_PLACES = { tr: 'มุมขวาบน', tl: 'มุมซ้ายบน', br: 'มุมขวาล่าง', bl: 'มุมซ้ายล่าง', center: 'กลางจอ' };
+  const WMO = c => c === 0 ? ['☀️', 'แจ่มใส'] : c <= 3 ? ['⛅', 'มีเมฆบางส่วน'] : c <= 48 ? ['🌫️', 'หมอก'] : c <= 67 ? ['🌧️', 'ฝนตก'] : c <= 77 ? ['❄️', 'หิมะ'] : c <= 82 ? ['🌧️', 'ฝนตกหนัก'] : ['⛈️', 'พายุฝนฟ้าคะนอง'];
+  const fmtNum = (v, d = 2) => Number(v).toLocaleString('th-TH', { maximumFractionDigits: d, minimumFractionDigits: v >= 1000 ? 0 : Math.min(d, 2) });
+  const jsonPath = (o, p) => String(p || '').split(/[.[\]]+/).filter(Boolean).reduce((a, k) => (a == null ? a : a[k]), o);
+  function sanitizeWidget(w) {
+    w = w || {};
+    return { kind: WIDGET_KINDS[w.kind] ? w.kind : 'weather', place: String(w.place || 'กรุงเทพมหานคร').slice(0, 60), lat: +w.lat || 13.7563, lon: +w.lon || 100.5018,
+      coin: String(w.coin || 'bitcoin').replace(/[^a-z0-9-]/g, '').slice(0, 40) || 'bitcoin', vs: String(w.vs || 'thb').replace(/[^a-z]/g, '').slice(0, 6) || 'thb',
+      from: String(w.from || 'USD').toUpperCase().replace(/[^A-Z]/g, '').slice(0, 3) || 'USD', to: String(w.to || 'THB').toUpperCase().replace(/[^A-Z]/g, '').slice(0, 3) || 'THB',
+      url: String(w.url || '').slice(0, 500), path: String(w.path || '').slice(0, 120), label: String(w.label || '').slice(0, 40), unit: String(w.unit || '').slice(0, 12),
+      pos: WIDGET_PLACES[w.pos] ? w.pos : 'tr', every: clamp(+w.every || 0, 0, 3600), accent: okHex(w.accent) ? w.accent : '#f5a524' };
+  }
+  const widgetEvery = w => w.every || { weather: 600, crypto: 60, fx: 1800, json: 30 }[w.kind];
+  async function fetchWidget(inp) {
+    const w = inp.widget, st = inp.wd || (inp.wd = {});
+    st.busy = true;
+    try {
+      const get = async u => { const r = await fetch(u, { cache: 'no-store' }); if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); };
+      if (w.kind === 'weather') {
+        const d = await get(`https://api.open-meteo.com/v1/forecast?latitude=${w.lat}&longitude=${w.lon}&current=temperature_2m,weather_code,relative_humidity_2m,wind_speed_10m&timezone=auto`);
+        const c = d.current || {}, [ic, txt] = WMO(+c.weather_code || 0);
+        Object.assign(st, { label: w.place, value: `${Math.round(c.temperature_2m)}°C`, sub: `${txt} · ความชื้น ${Math.round(c.relative_humidity_2m)}%`, icon: ic, trend: 0 });
+      } else if (w.kind === 'crypto') {
+        const d = await get(`https://api.coingecko.com/api/v3/simple/price?ids=${w.coin}&vs_currencies=${w.vs}&include_24hr_change=true`);
+        const c = d[w.coin]; if (!c || c[w.vs] == null) throw new Error('ไม่พบเหรียญนี้');
+        const ch = +c[`${w.vs}_24h_change`] || 0;
+        Object.assign(st, { label: `${w.coin.toUpperCase()} / ${w.vs.toUpperCase()}`, value: `${fmtNum(c[w.vs])} ${w.vs === 'thb' ? '฿' : w.vs === 'usd' ? '$' : w.vs.toUpperCase()}`, sub: `${ch >= 0 ? '▲' : '▼'} ${Math.abs(ch).toFixed(2)}% ใน 24 ชม.`, icon: '', trend: Math.sign(ch) });
+      } else if (w.kind === 'fx') {
+        const d = await get(`https://open.er-api.com/v6/latest/${w.from}`);
+        const v = d.rates && d.rates[w.to]; if (v == null) throw new Error('ไม่พบสกุลเงินนี้');
+        Object.assign(st, { label: `1 ${w.from} = ? ${w.to}`, value: `${fmtNum(v, 4)} ${w.to}`, sub: 'อัตราอ้างอิง', icon: '💱', trend: 0 });
+      } else {
+        if (!/^https?:\/\//i.test(w.url)) throw new Error('ยังไม่ได้ใส่ลิงก์ API');
+        const d = await get(w.url), v = jsonPath(d, w.path);
+        if (v == null || typeof v === 'object') throw new Error('ไม่พบค่าตามเส้นทางที่ระบุ');
+        Object.assign(st, { label: w.label || w.path, value: `${typeof v === 'number' ? fmtNum(v) : String(v).slice(0, 40)}${w.unit ? ' ' + w.unit : ''}`, sub: '', icon: '', trend: 0 });
+      }
+      st.error = ''; st.at = Date.now();
+      if (inp.status !== 'live') setInputStatus(inp, 'live');
+    } catch (e) {
+      st.error = e.message || 'ดึงข้อมูลไม่ได้'; st.at = Date.now();
+      if (!st.value) setInputStatus(inp, 'nosignal');
+    } finally {
+      st.busy = false; st.stamp = (st.stamp || 0) + 1;
+      const sub = $(`#inputs-grid .card[data-id="${inp.id}"] .card-sub`); if (sub) sub.textContent = cardSub(inp);
+    }
+  }
+  function stepWidgets() {
+    const now = Date.now();
+    for (const inp of inputs) {
+      if (inp.type !== 'widget') continue;
+      const st = inp.wd || (inp.wd = {});
+      if (!st.busy && (!st.at || now - st.at >= (st.error ? 30 : widgetEvery(inp.widget)) * 1000)) fetchWidget(inp);
+    }
+  }
+  setInterval(stepWidgets, 1000);
+  function drawWidget(ctx, inp, w, h) {
+    const st = inp.wd || {}, wd = inp.widget;
+    const bw = Math.round(w * 0.24), bh = Math.round(h * 0.13), m = Math.round(h * 0.045);
+    const x = wd.pos === 'center' ? (w - bw) / 2 : wd.pos[1] === 'l' ? m : w - bw - m, y = wd.pos === 'center' ? (h - bh) / 2 : wd.pos[0] === 't' ? m : h - bh - m;
+    ctx.save();
+    ctx.fillStyle = 'rgba(10,14,22,.84)';
+    ctx.beginPath(); ctx.roundRect ? ctx.roundRect(x, y, bw, bh, bh * 0.14) : ctx.rect(x, y, bw, bh); ctx.fill();
+    ctx.fillStyle = wd.accent; ctx.fillRect(x, y, Math.max(3, bw * 0.018), bh);
+    const pad = bw * 0.06, ix = st.icon ? bh * 0.62 : 0;
+    if (st.icon) { ctx.font = `${Math.round(bh * 0.5)}px ${FONT}`; ctx.textBaseline = 'middle'; ctx.fillText(st.icon, x + pad, y + bh / 2); }
+    const tx = x + pad + ix, tw = bw - pad * 2 - ix;
+    ctx.textBaseline = 'alphabetic'; ctx.fillStyle = 'rgba(255,255,255,.75)';
+    fitFont(ctx, st.error && !st.value ? WIDGET_KINDS[wd.kind] : (st.label || ''), 600, Math.round(bh * 0.17), FONT, tw); ctx.fillText(st.error && !st.value ? WIDGET_KINDS[wd.kind] : (st.label || ''), tx, y + bh * 0.3);
+    ctx.fillStyle = '#fff'; fitFont(ctx, st.value || (st.error ? 'ไม่มีข้อมูล' : 'กำลังโหลด…'), 800, Math.round(bh * 0.36), FONT, tw); ctx.fillText(st.value || (st.error ? 'ไม่มีข้อมูล' : 'กำลังโหลด…'), tx, y + bh * 0.66);
+    const sub = st.error && st.value ? 'ข้อมูลล่าสุด (เชื่อมต่อไม่ได้)' : st.sub || '';
+    ctx.fillStyle = st.trend > 0 ? '#4ade80' : st.trend < 0 ? '#f87171' : 'rgba(255,255,255,.7)';
+    fitFont(ctx, sub, 600, Math.round(bh * 0.15), FONT, tw); ctx.fillText(sub, tx, y + bh * 0.88);
+    ctx.restore();
+  }
+  async function openWidgetDialog(inp) {
+    const w = sanitizeWidget(inp ? inp.widget : { kind: 'weather' }), geo = { lat: w.lat, lon: w.lon };
+    const r = await dialog({
+      title: inp ? `วิดเจ็ตข้อมูลสด — ${inp.name}` : 'เพิ่มวิดเจ็ตข้อมูลสด',
+      body: `
+        <div class="grid-2">
+          <label class="field"><span>ชนิดข้อมูล</span><select name="kind" class="select">${Object.entries(WIDGET_KINDS).map(([k, l]) => `<option value="${k}" ${k === w.kind ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+          <label class="field"><span>ชื่อแหล่งภาพ</span><input name="name" class="input" maxlength="40" value="${esc(inp ? inp.name : 'WIDGET')}"></label>
+        </div>
+        <div data-k="weather"><label class="field"><span>เมือง / จังหวัด</span><div class="link-row"><input name="place" class="input" value="${esc(w.place)}"><button type="button" class="btn" data-wd="geo">ค้นหา</button></div></label><small class="note wd-geo">${w.lat.toFixed(3)}, ${w.lon.toFixed(3)}</small></div>
+        <div data-k="crypto" class="grid-2"><label class="field"><span>เหรียญ (รหัส CoinGecko)</span><input name="coin" class="input mono" value="${esc(w.coin)}" placeholder="bitcoin, ethereum, tether"></label><label class="field"><span>เทียบกับ</span><select name="vs" class="select">${['thb', 'usd'].map(v => `<option value="${v}" ${v === w.vs ? 'selected' : ''}>${v.toUpperCase()}</option>`).join('')}</select></label></div>
+        <div data-k="fx" class="grid-2"><label class="field"><span>จาก</span><input name="from" class="input mono" maxlength="3" value="${esc(w.from)}"></label><label class="field"><span>เป็น</span><input name="to" class="input mono" maxlength="3" value="${esc(w.to)}"></label></div>
+        <div data-k="json">
+          <label class="field"><span>ลิงก์ API (คืนค่า JSON และเปิด CORS)</span><input name="url" class="input mono" value="${esc(w.url)}" placeholder="https://…"></label>
+          <div class="grid-3"><label class="field"><span>เส้นทางของค่า</span><input name="path" class="input mono" value="${esc(w.path)}" placeholder="data.price หรือ items.0.score"></label><label class="field"><span>ป้ายชื่อ</span><input name="label" class="input" value="${esc(w.label)}"></label><label class="field"><span>หน่วย</span><input name="unit" class="input" value="${esc(w.unit)}"></label></div>
+        </div>
+        <div class="grid-3">
+          <label class="field"><span>ตำแหน่ง</span><select name="pos" class="select">${Object.entries(WIDGET_PLACES).map(([k, l]) => `<option value="${k}" ${k === w.pos ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+          <label class="field"><span>ดึงใหม่ทุก (วินาที, 0 = อัตโนมัติ)</span><input name="every" class="input mono" type="number" min="0" max="3600" value="${w.every}"></label>
+          <label class="field"><span>สีแถบ</span><input name="accent" type="color" value="${w.accent}"></label>
+        </div>
+        <p class="note">ข้อมูลจากบริการฟรี: สภาพอากาศ Open-Meteo · คริปโต CoinGecko · อัตราแลกเปลี่ยน open.er-api.com · ผลบอล / หุ้น ใช้ “ข้อมูลจาก API” กับบริการที่คุณมี key</p>`,
+      wide: true,
+      actions: [{ label: 'ยกเลิก' }, { label: inp ? 'บันทึก' : 'เพิ่ม', primary: true, value: 'ok' }],
+      onOpen(modal) {
+        const fm = $('form', modal);
+        const show = () => modal.querySelectorAll('[data-k]').forEach(el => { el.hidden = el.dataset.k !== fm.kind.value; });
+        fm.kind.addEventListener('change', show); show();
+        $('[data-wd="geo"]', modal).addEventListener('click', async () => {
+          const q = fm.place.value.trim(); if (!q) return;
+          try {
+            const d = await (await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(q)}&count=1&language=th`)).json();
+            const g = d.results && d.results[0]; if (!g) throw new Error();
+            fm.place.value = g.name; geo.lat = +g.latitude; geo.lon = +g.longitude;
+            $('.wd-geo', modal).textContent = `${g.name}${g.admin1 ? ', ' + g.admin1 : ''} · ${(+g.latitude).toFixed(3)}, ${(+g.longitude).toFixed(3)}`;
+          } catch (e) { $('.wd-geo', modal).textContent = 'ไม่พบสถานที่นี้'; }
+        });
+      }
+    });
+    if (!r || r.value !== 'ok') return null;
+    const f = r.form;
+    const nw = sanitizeWidget({ kind: f.kind.value, place: f.place.value, lat: geo.lat, lon: geo.lon, coin: f.coin.value.trim().toLowerCase(), vs: f.vs.value,
+      from: f.from.value, to: f.to.value, url: f.url.value.trim(), path: f.path.value.trim(), label: f.label.value.trim(), unit: f.unit.value.trim(), pos: f.pos.value, every: f.every.value, accent: f.accent.value });
+    const name = f.name.value.trim().slice(0, 40) || 'WIDGET';
+    if (!inp) inp = addInput({ type: 'widget', name: name === 'WIDGET' ? WIDGET_KINDS[nw.kind].toUpperCase() : name, status: 'nosignal', widget: nw, wd: {} });
+    else { inp.name = name; inp.widget = nw; inp.wd = {}; }
+    fetchWidget(inp);
+    renderInputs(); refreshSourceSelects(); show.autosave();
+    return inp;
+  }
+
+  /* ------------------------------------------- เทมเพลตโชว์สำเร็จรูป
+     เพิ่มชุดแหล่งภาพที่จัดไว้ให้งานแต่ละแบบ (ป้ายชื่อ ตัววิ่ง ฉาก ตัวจับเวลา ฯลฯ) ลงในโชว์ปัจจุบัน — สร้างผ่าน show.restoreInput แบบเดียวกับเปิดโชว์
+     กล้องไม่อยู่ในเทมเพลต (แต่ละที่ใช้กล้องต่างกัน) — เพิ่มเองด้วยปุ่มกล้องมือถือ / เพิ่มแหล่งภาพ */
+  const SHOW_TEMPLATES = () => [
+    { id: 'news', icon: 'broadcast', name: 'ข่าว / สนทนา', desc: 'ฉากห้องข่าว ป้ายชื่อผู้ประกาศและแขก ตัววิ่งข่าว นาฬิกา สภาพอากาศ', inputs: [
+      { type: 'slate', name: 'เริ่มรายการ', text: defText('รายการกำลังจะเริ่มในอีกสักครู่') },
+      { type: 'vset', name: 'ฉากห้องข่าว', vset: { set: 'news' } },
+      { type: 'title', name: 'ป้ายชื่อผู้ประกาศ', title: { headline: defText('ชื่อผู้ประกาศ'), subtitle: defText('ผู้ประกาศข่าว'), style: 'lower', color: '#ef4444' } },
+      { type: 'title', name: 'ป้ายชื่อแขก', title: { headline: defText('ชื่อแขกรับเชิญ'), subtitle: defText('ตำแหน่ง / หน่วยงาน'), style: 'lower', color: '#3b82f6' } },
+      { type: 'ticker', name: 'ตัววิ่งข่าว', ticker: { label: defText('ข่าวล่าสุด'), items: [defText('พิมพ์ข่าวที่ต้องการให้วิ่งได้ที่ปุ่มแก้ไข'), defText('ติดตามรายการได้ทุกช่องทาง')], speed: 90, color: '#ef4444' } },
+      { type: 'widget', name: 'สภาพอากาศ', widget: { kind: 'weather', pos: 'tr' } },
+      { type: 'clock', name: 'นาฬิกา', text: 'WEBMIX NEWS' }] },
+    { id: 'podcast', icon: 'mic', name: 'พอดแคสต์ / คุย 2 คน', desc: 'ภาพคู่กัน 2 ช่อง ป้ายชื่อพิธีกรและแขก กราฟิกขยับตามเสียง', inputs: [
+      { type: 'scene', name: 'ภาพคู่ 2 คน', scene: { layout: 'side', slots: [] } },
+      { type: 'title', name: 'ป้ายชื่อพิธีกร', title: { headline: defText('ชื่อพิธีกร'), subtitle: defText('พิธีกร'), style: 'pill', color: '#a855f7' } },
+      { type: 'title', name: 'ป้ายชื่อแขก', title: { headline: defText('ชื่อแขกรับเชิญ'), subtitle: defText('แขกรับเชิญ'), style: 'pill', color: '#0ea5e9' } },
+      { type: 'visualizer', name: 'กราฟิกเสียง', viz: { style: 'mirror', bg: 'dark', color: '#a855f7' } },
+      { type: 'slate', name: 'พักสักครู่', text: defText('พักสักครู่ แล้วกลับมาคุยกันต่อ') }] },
+    { id: 'sales', icon: 'grid', name: 'ขายของออนไลน์', desc: 'ป้ายสินค้า + ราคา นับถอยหลัง Flash Sale ตัววิ่งโปรโมชั่น คอมเมนต์ลูกค้า', inputs: [
+      { type: 'title', name: 'ป้ายสินค้า', title: { headline: defText('ชื่อสินค้า'), subtitle: defText('ราคาพิเศษ 299 บาท'), style: 'gradient', color: '#f97316' } },
+      { type: 'timer', name: 'Flash Sale', timer: { mode: 'down', duration: 900, label: defText('Flash Sale สิ้นสุดใน'), style: 'corner', color: '#ef4444' } },
+      { type: 'ticker', name: 'ตัววิ่งโปรโมชั่น', ticker: { label: defText('โปรวันนี้'), items: [defText('ส่งฟรีเมื่อซื้อครบ 500 บาท'), defText('พิมพ์ CF + รหัสสินค้า เพื่อสั่งซื้อ')], speed: 90, color: '#f97316' } },
+      { type: 'chat', name: 'คอมเมนต์ลูกค้า', chat: { style: 'lower' } },
+      { type: 'color', name: 'แผ่นรองข้อความ', fill: { a: '#000000', b: '#000000', grad: 'none', alpha: 0.5 } }] },
+    { id: 'sport', icon: 'clock', name: 'ถ่ายทอดกีฬา', desc: 'ป้ายคะแนนพร้อมเวลาแข่ง ตัวจับเวลา ตัววิ่ง ป้ายชื่อผู้บรรยาย', inputs: [
+      { type: 'score', name: 'ป้ายคะแนน', score: { teamA: defText('ทีม A'), teamB: defText('ทีม B'), period: defText('ครึ่งแรก'), clock: { mode: 'up', duration: 2700 } } },
+      { type: 'timer', name: 'นับถอยหลังเริ่มเกม', timer: { mode: 'down', duration: 600, label: defText('เริ่มการแข่งขันใน'), style: 'center', color: '#22c55e' } },
+      { type: 'ticker', name: 'ตัววิ่งผลการแข่ง', ticker: { label: defText('ผลการแข่งขัน'), items: [defText('พิมพ์ผลคู่อื่นได้ที่ปุ่มแก้ไข')], speed: 90, color: '#22c55e' } },
+      { type: 'title', name: 'ป้ายชื่อผู้บรรยาย', title: { headline: defText('ชื่อผู้บรรยาย'), subtitle: defText('ผู้บรรยาย'), style: 'sport', color: '#22c55e' } },
+      { type: 'slate', name: 'พักครึ่ง', text: defText('พักครึ่งเวลา') }] },
+    { id: 'ceremony', icon: 'users', name: 'งานพิธี / งานแต่ง / งานบวช', desc: 'ภาพต้อนรับ ป้ายชื่อเจ้าภาพกลางจอ นาฬิกา แผ่นรองข้อความ', inputs: [
+      { type: 'slate', name: 'ต้อนรับ', text: defText('ยินดีต้อนรับสู่งานมงคล') },
+      { type: 'title', name: 'ชื่อเจ้าภาพ', title: { headline: defText('ชื่อเจ้าภาพ / บ่าวสาว'), subtitle: defText('วันที่ · สถานที่'), style: 'center', color: '#eab308' } },
+      { type: 'title', name: 'ขอบคุณ', title: { headline: defText('ขอบคุณทุกท่านที่มาร่วมงาน'), subtitle: '', style: 'center', color: '#eab308' } },
+      { type: 'clock', name: 'นาฬิกา', text: defText('ถ่ายทอดสด') },
+      { type: 'color', name: 'พื้นทอง', fill: { a: '#78350f', b: '#1c1917', grad: 'radial', alpha: 1 } }] }
+  ];
+  function applyShowTemplate(t) {
+    let n = 0;
+    for (const raw of t.inputs) {
+      const base = { id: uid(), name: String(defText(raw.name)).slice(0, 40) };
+      try { show.restoreInput(raw, base); if (byId(base.id)) n++; } catch (e) { console.warn('template', e); }
+    }
+    if (!show.name || /^โชว์|^Show/i.test(show.name)) show.name = defText(t.name);
+    renderInputs(); refreshSourceSelects(); show.autosave(true);
+    toast(`เพิ่ม ${n} แหล่งภาพจากเทมเพลต “${defText(t.name)}” — เพิ่มกล้องของคุณได้ที่ปุ่ม “กล้องมือถือ” หรือ “เพิ่มแหล่งภาพ”`, 'success', 7000);
+    return n;
+  }
+  async function openTemplateDialog() {
+    const list = SHOW_TEMPLATES();
+    const r = await dialog({
+      title: 'เทมเพลตโชว์สำเร็จรูป',
+      wide: true,
+      body: `<p class="note">เลือกแบบงาน แล้ว WebMix จะเพิ่มกราฟิกและแหล่งภาพที่ต้องใช้ลงในโชว์นี้ (ไม่ลบของเดิม) — แก้ข้อความทุกอย่างได้ที่ปุ่มดินสอบนการ์ด</p>
+        <div class="tpl-grid">${list.map(t => `<button type="button" class="tpl-card" data-tpl="${t.id}">${icon(t.icon)}<b>${t.name}</b><small>${t.desc}</small><i>${t.inputs.length} แหล่งภาพ</i></button>`).join('')}</div>`,
+      actions: [{ label: 'ปิด' }],
+      onOpen(modal, close) { modal.addEventListener('click', e => { const b = e.target.closest('[data-tpl]'); if (!b) return; close(b.dataset.tpl); }); }
+    });
+    const t = r && list.find(x => x.id === r.value);
+    if (t) applyShowTemplate(t);
   }
 
   function addSlidesFiles(files) {
@@ -9976,7 +10202,7 @@ onmessage = async e => {
     const out = [];
     const add = (state, name, detail, fix) => out.push({ state, name, detail, fix });
     const list = settings.destinations.filter(d => d.enabled);
-    const srcs = inputs.filter(i => !['color', 'mixsrc', 'delay', 'vset', 'bars', 'clock', 'black', 'transparent', 'title', 'timer', 'score', 'ticker'].includes(i.type));
+    const srcs = inputs.filter(i => !['color', 'mixsrc', 'delay', 'vset', 'widget', 'bars', 'clock', 'black', 'transparent', 'title', 'timer', 'score', 'ticker'].includes(i.type));
     const dead = srcs.filter(i => i.status !== 'live');
     add(dead.length ? 'warn' : 'ok', 'แหล่งภาพทุกตัวมีสัญญาณ', dead.length ? `“${dead.map(i => i.name).slice(0, 3).join('”, “')}” ยังไม่มีสัญญาณ` : `${srcs.length || inputs.length} แหล่ง${inputs.some(i => i.type === 'wireless') ? ` · กล้องมือถือ ${inputs.filter(i => i.type === 'wireless').length} เครื่อง` : ''}`);
     const mics = audio.channels.filter(c => !c.muted && c.kind !== 'player' && c.kind !== 'pad');
@@ -11567,6 +11793,7 @@ onmessage = async e => {
       ['clock', 'นาฬิกานับถอยหลัง / จับเวลา', 'นับถอยหลังก่อนเริ่ม หรือจับเวลาการแข่ง', addTimerInput],
       ['grid', 'ป้ายคะแนน', 'คะแนนสองทีม พร้อมเวลาแข่ง', addScoreInput],
       ['type', 'ตัววิ่งข่าว', 'ข้อความวิ่งด้านล่างจอ', addTickerInput],
+      ['bars', 'วิดเจ็ตข้อมูลสด', 'สภาพอากาศ / ราคาคริปโต / อัตราแลกเปลี่ยน / ข้อมูลจาก API ใดก็ได้ อัปเดตเอง', () => openWidgetDialog()],
       ['film', 'แอนิเมชัน Lottie (.json)', 'กราฟิกเคลื่อนไหวจาก After Effects / LottieFiles พื้นโปร่งใส คมทุกขนาด', () => pickFiles('.json,application/json', addLottieFiles)],
       ['sliders', 'Audio Visualizer', 'กราฟิกขยับตามเสียง สำหรับพอดแคสต์ / เพลง / แขกที่ไม่เปิดกล้อง', addVizInput],
       ['type', 'คอมเมนต์ผู้ชม', 'ดึงแชต YouTube / Twitch แล้วเลือกขึ้นจอ', () => addChatInput()],
@@ -11574,6 +11801,7 @@ onmessage = async e => {
     ['เสียง (ไม่มีภาพ)', [
       ['music', 'แหล่งเสียง', 'ไมค์ เครื่องเล่นเพลง เสียงเอฟเฟกต์ เสียงจากคอม วิทยุออนไลน์', () => setTimeout(() => openAudioAddMenu($('[data-action=add-audio]')))]]],
     ['จากในรายการ', [
+      ['grid', 'เทมเพลตโชว์สำเร็จรูป', 'ข่าว / พอดแคสต์ / ขายของ / กีฬา / งานพิธี — เพิ่มกราฟิกที่ต้องใช้ให้ครบในครั้งเดียว', () => openTemplateDialog()],
       ['monitor', 'ภาพ Program', 'ภาพที่กำลังออกอากาศ ใส่ในซีน / PIP ได้ เช่น จอทีวีหลังผู้ประกาศ', () => addMixInput('program')],
       ['monitor', 'ภาพ Preview', 'ภาพที่เตรียมไว้ถัดไป เป็นแหล่งภาพ', () => addMixInput('preview')],
       ['camera', 'ฉากเสมือน (Virtual Set)', 'กล้องฉากเขียว + ฉากข่าว / ทอล์กโชว์ / เวที หรือรูปของเราเอง + มุมกล้องเสมือนเคลื่อนนุ่ม', () => openVsetDialog()],
@@ -11691,8 +11919,10 @@ onmessage = async e => {
     if (inp.type === 'replay' && inp.status !== 'live') return inp.rbError ? 'REPLAY · ใช้ไม่ได้' : `REPLAY · พร้อม (${inp.replay.source === 'program' ? 'Program' : byId(inp.replay.source)?.name || '—'})`;
     if (inp.type === 'srt' && inp.status !== 'live') return `${netLabel(inp)} · ${SRT_IN_STATES[inp.srtState] || 'ไม่มีสัญญาณ'}`;
     if (inp.type === 'web' && inp.status !== 'live') return 'WEB · กด 🔗 เพื่อเปิดเว็บและเลือกแท็บ';
+    if (inp.type === 'widget' && inp.status !== 'live') return (inp.wd && inp.wd.error) ? `${WIDGET_KINDS[inp.widget.kind]} · ⚠ ${inp.wd.error}` : `${WIDGET_KINDS[inp.widget.kind]} · กำลังโหลด…`;
     if (inp.type === 'delay' && inp.status !== 'live') return byId(inp.delay.src) ? `กำลังเติมบัฟเฟอร์ ${inp.delay.ms} ms…` : 'แหล่งต้นทางถูกลบ';
     if (inp.status !== 'live') return 'ไม่มีสัญญาณ';
+    if (inp.type === 'widget') { const st = inp.wd || {}; return `${WIDGET_KINDS[inp.widget.kind]}${st.value ? ' · ' + st.value : ''}${st.error ? ' · ⚠ ' + st.error : ''}`; }
     if (inp.type === 'vset') return `${VSETS[inp.vset.set]} · ${VSHOTS[inp.vset.shot].n}${byId(inp.vset.cam) ? '' : ' · ยังไม่เลือกกล้อง'}`;
     if (inp.type === 'lottie') return `LOTTIE · ${Math.round(inp.lot.frames / (inp.lot.fr || 30) * 10) / 10}s${inp.lot.loop ? '' : ' · ครั้งเดียว'}`;
     if (inp.type === 'color') return `COLOUR · ${inp.fill.grad === 'none' ? inp.fill.a.toUpperCase() : 'ไล่สี'}${inp.fill.alpha < 1 ? ` · ${Math.round(inp.fill.alpha * 100)}%` : ''}`;
@@ -11942,7 +12172,7 @@ onmessage = async e => {
      - ไฟล์วิดีโอ/รูปเก็บสำเนาไว้ในพื้นที่ของเบราว์เซอร์ (OPFS) จึงไม่ต้องเลือกไฟล์ใหม่
      - บันทึกเป็นไฟล์ .webmix.json เพื่อย้ายเครื่องหรือเก็บหลายรายการ (ไฟล์สื่อไม่ได้รวมอยู่ในไฟล์ ต้องเลือกใหม่บนเครื่องอื่น) */
 
-  const SHOW_TYPES = ['bars', 'black', 'transparent', 'imgseq', 'photos', 'web', 'color', 'mixsrc', 'url', 'delay', 'vset', 'lottie', 'slate', 'clock', 'image', 'media', 'camera', 'screen', 'wireless', 'srt', 'title', 'guest', 'timer', 'score', 'ticker', 'cg', 'playlist', 'scene', 'replay', 'slides', 'visualizer', 'chat', 'captions'];
+  const SHOW_TYPES = ['bars', 'black', 'transparent', 'imgseq', 'photos', 'web', 'color', 'mixsrc', 'url', 'delay', 'vset', 'lottie', 'widget', 'slate', 'clock', 'image', 'media', 'camera', 'screen', 'wireless', 'srt', 'title', 'guest', 'timer', 'score', 'ticker', 'cg', 'playlist', 'scene', 'replay', 'slides', 'visualizer', 'chat', 'captions'];
   const show = {
     ready: false, last: '', savedAt: 0,
     get name() { return store.get('showName', '') || 'โชว์ใหม่'; },
@@ -11987,6 +12217,7 @@ onmessage = async e => {
           if (i.type === 'mixsrc') o.mix = i.mix;
           if (i.type === 'delay') o.delay = { ...i.delay };
           if (i.type === 'vset') o.vset = { ...i.vset };
+          if (i.type === 'widget') o.widget = { ...i.widget };
           if (i.type === 'lottie') o.lot = { loop: i.lot.loop, speed: i.lot.speed, file: i.fileName || '' };
           if (i.layout) o.layout = JSON.parse(JSON.stringify(i.layout));
           if (i.color) o.color = { ...i.color };
@@ -12187,6 +12418,9 @@ onmessage = async e => {
           if (u) setUrlSource(inp, u);
           break;
         }
+        case 'widget':
+          addInput({ type: 'widget', ...base, status: 'nosignal', widget: sanitizeWidget(raw.widget), wd: {} });
+          break;
         case 'vset': {
           const inp = addInput({ type: 'vset', ...base, status: 'live', vset: sanitizeVset(raw.vset) });
           if (inp.vset.hasImg) return mediaStore.get(inp.id + '-bg').then(f => { if (f && !inp.removed) return setVsetImage(inp, f, false); });
@@ -12352,6 +12586,7 @@ onmessage = async e => {
         </section>
         <div class="sh-h"><b>โชว์ที่บันทึกไว้</b><small>ในเครื่องนี้</small><span class="ml-auto"></span>
           <button type="button" class="btn btn-sm" data-show="import">${icon('folder')}นำเข้าไฟล์ .webmix</button>
+          <button type="button" class="btn btn-sm" data-show="tpl">${icon('grid')}เทมเพลตโชว์</button>
           <button type="button" class="btn btn-sm" data-show="new">${icon('plus')}เริ่มโชว์ใหม่</button></div>
         <div class="sh-grid"></div>
         <div class="sh-sel" hidden><span>เลือก: <b class="sh-sel-name"></b></span><span class="ml-auto"></span>
@@ -12393,6 +12628,7 @@ onmessage = async e => {
             el.onchange = () => { const f = el.files[0]; el.remove(); if (f) show.importFile(f); };
             el.click();
           } else if (act === 'new') show.startNew();
+          else if (act === 'tpl') { close(); openTemplateDialog(); }
           else if (act === 'lib-save' || act === 'lib-saveas') {
             if (act === 'lib-saveas') { show.name = (nameEl.value.trim() || 'โชว์') + ' (สำเนา)'; nameEl.value = show.name; }
             const m = library.save(act === 'lib-saveas');
