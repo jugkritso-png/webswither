@@ -255,6 +255,10 @@
     imgseq: { icon: 'film', label: 'IMAGE SEQUENCE' },
     photos: { icon: 'image', label: 'PHOTOS' },
     web: { icon: 'globe', label: 'WEB' },
+    color: { icon: 'square', label: 'COLOUR' },
+    mixsrc: { icon: 'monitor', label: 'OUTPUT' },
+    url: { icon: 'link', label: 'URL' },
+    delay: { icon: 'clock', label: 'DELAY' },
     slate: { icon: 'type', label: 'SLATE' },
     clock: { icon: 'clock', label: 'CLOCK' },
     image: { icon: 'image', label: 'IMAGE' },
@@ -414,6 +418,7 @@
   }
   function drawThumb(ctx, inp, w, h) {
     if (inp && inp.type === 'transparent') { drawChecker(ctx, w, h); return; }
+    if (inp && inp.type === 'color' && inp.fill.alpha < 1) { drawChecker(ctx, w, h); drawColour(ctx, inp, w, h); return; }
     drawSource(ctx, inp, w, h);
   }
 
@@ -439,6 +444,9 @@
         if (inp.status !== 'live') { drawNoSignal(ctx, w, h, inp); break; }
         fillBlack(ctx, w, h); drawStills(ctx, inp, w, h);
         break;
+      case 'color': fillBlack(ctx, w, h); drawColour(ctx, inp, w, h); break;
+      case 'mixsrc': { const c = outCanvasOf(inp); fillBlack(ctx, w, h); drawFitColored(ctx, inp, c, c.width, c.height, w, h); break; }
+      case 'delay': { const f = inp.status === 'live' && delayFrame(inp); if (!f) { drawNoSignal(ctx, w, h, inp); break; } fillBlack(ctx, w, h); drawFitColored(ctx, inp, f.c, f.c.width, f.c.height, w, h); break; }
       case 'image':
         if (inp.status !== 'live') { drawNoSignal(ctx, w, h, inp); break; }
         fillBlack(ctx, w, h);
@@ -655,6 +663,8 @@
     switch (inp.type) {
       case 'transparent': return;
       case 'imgseq': case 'photos': if (inp.status === 'live') drawStills(ctx, inp, w, h); return;
+      case 'color': drawColour(ctx, inp, w, h); return;
+      case 'mixsrc': case 'delay': drawSource(ctx, inp, w, h); return;
       case 'title': case 'timer': case 'score': case 'ticker': case 'visualizer': case 'chat': case 'captions': drawGraphic(ctx, inp, w, h); return;
       case 'cg': {
         const fallback = inp.cg.onAirSnapshot && cgSceneId === inp.cg.onAirSceneId && !inp.cg.design.scenes.some(scene => scene.id === cgSceneId) ? inp.cg.onAirSnapshot : null;
@@ -818,6 +828,21 @@
       case 'black': return transparent ? { solid: [0, 0, 0, 1] } : { solid: [0, 0, 0, 1] };
       // โปร่งใส: บนเลเยอร์ (Overlay / ซีน / PIP) ไม่วาดอะไร · เป็นภาพหลักของ Program = ดำ
       case 'transparent': return transparent ? null : { solid: [0, 0, 0, 1] };
+      case 'color':
+        return { e: genTexture('co:' + inp.id, JSON.stringify(inp.fill), 64, 36, (c, w, h) => drawColour(c, inp, w, h)), full: true, under: transparent ? null : [0, 0, 0, 1] };
+      case 'mixsrc': {
+        // ภาพเฟรมก่อนหน้าของจอ Program / Preview (แคนวาส 2D) ส่งขึ้น GPU ทุกเฟรม
+        const c = outCanvasOf(inp), e = gpu.entry('mx:' + inp.id);
+        if (e.stamp !== frameNo) { gpu.upload(e, c, c.width, c.height); e.stamp = frameNo; }
+        return { e };
+      }
+      case 'delay': {
+        const f = inp.status === 'live' && delayFrame(inp);
+        if (!f) return noSignal();
+        const e = gpu.entry('dl:' + inp.id);
+        if (e.stamp !== f.t) { gpu.upload(e, f.c, f.c.width, f.c.height); e.stamp = f.t; }
+        return { e };
+      }
       case 'imgseq': case 'photos': {
         if (inp.status !== 'live' || !inp.st.count) return noSignal();
         return { e: genTexture('st:' + inp.id, stillsStamp(inp), GW, GH, (c, w, h) => drawStills(c, inp, w, h)), full: true, under: transparent ? null : [0, 0, 0, 1] };
@@ -1050,6 +1075,7 @@
     stepOverlays(dt);
     stepBackgrounds(now);
     stepStills(now);
+    stepDelays(now);
     if (ftb.level !== ftb.target) {
       const step = dt / settings.duration;
       ftb.level = ftb.target > ftb.level ? Math.min(ftb.target, ftb.level + step) : Math.max(ftb.target, ftb.level - step);
@@ -1508,7 +1534,7 @@
     const editBtns = `<button class="mini" data-card="rename" title="แก้ไขชื่อ / ข้อความ">${icon('edit')}</button><button class="mini danger" data-card="remove" title="ลบแหล่งภาพ">${icon('x')}</button>`;
     inputs.forEach((inp, i) => {
       const meta = TYPE_META[inp.type];
-      const isMedia = inp.type === 'media' && !inp.missing;
+      const isMedia = (inp.type === 'media' || inp.type === 'url') && !inp.missing;
       const canRelink = ['camera', 'screen', 'web', 'media', 'image', 'slides', 'imgseq', 'photos'].includes(inp.type) && (inp.missing || inp.status !== 'live');
       const card = document.createElement('div');
       const tags = inputTags(inp);
@@ -2058,6 +2084,8 @@
     if (forget && (inp.type === 'media' || inp.type === 'image' || inp.type === 'slides')) mediaStore.del(inp.id);
     if (inp.type === 'slides' && inp.pdf) { try { inp.pdf.destroy(); } catch (e) {} inp.pdf = null; }
     if (inp.bm) { for (const b of inp.bm.values()) b.close && b.close(); inp.bm.clear(); }
+    if (inp.hls) { try { inp.hls.destroy(); } catch (e) {} inp.hls = null; }
+    if (inp.ring) inp.ring.length = 0;
     if (forget && (inp.type === 'imgseq' || inp.type === 'photos')) for (let i = 0; i < (inp.storedCount || 0); i++) mediaStore.del(stillKey(inp, i));
     if (inp.type === 'playlist') playlist.dispose(inp, forget);
     if (inp.type === 'replay') replayStop(inp);
@@ -2092,6 +2120,9 @@
     if (inp.type === 'replay') return openReplayDialog(inp);
     if (inp.type === 'slides') return openSlidesDialog(inp);
     if (inp.type === 'imgseq' || inp.type === 'photos') return openStillsDialog(inp);
+    if (inp.type === 'color') return openColourDialog(inp);
+    if (inp.type === 'url') return openUrlDialog(inp);
+    if (inp.type === 'delay') return openDelayDialog(inp);
     if (inp.type === 'visualizer') return openVizDialog(inp);
     if (inp.type === 'chat') return openChatInputDialog(inp);
     if (inp.type === 'captions') return openCaptionsDialog(inp);
@@ -4634,6 +4665,176 @@
     const url = normUrl(r.form.url.value);
     if (!url) { toast('ที่อยู่เว็บไม่ถูกต้อง (ต้องเป็น http หรือ https)', 'warn'); return; }
     await openWebSource(url);
+  }
+
+  /* ------------------------------------------- สีพื้น (Colour) — สีเดียว / ไล่สี / ความโปร่ง */
+  const COLOUR_PRESETS = [['ดำโปร่ง 50%', { a: '#000000', b: '#000000', grad: 'none', alpha: 0.5 }], ['ขาว', { a: '#ffffff', b: '#ffffff', grad: 'none', alpha: 1 }],
+    ['น้ำเงินไล่ดำ', { a: '#1d4ed8', b: '#020617', grad: 'v', alpha: 1 }], ['แดงข่าว', { a: '#b91c1c', b: '#450a0a', grad: 'h', alpha: 1 }], ['เขียวคีย์', { a: '#00b140', b: '#00b140', grad: 'none', alpha: 1 }]];
+  const okHex = c => /^#[0-9a-f]{6}$/i.test(c || '');
+  const sanitizeFill = f => ({ a: okHex(f?.a) ? f.a : '#1d4ed8', b: okHex(f?.b) ? f.b : '#0b0d12', grad: ['none', 'v', 'h', 'radial'].includes(f?.grad) ? f.grad : 'none', alpha: clamp(+(f?.alpha ?? 1), 0, 1) });
+  function drawColour(ctx, inp, w, h) {
+    const f = inp.fill;
+    let paint = f.a;
+    if (f.grad !== 'none') {
+      const g = f.grad === 'radial' ? ctx.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, Math.hypot(w, h) / 2) : ctx.createLinearGradient(0, 0, f.grad === 'h' ? w : 0, f.grad === 'h' ? 0 : h);
+      g.addColorStop(0, f.a); g.addColorStop(1, f.b); paint = g;
+    }
+    ctx.save(); ctx.globalAlpha = f.alpha; ctx.fillStyle = paint; ctx.fillRect(0, 0, w, h); ctx.restore();
+  }
+  async function openColourDialog(inp) {
+    const isNew = !inp, f = sanitizeFill(inp ? inp.fill : { alpha: 1 });
+    const r = await dialog({
+      title: isNew ? 'เพิ่มสีพื้น (Colour)' : `สีพื้น — ${inp.name}`,
+      body: `
+        <label class="field"><span>ชื่อแหล่งภาพ</span><input name="name" class="input" maxlength="40" value="${esc(inp ? inp.name : `COLOUR ${inputs.filter(i => i.type === 'color').length + 1}`)}"></label>
+        <div class="seg col-presets">${COLOUR_PRESETS.map(([l], k) => `<button type="button" data-cp="${k}">${l}</button>`).join('')}</div>
+        <div class="grid-2"><label class="field"><span>สีที่ 1</span><input name="a" type="color" value="${f.a}"></label><label class="field"><span>สีที่ 2 (ไล่สี)</span><input name="b" type="color" value="${f.b}"></label></div>
+        <label class="field"><span>แบบ</span><select name="grad" class="select">${[['none', 'สีเดียว'], ['v', 'ไล่สีบน → ล่าง'], ['h', 'ไล่สีซ้าย → ขวา'], ['radial', 'ไล่สีจากกลาง']].map(([v, l]) => `<option value="${v}" ${v === f.grad ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+        <label class="field"><span>ความทึบ <b class="mono col-alpha">${Math.round(f.alpha * 100)}%</b></span><input name="alpha" type="range" min="0" max="100" value="${Math.round(f.alpha * 100)}"></label>
+        <canvas class="col-prev" width="320" height="180"></canvas>
+        <p class="note">ความทึบต่ำกว่า 100% เมื่อซ้อนบน Overlay / ซีน จะเห็นภาพด้านล่าง เช่น แผ่นดำโปร่งหลังตัวหนังสือ</p>`,
+      actions: [{ label: 'ยกเลิก' }, { label: isNew ? 'เพิ่ม' : 'บันทึก', primary: true, value: 'ok' }],
+      onOpen(modal) {
+        const fm = $('form', modal), cv = $('.col-prev', modal), g = cv.getContext('2d');
+        const read = () => sanitizeFill({ a: fm.a.value, b: fm.b.value, grad: fm.grad.value, alpha: fm.alpha.value / 100 });
+        const prev = () => { const x = read(); $('.col-alpha', modal).textContent = Math.round(x.alpha * 100) + '%'; drawChecker(g, 320, 180); drawColour(g, { fill: x }, 320, 180); };
+        fm.addEventListener('input', prev); fm.addEventListener('change', prev);
+        modal.addEventListener('click', e => { const b = e.target.closest('[data-cp]'); if (!b) return; const p = COLOUR_PRESETS[+b.dataset.cp][1]; fm.a.value = p.a; fm.b.value = p.b; fm.grad.value = p.grad; fm.alpha.value = Math.round(p.alpha * 100); prev(); });
+        prev();
+      }
+    });
+    if (!r || r.value !== 'ok') return null;
+    const fm = r.form, fill = sanitizeFill({ a: fm.a.value, b: fm.b.value, grad: fm.grad.value, alpha: fm.alpha.value / 100 }), name = fm.name.value.trim().slice(0, 40) || 'COLOUR';
+    if (isNew) return addInput({ type: 'color', name, fill });
+    inp.name = name; inp.fill = fill;
+    renderInputs(); refreshSourceSelects(); show.autosave();
+    return inp;
+  }
+
+  /* ------------------------------------------- ภาพ Program / Preview เป็นแหล่งภาพ (แบบ Mix input ของ vMix)
+     อ่านจากจอ Program / Preview ของเฟรมก่อนหน้า — ใส่ในซีน / PIP เช่นจอทีวีหลังผู้ประกาศ (ใส่ Program ซ้อนใน Program = ภาพอุโมงค์แบบ vMix) */
+  const outCanvasOf = inp => inp.mix === 'preview' ? pvwCanvas : pgmCanvas;
+  function addMixInput(which) {
+    const n = inputs.filter(i => i.type === 'mixsrc' && i.mix === which).length;
+    return addInput({ type: 'mixsrc', mix: which, name: which === 'preview' ? `PREVIEW OUT${n ? ' ' + (n + 1) : ''}` : `PROGRAM OUT${n ? ' ' + (n + 1) : ''}`, status: 'live' });
+  }
+
+  /* ------------------------------------------- วิดีโอ / ไลฟ์จากลิงก์ (URL: .mp4 .webm .m3u8)
+     เล่นในเบราว์เซอร์ตรง ๆ (HLS ใช้ hls.js ถ้าเบราว์เซอร์เล่นเองไม่ได้) · เว็บต้นทางต้องอนุญาต CORS ไม่อย่างนั้นภาพจะส่งออกไม่ได้ */
+  let hlsLoading = null;
+  const loadHls = () => hlsLoading || (hlsLoading = new Promise((resolve, reject) => {
+    const el = document.createElement('script');
+    el.src = 'assets/vendor/hls-1.5.20.min.js';
+    el.onload = () => resolve(window.Hls); el.onerror = () => { hlsLoading = null; reject(new Error('โหลดตัวเล่น HLS ไม่สำเร็จ')); };
+    document.head.appendChild(el);
+  }));
+  function setUrlSource(inp, url) {
+    const v = inp.el;
+    if (inp.hls) { try { inp.hls.destroy(); } catch (e) {} inp.hls = null; }
+    inp.url = url;
+    inp.missing = false;
+    setInputStatus(inp, 'nosignal');
+    v.crossOrigin = 'anonymous';
+    const hls = /\.m3u8(\?|#|$)/i.test(url);
+    if (hls && !v.canPlayType('application/vnd.apple.mpegurl')) {
+      loadHls().then(Hls => {
+        if (inp.removed || inp.url !== url) return;
+        if (!Hls.isSupported()) { toast('เบราว์เซอร์นี้เล่น HLS ไม่ได้', 'error'); return; }
+        const h = new Hls({ lowLatencyMode: true, liveSyncDurationCount: 3 });
+        inp.hls = h;
+        h.on(Hls.Events.ERROR, (ev, d) => { if (d.fatal) { setInputStatus(inp, 'nosignal'); if (d.type === Hls.ErrorTypes.NETWORK_ERROR) setTimeout(() => { if (inp.hls === h) h.startLoad(); }, 3000); else h.recoverMediaError(); } });
+        h.loadSource(url); h.attachMedia(v);
+        v.play().catch(() => {});
+      }).catch(e => toast(e.message, 'error'));
+    } else { v.src = url; v.play().catch(() => {}); }
+  }
+  function createUrlInput(props) {
+    const v = document.createElement('video');
+    v.playsInline = true; v.preload = 'auto'; v.loop = true; v.crossOrigin = 'anonymous';
+    pool.appendChild(v);
+    const inp = addInput({ type: 'url', status: 'nosignal', ...props, el: v });
+    v.addEventListener('playing', () => { if (!inp.removed) { setInputStatus(inp, 'live'); const s = $(`#inputs-grid .card[data-id="${inp.id}"] .card-sub`); if (s) s.textContent = cardSub(inp); } });
+    v.addEventListener('error', () => {
+      if (inp.removed || inp.hls || !v.getAttribute('src')) return;
+      setInputStatus(inp, 'nosignal');
+      toast(`เปิดลิงก์ “${inp.name}” ไม่ได้ — ลิงก์อาจผิด ไม่ใช่ไฟล์วิดีโอตรง หรือเว็บไม่อนุญาตให้นำไปใช้ (CORS)`, 'error', 7000);
+    });
+    audio.addElement(inp, v);
+    return inp;
+  }
+  async function openUrlDialog(inp) {
+    const r = await dialog({
+      title: inp ? `วิดีโอจากลิงก์ — ${inp.name}` : 'เพิ่มวิดีโอ / ไลฟ์จากลิงก์ (URL)',
+      body: `
+        <label class="field"><span>ลิงก์วิดีโอ</span><input name="url" class="input mono" placeholder="https://…/live.m3u8 หรือ https://…/clip.mp4" value="${esc(inp ? inp.url : '')}"></label>
+        <label class="field"><span>ชื่อแหล่งภาพ</span><input name="name" class="input" maxlength="40" value="${esc(inp ? inp.name : `URL ${inputs.filter(i => i.type === 'url').length + 1}`)}"></label>
+        <p class="note">ใช้ลิงก์ตรงของวิดีโอ (.mp4 .webm) หรือไลฟ์ HLS (.m3u8) · ลิงก์หน้าเว็บ YouTube / Facebook ใช้ไม่ได้ (ใช้ “เว็บไซต์ (Web Browser)” แทน) · เว็บต้นทางต้องเปิด CORS</p>`,
+      actions: [{ label: 'ยกเลิก' }, { label: inp ? 'บันทึก' : 'เพิ่ม', primary: true, value: 'ok' }]
+    });
+    if (!r || r.value !== 'ok') return null;
+    const url = normUrl(r.form.url.value), name = r.form.name.value.trim().slice(0, 40) || 'URL';
+    if (!url) { toast('ลิงก์ไม่ถูกต้อง (ต้องเป็น http หรือ https)', 'warn'); return null; }
+    if (inp) { inp.name = name; if (url !== inp.url) setUrlSource(inp, url); renderInputs(); refreshSourceSelects(); show.autosave(); return inp; }
+    const n = createUrlInput({ name });
+    setUrlSource(n, url);
+    toast(`กำลังเปิด “${name}”…`, 'info', 3000);
+    return n;
+  }
+
+  /* ------------------------------------------- ภาพหน่วงเวลา (Video Delay)
+     จับภาพแหล่งต้นทางทุกเฟรมลงบัฟเฟอร์วน แล้วแสดงเฟรมที่เก่ากว่า N มิลลิวินาที — แก้ภาพกับเสียงไม่ตรงกัน (เสียงหน่วงได้ที่ FX ของช่องเสียง)
+     ความละเอียดลดลงเมื่อหน่วงนาน เพื่อไม่ให้กินหน่วยความจำ (สูงสุด 5 วินาที) */
+  const DELAY_MAX = 5000;
+  function addDelayInput(srcId, ms) {
+    const src = byId(srcId);
+    return addInput({ type: 'delay', name: `DELAY ${src ? src.name : ''}`.trim().slice(0, 40), status: 'nosignal', delay: { src: srcId, ms: clamp(ms, 40, DELAY_MAX) }, ring: [], ringAt: 0 });
+  }
+  function delaySize(inp) { const k = inp.delay.ms > 1500 ? 360 : 540; return [Math.round(k * W / H / 2) * 2, k]; }
+  function stepDelays(now) {
+    for (const inp of inputs) {
+      if (inp.type !== 'delay') continue;
+      const src = byId(inp.delay.src);
+      if (!src || src === inp || src.type === 'delay') { if (inp.status === 'live') setInputStatus(inp, 'nosignal'); inp.ring.length = 0; continue; }
+      if (now - inp.ringAt < 1000 / settings.fps - 2) continue;
+      inp.ringAt = now;
+      const [w, h] = delaySize(inp), need = Math.ceil(inp.delay.ms / 1000 * settings.fps) + 3;
+      // ใช้ช่องที่เก่าที่สุดซ้ำ (ไม่สร้างแคนวาสใหม่ทุกเฟรม)
+      let slot = inp.ring.length >= need ? inp.ring.shift() : null;
+      while (inp.ring.length > need) inp.ring.shift();
+      if (!slot || slot.c.width !== w || slot.c.height !== h) { const c = document.createElement('canvas'); c.width = w; c.height = h; slot = { c, g: c.getContext('2d') }; }
+      drawSource(slot.g, src, w, h);
+      slot.t = now;
+      inp.ring.push(slot);
+      const ready = inp.ring[0].t <= now - inp.delay.ms;
+      if (ready && inp.status !== 'live') setInputStatus(inp, 'live');
+    }
+  }
+  function delayFrame(inp) {
+    const due = performance.now() - inp.delay.ms;
+    let pick = null;
+    for (const s of inp.ring) { if (s.t <= due) pick = s; else break; }
+    return pick;
+  }
+  async function openDelayDialog(inp) {
+    const srcs = inputs.filter(i => i.type !== 'delay' && i !== inp);
+    if (!srcs.length) { toast('ยังไม่มีแหล่งภาพให้หน่วง', 'warn'); return null; }
+    const cur = inp ? inp.delay : { src: (byId(state.previewId) || srcs[0]).id, ms: 500 };
+    const r = await dialog({
+      title: inp ? `ภาพหน่วงเวลา — ${inp.name}` : 'เพิ่มภาพหน่วงเวลา (Video Delay)',
+      body: `
+        <label class="field"><span>แหล่งภาพต้นทาง</span><select name="src" class="select">${srcs.map(i => `<option value="${i.id}" ${i.id === cur.src ? 'selected' : ''}>${esc(i.name)}</option>`).join('')}</select></label>
+        <label class="field"><span>หน่วงเวลา (มิลลิวินาที) <b class="mono dl-ms">${cur.ms} ms</b></span><input name="ms" type="range" min="40" max="${DELAY_MAX}" step="10" value="${cur.ms}"></label>
+        <p class="note">ใช้แก้ภาพเร็วกว่าเสียง (เช่นกล้องมือถือ / กล้อง IP) — ลองดูปากคนพูดให้ตรงกับเสียง · ถ้าเสียงเร็วกว่าภาพ ให้หน่วงเสียงที่ FX ของช่องเสียงแทน · หน่วงเกิน 1.5 วินาทีภาพจะลดเป็น 360p เพื่อประหยัดหน่วยความจำ</p>`,
+      actions: [{ label: 'ยกเลิก' }, { label: inp ? 'บันทึก' : 'เพิ่ม', primary: true, value: 'ok' }],
+      onOpen(modal) { const fm = $('form', modal); fm.ms.addEventListener('input', () => { $('.dl-ms', modal).textContent = fm.ms.value + ' ms'; if (inp) inp.delay.ms = +fm.ms.value; }); }
+    });
+    if (!r || r.value !== 'ok') { if (inp) inp.delay.ms = cur.ms; return null; }
+    const src = r.form.src.value, ms = clamp(+r.form.ms.value || 500, 40, DELAY_MAX);
+    if (!inp) { const n = addDelayInput(src, ms); toast(`ภาพหน่วง ${ms} ms จาก “${byId(src)?.name}”`, 'success', 3000); return n; }
+    inp.delay = { src, ms };
+    inp.ring.length = 0;
+    renderInputs(); refreshSourceSelects(); show.autosave();
+    return inp;
   }
 
   function addSlidesFiles(files) {
@@ -9478,7 +9679,7 @@ onmessage = async e => {
     const out = [];
     const add = (state, name, detail, fix) => out.push({ state, name, detail, fix });
     const list = settings.destinations.filter(d => d.enabled);
-    const srcs = inputs.filter(i => !['color', 'bars', 'clock', 'black', 'transparent', 'title', 'timer', 'score', 'ticker'].includes(i.type));
+    const srcs = inputs.filter(i => !['color', 'mixsrc', 'delay', 'bars', 'clock', 'black', 'transparent', 'title', 'timer', 'score', 'ticker'].includes(i.type));
     const dead = srcs.filter(i => i.status !== 'live');
     add(dead.length ? 'warn' : 'ok', 'แหล่งภาพทุกตัวมีสัญญาณ', dead.length ? `“${dead.map(i => i.name).slice(0, 3).join('”, “')}” ยังไม่มีสัญญาณ` : `${srcs.length || inputs.length} แหล่ง${inputs.some(i => i.type === 'wireless') ? ` · กล้องมือถือ ${inputs.filter(i => i.type === 'wireless').length} เครื่อง` : ''}`);
     const mics = audio.channels.filter(c => !c.muted && c.kind !== 'player' && c.kind !== 'pad');
@@ -11054,6 +11255,7 @@ onmessage = async e => {
       ['type', 'สไลด์ PDF / PowerPoint', 'เปลี่ยนหน้าด้วย ‹ › ปุ่มลูกศร หรือรีโมตพรีเซนต์', () => pickFiles('application/pdf,.pdf', addSlidesFiles)],
       ['image', 'สไลด์โชว์รูป (Photos)', 'เลือกหลายรูป เปลี่ยนเองทุก N วินาทีแบบจางผ่าน หรือกด ‹ › เอง', () => pickFiles('image/*', files => addStillsFiles('photos', files))],
       ['film', 'ลำดับภาพ (Image Sequence)', 'ไฟล์ PNG เรียงเลข (เช่น frame_0001.png) เล่นเป็นแอนิเมชัน — พื้นโปร่งใสซ้อนบน Overlay ได้', () => pickFiles('image/*', files => addStillsFiles('imgseq', files))],
+      ['link', 'วิดีโอ / ไลฟ์จากลิงก์ (URL)', 'ลิงก์ .mp4 .webm หรือไลฟ์ HLS .m3u8 — ไม่ต้องดาวน์โหลดไฟล์', () => openUrlDialog()],
       ['globe', 'เว็บไซต์ (Web Browser)', 'เปิดเว็บแล้วใช้ภาพและเสียงของหน้าเว็บเป็นแหล่งภาพ (Chrome / Edge บนคอม)', addWebInput]]],
     ['เชื่อมต่อจากที่อื่น', [
       ['phone', 'กล้องมือถือไร้สาย', 'สแกน QR ด้วยมือถืออีกเครื่อง แล้วใช้เป็นกล้อง', showWirelessDialog],
@@ -11073,11 +11275,16 @@ onmessage = async e => {
       ['mic', 'คำบรรยายสด (Captions)', 'แปลงเสียงพูดเป็นตัวหนังสือบนจอแบบเรียลไทม์ ภาษาไทย / อังกฤษ', addCaptionsInput]]],
     ['เสียง (ไม่มีภาพ)', [
       ['music', 'แหล่งเสียง', 'ไมค์ เครื่องเล่นเพลง เสียงเอฟเฟกต์ เสียงจากคอม วิทยุออนไลน์', () => setTimeout(() => openAudioAddMenu($('[data-action=add-audio]')))]]],
+    ['จากในรายการ', [
+      ['monitor', 'ภาพ Program', 'ภาพที่กำลังออกอากาศ ใส่ในซีน / PIP ได้ เช่น จอทีวีหลังผู้ประกาศ', () => addMixInput('program')],
+      ['monitor', 'ภาพ Preview', 'ภาพที่เตรียมไว้ถัดไป เป็นแหล่งภาพ', () => addMixInput('preview')],
+      ['clock', 'ภาพหน่วงเวลา (Video Delay)', 'หน่วงภาพจากแหล่งอื่น 0.04–5 วินาที แก้ภาพกับเสียงไม่ตรงกัน', () => openDelayDialog()]]],
     ['ภาพพื้นฐาน', [
       ['type', 'Slate ข้อความ', 'จอข้อความ เช่น “เริ่มเร็ว ๆ นี้”', () => addGenerator('slate')],
       ['clock', 'นาฬิกา', 'เวลาปัจจุบันเต็มจอ', () => addGenerator('clock')],
       ['bars', 'Color Bars', 'แถบสีสำหรับทดสอบภาพ', () => addGenerator('bars')],
       ['square', 'Black', 'จอดำ', () => addGenerator('black')],
+      ['square', 'สีพื้น (Colour)', 'สีเดียว / ไล่สี / ปรับความโปร่ง — เช่น แผ่นดำโปร่งหลังตัวหนังสือ', () => openColourDialog()],
       ['checker', 'โปร่งใส (Transparent)', 'แหล่งว่างไม่มีภาพ — ใช้เคลียร์ Overlay / เว้นช่องในซีน / ซ้อนแล้วเห็นภาพด้านล่าง', () => addGenerator('transparent')]]]
   ];
   function openAddMenu(anchor, groups = ADD_GROUPS(), title = 'เพิ่มแหล่งภาพ') {
@@ -11185,7 +11392,12 @@ onmessage = async e => {
     if (inp.type === 'replay' && inp.status !== 'live') return inp.rbError ? 'REPLAY · ใช้ไม่ได้' : `REPLAY · พร้อม (${inp.replay.source === 'program' ? 'Program' : byId(inp.replay.source)?.name || '—'})`;
     if (inp.type === 'srt' && inp.status !== 'live') return `${netLabel(inp)} · ${SRT_IN_STATES[inp.srtState] || 'ไม่มีสัญญาณ'}`;
     if (inp.type === 'web' && inp.status !== 'live') return 'WEB · กด 🔗 เพื่อเปิดเว็บและเลือกแท็บ';
+    if (inp.type === 'delay' && inp.status !== 'live') return byId(inp.delay.src) ? `กำลังเติมบัฟเฟอร์ ${inp.delay.ms} ms…` : 'แหล่งต้นทางถูกลบ';
     if (inp.status !== 'live') return 'ไม่มีสัญญาณ';
+    if (inp.type === 'color') return `COLOUR · ${inp.fill.grad === 'none' ? inp.fill.a.toUpperCase() : 'ไล่สี'}${inp.fill.alpha < 1 ? ` · ${Math.round(inp.fill.alpha * 100)}%` : ''}`;
+    if (inp.type === 'mixsrc') return inp.mix === 'preview' ? 'ภาพ PREVIEW' : 'ภาพ PROGRAM';
+    if (inp.type === 'delay') return `หน่วง ${inp.delay.ms} ms · ${byId(inp.delay.src)?.name || '—'}`;
+    if (inp.type === 'url') { try { return 'URL · ' + new URL(inp.url).hostname.replace(/^www\./, ''); } catch (e) { return 'URL'; } }
     if (inp.type === 'imgseq') return `SEQ · ${inp.st.index + 1}/${inp.st.count} · ${inp.st.fps} fps${inp.st.loop ? '' : ' · ครั้งเดียว'}`;
     if (inp.type === 'photos') return `PHOTOS · ${inp.st.index + 1}/${inp.st.count} · ${inp.st.sec}s`;
     if (inp.type === 'web') { try { return 'WEB · ' + new URL(inp.url).hostname.replace(/^www\./, ''); } catch (e) { return 'WEB'; } }
@@ -11429,7 +11641,7 @@ onmessage = async e => {
      - ไฟล์วิดีโอ/รูปเก็บสำเนาไว้ในพื้นที่ของเบราว์เซอร์ (OPFS) จึงไม่ต้องเลือกไฟล์ใหม่
      - บันทึกเป็นไฟล์ .webmix.json เพื่อย้ายเครื่องหรือเก็บหลายรายการ (ไฟล์สื่อไม่ได้รวมอยู่ในไฟล์ ต้องเลือกใหม่บนเครื่องอื่น) */
 
-  const SHOW_TYPES = ['bars', 'black', 'transparent', 'imgseq', 'photos', 'web', 'slate', 'clock', 'image', 'media', 'camera', 'screen', 'wireless', 'srt', 'title', 'guest', 'timer', 'score', 'ticker', 'cg', 'playlist', 'scene', 'replay', 'slides', 'visualizer', 'chat', 'captions'];
+  const SHOW_TYPES = ['bars', 'black', 'transparent', 'imgseq', 'photos', 'web', 'color', 'mixsrc', 'url', 'delay', 'slate', 'clock', 'image', 'media', 'camera', 'screen', 'wireless', 'srt', 'title', 'guest', 'timer', 'score', 'ticker', 'cg', 'playlist', 'scene', 'replay', 'slides', 'visualizer', 'chat', 'captions'];
   const show = {
     ready: false, last: '', savedAt: 0,
     get name() { return store.get('showName', '') || 'โชว์ใหม่'; },
@@ -11469,7 +11681,10 @@ onmessage = async e => {
           if (i.type === 'captions') o.cap = { ...i.cap };
           if (i.type === 'slides') o.slides = { page: i.slides.page, file: i.fileName || '' };
           if (i.type === 'imgseq' || i.type === 'photos') { const { start, since, held, prev, playing, subAt, ...keep } = i.st; o.st = { ...keep, count: i.storedCount || 0 }; }
-          if (i.type === 'web') o.url = i.url || '';
+          if (i.type === 'web' || i.type === 'url') o.url = i.url || '';
+          if (i.type === 'color') o.fill = { ...i.fill };
+          if (i.type === 'mixsrc') o.mix = i.mix;
+          if (i.type === 'delay') o.delay = { ...i.delay };
           if (i.layout) o.layout = JSON.parse(JSON.stringify(i.layout));
           if (i.color) o.color = { ...i.color };
           if (typeof i.vx === 'number' && i.vx !== 0.5) o.vx = i.vx;
@@ -11656,6 +11871,22 @@ onmessage = async e => {
         case 'web':
           // เว็บต้องเลือกแท็บใหม่ทุกครั้งที่เปิดโชว์ (เบราว์เซอร์ไม่ให้จับภาพเอง) — กด 🔗 บนการ์ด
           addInput({ type: 'web', ...base, url: normUrl(raw.url), el: createVideo(null), status: 'nosignal', missing: true });
+          break;
+        case 'color':
+          addInput({ type: 'color', ...base, fill: sanitizeFill(raw.fill) });
+          break;
+        case 'mixsrc':
+          addInput({ type: 'mixsrc', ...base, mix: raw.mix === 'preview' ? 'preview' : 'program', status: 'live' });
+          break;
+        case 'url': {
+          const u = normUrl(raw.url);
+          const inp = createUrlInput({ ...base });
+          if (u) setUrlSource(inp, u);
+          break;
+        }
+        case 'delay':
+          // แหล่งต้นทางอาจยังไม่ถูกสร้าง (ลำดับในโชว์) — อ้างด้วย id จึงต่อกันเองเมื่อครบ
+          addInput({ type: 'delay', ...base, status: 'nosignal', delay: { src: String(raw.delay?.src || ''), ms: clamp(+raw.delay?.ms || 500, 40, DELAY_MAX) }, ring: [], ringAt: 0 });
           break;
         case 'imgseq': case 'photos': {
           const s0 = raw.st || {}, n = clamp(+s0.count || 0, 0, STILLS[raw.type].max);
