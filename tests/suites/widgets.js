@@ -40,7 +40,9 @@ const results = []; const ok = (n, c, x = '') => results.push(`${c ? 'PASS' : 'F
 
   // วาดบน Program มุมซ้ายล่าง (พื้นโปร่งใส — มุมอื่นยังเป็นภาพเดิม)
   await p.evaluate(() => { const w = window.webmix; w.state.programId = w.inputs.find(i => i.type === 'bars').id; });
-  const c = p.locator(`#inputs-grid .card[data-id="${w1.id}"]`); await c.hover(); await c.locator('[data-card-ovl="0"]').click(); await p.waitForTimeout(800);
+  const c = p.locator(`#inputs-grid .card[data-id="${w1.id}"]`); await c.hover(); await c.locator('[data-card-ovl="0"]').click();
+  // รอจนแผงวาดเสร็จ (CI ช้ากว่าเครื่อง)
+  await p.waitForFunction(() => { const c = document.querySelector('#pgm-canvas'); return Array.from(c.getContext('2d').getImageData(Math.floor(c.width * 0.1), Math.floor(c.height * 0.88), 1, 1).data.slice(0, 3)).every(v => v < 70); }, null, { timeout: 8000 }).catch(() => {});
   const px = (x, y) => p.evaluate(([x, y]) => { const c = document.querySelector('#pgm-canvas'); return Array.from(c.getContext('2d').getImageData(Math.floor(c.width * x), Math.floor(c.height * y), 1, 1).data.slice(0, 3)); }, [x, y]);
   const panel = await px(0.1, 0.88), top = await px(0.1, 0.1);
   ok('widget panel drawn bottom-left over the picture', panel.every(v => v < 70) && top.some(v => v > 150), JSON.stringify({ panel, top }));
