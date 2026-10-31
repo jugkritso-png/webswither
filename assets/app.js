@@ -252,6 +252,9 @@
     bars: { icon: 'bars', label: 'BARS' },
     black: { icon: 'square', label: 'BLACK' },
     transparent: { icon: 'checker', label: 'TRANSPARENT' },
+    imgseq: { icon: 'film', label: 'IMAGE SEQUENCE' },
+    photos: { icon: 'image', label: 'PHOTOS' },
+    web: { icon: 'globe', label: 'WEB' },
     slate: { icon: 'type', label: 'SLATE' },
     clock: { icon: 'clock', label: 'CLOCK' },
     image: { icon: 'image', label: 'IMAGE' },
@@ -432,6 +435,10 @@
         drawFitColored(ctx, inp, c, c.width, c.height, w, h);
         break;
       }
+      case 'imgseq': case 'photos':
+        if (inp.status !== 'live') { drawNoSignal(ctx, w, h, inp); break; }
+        fillBlack(ctx, w, h); drawStills(ctx, inp, w, h);
+        break;
       case 'image':
         if (inp.status !== 'live') { drawNoSignal(ctx, w, h, inp); break; }
         fillBlack(ctx, w, h);
@@ -647,6 +654,7 @@
   function drawSourceT(ctx, inp, w, h, cgSceneId) {
     switch (inp.type) {
       case 'transparent': return;
+      case 'imgseq': case 'photos': if (inp.status === 'live') drawStills(ctx, inp, w, h); return;
       case 'title': case 'timer': case 'score': case 'ticker': case 'visualizer': case 'chat': case 'captions': drawGraphic(ctx, inp, w, h); return;
       case 'cg': {
         const fallback = inp.cg.onAirSnapshot && cgSceneId === inp.cg.onAirSceneId && !inp.cg.design.scenes.some(scene => scene.id === cgSceneId) ? inp.cg.onAirSnapshot : null;
@@ -810,6 +818,10 @@
       case 'black': return transparent ? { solid: [0, 0, 0, 1] } : { solid: [0, 0, 0, 1] };
       // โปร่งใส: บนเลเยอร์ (Overlay / ซีน / PIP) ไม่วาดอะไร · เป็นภาพหลักของ Program = ดำ
       case 'transparent': return transparent ? null : { solid: [0, 0, 0, 1] };
+      case 'imgseq': case 'photos': {
+        if (inp.status !== 'live' || !inp.st.count) return noSignal();
+        return { e: genTexture('st:' + inp.id, stillsStamp(inp), GW, GH, (c, w, h) => drawStills(c, inp, w, h)), full: true, under: transparent ? null : [0, 0, 0, 1] };
+      }
       case 'bars': return { e: genTexture('g:' + inp.id, 'bars', GW, GH, drawBars), full: true };
       case 'slate': case 'clock':
         return { e: genTexture('g:' + inp.id, `${inp.text}|${sec}`, GW, GH, (c, w, h) => drawSource(c, inp, w, h)), full: true };
@@ -1037,6 +1049,7 @@
     stepTransition(now);
     stepOverlays(dt);
     stepBackgrounds(now);
+    stepStills(now);
     if (ftb.level !== ftb.target) {
       const step = dt / settings.duration;
       ftb.level = ftb.target > ftb.level ? Math.min(ftb.target, ftb.level + step) : Math.max(ftb.target, ftb.level - step);
@@ -1496,7 +1509,7 @@
     inputs.forEach((inp, i) => {
       const meta = TYPE_META[inp.type];
       const isMedia = inp.type === 'media' && !inp.missing;
-      const canRelink = ['camera', 'screen', 'media', 'image', 'slides'].includes(inp.type) && (inp.missing || inp.status !== 'live');
+      const canRelink = ['camera', 'screen', 'web', 'media', 'image', 'slides', 'imgseq', 'photos'].includes(inp.type) && (inp.missing || inp.status !== 'live');
       const card = document.createElement('div');
       const tags = inputTags(inp);
       card.className = 'card' + (inp.status !== 'live' ? ' no-signal' : '') + (tags.length ? ' has-tag' : '') + (isSelected(inp.id) ? ' is-selected' : '');
@@ -1520,6 +1533,10 @@
               <button class="mini" data-card="play" title="เล่น / หยุดชั่วคราว">${icon(inp.el.paused ? 'play' : 'pause')}</button>
               <button class="mini" data-card="restart" title="เล่นใหม่ตั้งแต่ต้น">${icon('restart')}</button>
               <button class="mini ${inp.el.loop ? 'is-on' : ''}" data-card="loop" title="เล่นวนซ้ำ">${icon('repeat')}</button>` : ''}
+            ${(inp.type === 'imgseq' || inp.type === 'photos') && inp.st.count ? `
+              ${inp.type === 'photos' ? '<button class="mini txt" data-card="qprev" title="รูปก่อนหน้า">‹</button>' : ''}
+              <button class="mini ${inp.st.playing ? 'is-on' : ''}" data-card="qplay" title="เล่น / หยุดชั่วคราว">${icon(inp.st.playing ? 'pause' : 'play')}</button>
+              ${inp.type === 'photos' ? '<button class="mini txt" data-card="qnext" title="รูปถัดไป">›</button>' : '<button class="mini" data-card="qrestart" title="เล่นใหม่ตั้งแต่เฟรมแรก">' + icon('restart') + '</button>'}` : ''}
             ${inp.type === 'slides' && inp.slides.count ? `
               <button class="mini txt" data-card="slprev" title="หน้าก่อนหน้า (← / Page Up)">‹</button>
               <button class="mini txt" data-card="slnext" title="หน้าถัดไป (→ / Page Down)">›</button>` : ''}
@@ -1557,7 +1574,7 @@
   }
 
   // กรอบครอปแนวตั้งบนการ์ด: กว้างตามสัดส่วนที่เห็นจริง · ลากเพื่อเลื่อนตำแหน่ง (inp.vx)
-  const VCROP_TYPES = ['camera', 'screen', 'media', 'wireless', 'guest', 'srt', 'image', 'replay', 'playlist', 'slides'];
+  const VCROP_TYPES = ['camera', 'screen', 'web', 'imgseq', 'photos', 'media', 'wireless', 'guest', 'srt', 'image', 'replay', 'playlist', 'slides'];
   const srcAspect = inp => { const e = inp.showImg || inp.el; const w = e && (e.videoWidth || e.naturalWidth), h = e && (e.videoHeight || e.naturalHeight); return w && h ? w / h : 16 / 9; };
   const vcropFrac = inp => clamp((W / H) / srcAspect(inp), 0.05, 1);
   function placeVcrops() {
@@ -1630,6 +1647,9 @@
       else if (act === 'rcap') replayCapture(inp);
       else if (act === 'cap') { inp.capRun?.on ? captionStop(inp) : captionStart(inp); renderInputs(); }
       else if (act === 'slprev' || act === 'slnext') slideGo(inp, inp.slides.page + (act === 'slnext' ? 1 : -1));
+      else if (act === 'qplay') stillsPlay(inp);
+      else if (act === 'qprev' || act === 'qnext') stillsGo(inp, inp.st.index + (act === 'qnext' ? 1 : -1));
+      else if (act === 'qrestart') { stillsGo(inp, 0); stillsPlay(inp, true); }
       else if (act === 'rspd') { const i = REPLAY_SPEEDS.indexOf(inp.replay.speed); inp.replay.speed = REPLAY_SPEEDS[(i + 1) % REPLAY_SPEEDS.length]; inp.el.playbackRate = inp.replay.speed; actionBtn.textContent = speedLabel(inp.replay.speed); }
       return;
     }
@@ -1986,6 +2006,7 @@
     if (inp.peerId && inp.type === 'wireless') wireless.release(inp.peerId);
     if (inp.type === 'media' || inp.type === 'image') mediaStore.del(inp.id);
     if (inp.type === 'playlist') for (const it of inp.list.items) mediaStore.del(it.key);
+    if (inp.type === 'imgseq' || inp.type === 'photos') for (let i = 0; i < (inp.storedCount || 0); i++) mediaStore.del(stillKey(inp, i));
   }
   function undoRemoveInput(raw, was) {
     if (byId(raw.id)) return;
@@ -2036,6 +2057,8 @@
     if (inp.type === 'srt') closeSrtInput(inp);
     if (forget && (inp.type === 'media' || inp.type === 'image' || inp.type === 'slides')) mediaStore.del(inp.id);
     if (inp.type === 'slides' && inp.pdf) { try { inp.pdf.destroy(); } catch (e) {} inp.pdf = null; }
+    if (inp.bm) { for (const b of inp.bm.values()) b.close && b.close(); inp.bm.clear(); }
+    if (forget && (inp.type === 'imgseq' || inp.type === 'photos')) for (let i = 0; i < (inp.storedCount || 0); i++) mediaStore.del(stillKey(inp, i));
     if (inp.type === 'playlist') playlist.dispose(inp, forget);
     if (inp.type === 'replay') replayStop(inp);
     bgStop(inp);
@@ -2068,6 +2091,7 @@
     if (inp.type === 'scene') return openSceneDialog(inp);
     if (inp.type === 'replay') return openReplayDialog(inp);
     if (inp.type === 'slides') return openSlidesDialog(inp);
+    if (inp.type === 'imgseq' || inp.type === 'photos') return openStillsDialog(inp);
     if (inp.type === 'visualizer') return openVizDialog(inp);
     if (inp.type === 'chat') return openChatInputDialog(inp);
     if (inp.type === 'captions') return openCaptionsDialog(inp);
@@ -2383,6 +2407,8 @@
       return openCameraDialog(inp);
     }
     if (inp.type === 'screen') return addScreen(inp);
+    if (inp.type === 'web') return openWebSource(inp.url || 'about:blank', inp);
+    if (inp.type === 'imgseq' || inp.type === 'photos') return pickFiles('image/*', files => { const imgs = files.filter(f => /^image\//.test(f.type) || /\.(png|jpe?g|gif|webp|avif|bmp)$/i.test(f.name)).sort(natSort); if (imgs.length && !inp.removed) setStillsFiles(inp, imgs, true); });
     if (inp.type === 'slides') return pickFiles('application/pdf,.pdf', files => { if (!inp.removed) loadSlides(inp, files[0], true); });
     if (inp.type === 'media' || inp.type === 'image') {
       const el = document.createElement('input');
@@ -4423,6 +4449,193 @@
     slideGo(inp, inp.slides.page + d);
     return true;
   }
+  /* ------------------------------------------- ลำดับภาพ (Image Sequence) + สไลด์โชว์รูป (Photos)
+     ไฟล์รูปเก็บในเบราว์เซอร์ (mediaStore) คีย์ `<id>-<n>` · ถอดรหัสเป็น ImageBitmap เฉพาะเฟรมรอบ ๆ ตำแหน่งปัจจุบัน
+     ลำดับภาพ: เล่นตาม fps (PNG โปร่งใสซ้อนบนภาพอื่นได้) · สไลด์โชว์: เปลี่ยนรูปทุก N วินาที แบบจางผ่าน */
+  const STILLS = { imgseq: { max: 900, ahead: 10, behind: 1 }, photos: { max: 300, ahead: 1, behind: 1 } };
+  const natSort = (a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
+  const stillKey = (inp, n) => `${inp.id}-${n}`;
+  function createStillsInput(type, props) {
+    const st = type === 'imgseq'
+      ? { count: 0, fps: settings.fps >= 50 ? 25 : settings.fps, loop: true, playing: true, index: 0, start: performance.now(), held: 0, ...(props.st || {}) }
+      : { count: 0, sec: 5, fade: 600, loop: true, playing: true, index: 0, since: performance.now(), prev: -1, ...(props.st || {}) };
+    delete props.st;
+    return addInput({ type, status: 'nosignal', ...props, st, files: [], bm: new Map(), bmBusy: new Map() });
+  }
+  async function setStillsFiles(inp, files, store) {
+    const lim = STILLS[inp.type].max;
+    if (files.length > lim) toast(`ใช้ได้สูงสุด ${lim} ไฟล์ — เอาเฉพาะ ${lim} ไฟล์แรก`, 'warn', 5000);
+    files = files.slice(0, lim);
+    for (const b of inp.bm.values()) b.close && b.close();
+    inp.bm.clear();
+    inp.files = files;
+    inp.st.count = files.length;
+    inp.st.index = Math.min(inp.st.index, Math.max(0, files.length - 1));
+    inp.st.start = inp.st.since = performance.now();
+    inp.missing = false;
+    if (store) {
+      let fail = false;
+      await Promise.all(files.map((f, i) => mediaStore.put(stillKey(inp, i), f).then(ok => { if (!ok) fail = true; })));
+      if (fail && !inp.removed) toast(`พื้นที่ในเบราว์เซอร์ไม่พอเก็บรูปของ “${inp.name}” ทั้งหมด — เปิดหน้าใหม่แล้วอาจต้องเลือกรูปอีกครั้ง`, 'warn', 7000);
+      for (let i = files.length; i < (inp.storedCount || 0); i++) mediaStore.del(stillKey(inp, i));
+    }
+    inp.storedCount = files.length;
+    await decodeStill(inp, inp.st.index);
+    if (inp.removed) return;
+    setInputStatus(inp, inp.bm.size ? 'live' : 'nosignal');
+    renderInputs();
+  }
+  // ถอดรหัสรูปหนึ่งเฟรม (ย่อให้ไม่เกินขนาดเอาต์พุต)
+  function decodeStill(inp, n) {
+    if (inp.bm.has(n) || !inp.files[n]) return Promise.resolve();
+    if (inp.bmBusy.has(n)) return inp.bmBusy.get(n);
+    const job = (async () => {
+      let b = await createImageBitmap(inp.files[n]);
+      const lim = Math.min(W, 1920);
+      if (b.width > lim) { const r = await createImageBitmap(b, { resizeWidth: lim, resizeHeight: Math.round(b.height * lim / b.width), resizeQuality: 'high' }); b.close(); b = r; }
+      if (inp.removed) { b.close(); return; }
+      inp.bm.set(n, b);
+    })().catch(() => {}).finally(() => inp.bmBusy.delete(n));
+    inp.bmBusy.set(n, job);
+    return job;
+  }
+  // ทุกเฟรม: เลื่อนตำแหน่งตามเวลา + เตรียมเฟรมถัดไป + ทิ้งเฟรมที่ไกลแล้ว
+  function stepStills(now) {
+    for (const inp of inputs) {
+      if ((inp.type !== 'imgseq' && inp.type !== 'photos') || !inp.st.count) continue;
+      const st = inp.st, n = st.count, cfg = STILLS[inp.type];
+      if (inp.type === 'imgseq' && st.playing) {
+        let f = Math.floor((now - st.start) / 1000 * st.fps) + st.held;
+        if (st.loop) f = ((f % n) + n) % n;
+        else if (f >= n) { f = n - 1; st.playing = false; st.held = f; paintStillsCard(inp); }
+        st.index = f;
+        if (!st.subAt || now - st.subAt > 250) { st.subAt = now; const sub = $(`#inputs-grid .card[data-id="${inp.id}"] .card-sub`); if (sub) sub.textContent = cardSub(inp); }
+      } else if (inp.type === 'photos' && st.playing && n > 1 && now - st.since >= st.sec * 1000) {
+        stillsGo(inp, st.index + 1, now);
+      }
+      const keep = new Set();
+      for (let d = -cfg.behind; d <= cfg.ahead; d++) { const k = st.loop ? ((st.index + d) % n + n) % n : st.index + d; if (k >= 0 && k < n) keep.add(k); }
+      if (inp.type === 'photos' && st.prev >= 0) keep.add(st.prev);
+      for (const k of keep) decodeStill(inp, k);
+      for (const [k, b] of inp.bm) if (!keep.has(k)) { b.close && b.close(); inp.bm.delete(k); }
+    }
+  }
+  function stillsGo(inp, i, now = performance.now()) {
+    const st = inp.st, n = st.count;
+    if (!n) return;
+    if (!st.loop && (i >= n || i < 0)) { if (inp.type === 'photos') st.playing = false; i = clamp(i, 0, n - 1); }
+    i = ((i % n) + n) % n;
+    if (inp.type === 'photos') { if (i !== st.index) st.prev = st.index; st.since = now; }
+    else { st.held = i; st.start = now; }
+    st.index = i;
+    paintStillsCard(inp);
+  }
+  // รูปที่จะวาดตอนนี้: { a, b, t } — สไลด์โชว์ระหว่างจาง: a = รูปก่อนหน้า, b = รูปใหม่, t = 0–1
+  function stillsFrame(inp) {
+    const st = inp.st;
+    let cur = inp.bm.get(st.index);
+    if (!cur) { for (let d = 1; d <= 8 && !cur; d++) cur = inp.bm.get(st.index - d) || inp.bm.get(((st.index - d) % st.count + st.count) % st.count); }
+    if (inp.type === 'photos' && st.prev >= 0 && st.fade > 0) {
+      const t = Math.min(1, (performance.now() - st.since) / st.fade), prev = inp.bm.get(st.prev);
+      if (t < 1 && prev && inp.bm.get(st.index)) return { a: prev, b: inp.bm.get(st.index), t };
+      if (t >= 1) st.prev = -1;
+    }
+    return { a: cur || null, b: null, t: 1 };
+  }
+  function drawStills(ctx, inp, w, h) {
+    const f = stillsFrame(inp);
+    const fit = b => drawFitColored(ctx, inp, b, b.width, b.height, w, h);
+    if (f.b) { if (f.a) fit(f.a); ctx.save(); ctx.globalAlpha = f.t; fit(f.b); ctx.restore(); }
+    else if (f.a) fit(f.a);
+  }
+  const stillsStamp = inp => { const f = stillsFrame(inp); return `${inp.st.index}|${f.b ? f.t.toFixed(2) : 1}|${!!f.a}|${JSON.stringify(inp.color || '')}`; };
+  function paintStillsCard(inp) {
+    const card = $(`#inputs-grid .card[data-id="${inp.id}"]`);
+    if (!card) return;
+    const sub = $('.card-sub', card); if (sub) sub.textContent = cardSub(inp);
+    const pb = $('[data-card="qplay"]', card); if (pb) { pb.classList.toggle('is-on', inp.st.playing); pb.innerHTML = icon(inp.st.playing ? 'pause' : 'play'); }
+  }
+  function stillsPlay(inp, on) {
+    const st = inp.st, now = performance.now();
+    if (on === undefined) on = !st.playing;
+    if (inp.type === 'imgseq') {
+      if (on) { if (!st.loop && st.index >= st.count - 1) st.held = 0; else st.held = st.index; st.start = now; }
+      else st.held = st.index;
+    } else if (on) st.since = now;
+    st.playing = on;
+    paintStillsCard(inp);
+  }
+  function addStillsFiles(type, files) {
+    const imgs = files.filter(f => /^image\//.test(f.type) || /\.(png|jpe?g|gif|webp|avif|bmp)$/i.test(f.name)).sort(natSort);
+    if (!imgs.length) { toast('ไม่พบไฟล์รูป — รองรับ PNG JPG WebP GIF', 'warn'); return; }
+    const base = (imgs[0].name || '').replace(/[_\-. ]*\d+\.[^.]+$/, '').replace(/\.[^.]+$/, '').slice(0, 24);
+    const n = inputs.filter(i => i.type === type).length + 1;
+    const inp = createStillsInput(type, { name: type === 'imgseq' ? (base || `SEQUENCE ${n}`).toUpperCase() : `PHOTOS ${n}` });
+    setStillsFiles(inp, imgs, true).then(() => {
+      if (inp.removed) return;
+      toast(type === 'imgseq' ? `ลำดับภาพ ${inp.st.count} เฟรม @ ${inp.st.fps} fps — ซ้อนบน Overlay ได้ (PNG โปร่งใส)` : `สไลด์โชว์ ${inp.st.count} รูป เปลี่ยนทุก ${inp.st.sec} วินาที — กด ‹ › บนการ์ดเพื่อเปลี่ยนเอง`, 'success', 5000);
+    });
+  }
+  async function openStillsDialog(inp) {
+    const st = inp.st, seq = inp.type === 'imgseq';
+    const r = await dialog({
+      title: `${seq ? 'ลำดับภาพ' : 'สไลด์โชว์รูป'} — ${inp.name}`,
+      body: `
+        <label class="field"><span>ชื่อแหล่งภาพ</span><input name="name" class="input" maxlength="40" value="${esc(inp.name)}"></label>
+        ${seq ? `<label class="field"><span>เฟรมเรตของลำดับภาพ (fps)</span><input name="fps" class="input mono" type="number" min="1" max="60" value="${st.fps}"></label>`
+          : `<div class="grid-2"><label class="field"><span>เปลี่ยนรูปทุก (วินาที)</span><input name="sec" class="input mono" type="number" min="1" max="600" step="0.5" value="${st.sec}"></label>
+             <label class="field"><span>จางผ่าน (มิลลิวินาที)</span><input name="fade" class="input mono" type="number" min="0" max="5000" step="100" value="${st.fade}"></label></div>`}
+        <label class="check"><input type="checkbox" name="loop" ${st.loop ? 'checked' : ''}> ${seq ? 'เล่นวนซ้ำ (ไม่ติ๊ก = เล่นครั้งเดียวแล้วค้างที่เฟรมสุดท้าย)' : 'วนกลับไปรูปแรก'}</label>
+        <p class="note">${st.count} ${seq ? 'เฟรม' : 'รูป'} · <button type="button" class="btn btn-sm" data-st="pick">เลือกไฟล์ใหม่…</button></p>`,
+      actions: [{ label: 'ยกเลิก' }, { label: 'บันทึก', primary: true, value: 'ok' }],
+      onOpen(modal) { $('[data-st="pick"]', modal).addEventListener('click', () => pickFiles('image/*', files => { const imgs = files.filter(f => /^image\//.test(f.type) || /\.(png|jpe?g|gif|webp|avif|bmp)$/i.test(f.name)).sort(natSort); if (imgs.length) setStillsFiles(inp, imgs, true); })); }
+    });
+    if (!r || r.value !== 'ok' || inp.removed) return;
+    const f = r.form;
+    inp.name = f.name.value.trim().slice(0, 40) || inp.name;
+    st.loop = f.loop.checked;
+    if (seq) { const v = clamp(+f.fps.value || st.fps, 1, 60); if (v !== st.fps) { st.held = st.index; st.start = performance.now(); st.fps = v; } }
+    else { st.sec = clamp(+f.sec.value || st.sec, 1, 600); st.fade = clamp(+f.fade.value || 0, 0, 5000); }
+    renderInputs(); refreshSourceSelects(); show.autosave();
+  }
+
+  /* ------------------------------------------- เว็บเบราว์เซอร์ (Web Browser)
+     เบราว์เซอร์ไม่ให้เว็บอ่านภาพของเว็บอื่นตรง ๆ จึงเปิดเว็บในแท็บใหม่ แล้วจับภาพแท็บนั้น (เลือกแท็บในหน้าต่างแชร์)
+     ได้ทั้งภาพและเสียงของเว็บ · เปิดโชว์ใหม่ = กด 🔗 เพื่อเปิดเว็บเดิมแล้วเลือกแท็บอีกครั้ง */
+  const normUrl = u => { u = String(u || '').trim(); if (!u) return ''; if (!/^[a-z][a-z0-9+.-]*:/i.test(u)) u = 'https://' + u; try { const x = new URL(u); return /^https?:$/.test(x.protocol) ? x.href : ''; } catch (e) { return ''; } };
+  async function openWebSource(url, target) {
+    if (!navigator.mediaDevices?.getDisplayMedia) { toast('เบราว์เซอร์นี้จับภาพแท็บไม่ได้ — ใช้ Chrome หรือ Edge บนคอมพิวเตอร์', 'error', 6000); return; }
+    const win = window.open(url, '_blank', 'noopener');
+    toast('เลือกแท็บของเว็บนี้ในหน้าต่างแชร์ (แท็บ Chrome) และเปิด “แชร์เสียงของแท็บ” ถ้าต้องการเสียง', 'info', 8000);
+    try {
+      const stream = await navigator.mediaDevices.getDisplayMedia({
+        video: { displaySurface: 'browser', width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30 } },
+        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+        preferCurrentTab: false, selfBrowserSurface: 'exclude', surfaceSwitching: 'include', systemAudio: 'exclude'
+      });
+      if (target) { if (!target.removed) { target.url = url; attachStream(target, stream); } return target; }
+      let host = 'WEB';
+      try { host = new URL(url).hostname.replace(/^www\./, '').toUpperCase().slice(0, 28); } catch (e) {}
+      return addStreamInput(stream, { type: 'web', name: host, url });
+    } catch (e) {
+      if (e.name !== 'NotAllowedError') toast('จับภาพเว็บไม่สำเร็จ: ' + e.message, 'error');
+      return null;
+    } finally { void win; }
+  }
+  async function addWebInput() {
+    const r = await dialog({
+      title: 'เพิ่มเว็บไซต์ (Web Browser)',
+      body: `
+        <label class="field"><span>ที่อยู่เว็บ (URL)</span><input name="url" class="input mono" placeholder="เช่น https://www.youtube.com/watch?v=… หรือ เว็บกราฟิก / ผลคะแนนสด" required></label>
+        <p class="note">WebMix จะเปิดเว็บในแท็บใหม่ แล้วให้เลือกแท็บนั้นในหน้าต่างแชร์ — ได้ภาพและเสียงของเว็บเป็นแหล่งภาพ (ปรับขนาด/ครอปได้ในปุ่ม ⧉) · ใช้ได้ใน Chrome / Edge บนคอมพิวเตอร์ · อย่าปิดแท็บนั้นระหว่างไลฟ์</p>`,
+      actions: [{ label: 'ยกเลิก' }, { label: 'เปิดเว็บ', primary: true, value: 'ok' }]
+    });
+    if (!r || r.value !== 'ok') return;
+    const url = normUrl(r.form.url.value);
+    if (!url) { toast('ที่อยู่เว็บไม่ถูกต้อง (ต้องเป็น http หรือ https)', 'warn'); return; }
+    await openWebSource(url);
+  }
+
   function addSlidesFiles(files) {
     for (const file of files.slice(0, 4)) {
       const inp = createSlidesInput({ name: baseName(file.name || 'SLIDES') });
@@ -10838,7 +11051,10 @@ onmessage = async e => {
       ['film', 'ไฟล์วิดีโอ', 'MP4 / WebM จากเครื่องนี้', () => pickFiles('video/*', addVideoFiles)],
       ['repeat', 'Playlist', 'วิดีโอและรูปหลายไฟล์เล่นต่อกัน', addPlaylist],
       ['image', 'ภาพนิ่ง / โลโก้', 'PNG พื้นโปร่งใสใช้เป็นโลโก้มุมจอได้', () => pickFiles('image/*', addImageFiles)],
-      ['type', 'สไลด์ PDF / PowerPoint', 'เปลี่ยนหน้าด้วย ‹ › ปุ่มลูกศร หรือรีโมตพรีเซนต์', () => pickFiles('application/pdf,.pdf', addSlidesFiles)]]],
+      ['type', 'สไลด์ PDF / PowerPoint', 'เปลี่ยนหน้าด้วย ‹ › ปุ่มลูกศร หรือรีโมตพรีเซนต์', () => pickFiles('application/pdf,.pdf', addSlidesFiles)],
+      ['image', 'สไลด์โชว์รูป (Photos)', 'เลือกหลายรูป เปลี่ยนเองทุก N วินาทีแบบจางผ่าน หรือกด ‹ › เอง', () => pickFiles('image/*', files => addStillsFiles('photos', files))],
+      ['film', 'ลำดับภาพ (Image Sequence)', 'ไฟล์ PNG เรียงเลข (เช่น frame_0001.png) เล่นเป็นแอนิเมชัน — พื้นโปร่งใสซ้อนบน Overlay ได้', () => pickFiles('image/*', files => addStillsFiles('imgseq', files))],
+      ['globe', 'เว็บไซต์ (Web Browser)', 'เปิดเว็บแล้วใช้ภาพและเสียงของหน้าเว็บเป็นแหล่งภาพ (Chrome / Edge บนคอม)', addWebInput]]],
     ['เชื่อมต่อจากที่อื่น', [
       ['phone', 'กล้องมือถือไร้สาย', 'สแกน QR ด้วยมือถืออีกเครื่อง แล้วใช้เป็นกล้อง', showWirelessDialog],
       ['headphones', 'แขกรับเชิญทางไกล', 'ส่งลิงก์ให้แขก คุยกันได้ทั้งภาพและเสียง', addGuest],
@@ -10968,7 +11184,11 @@ onmessage = async e => {
   function cardSub(inp) {
     if (inp.type === 'replay' && inp.status !== 'live') return inp.rbError ? 'REPLAY · ใช้ไม่ได้' : `REPLAY · พร้อม (${inp.replay.source === 'program' ? 'Program' : byId(inp.replay.source)?.name || '—'})`;
     if (inp.type === 'srt' && inp.status !== 'live') return `${netLabel(inp)} · ${SRT_IN_STATES[inp.srtState] || 'ไม่มีสัญญาณ'}`;
+    if (inp.type === 'web' && inp.status !== 'live') return 'WEB · กด 🔗 เพื่อเปิดเว็บและเลือกแท็บ';
     if (inp.status !== 'live') return 'ไม่มีสัญญาณ';
+    if (inp.type === 'imgseq') return `SEQ · ${inp.st.index + 1}/${inp.st.count} · ${inp.st.fps} fps${inp.st.loop ? '' : ' · ครั้งเดียว'}`;
+    if (inp.type === 'photos') return `PHOTOS · ${inp.st.index + 1}/${inp.st.count} · ${inp.st.sec}s`;
+    if (inp.type === 'web') { try { return 'WEB · ' + new URL(inp.url).hostname.replace(/^www\./, ''); } catch (e) { return 'WEB'; } }
     if (inp.data && inp.data.error) return 'DATA ERROR';
     if (inp.type === 'title' && inp.data && inp.data.rows && inp.data.rows.length) return `${inp.data.row + 1}/${inp.data.rows.length}`;
     if (inp.type === 'wireless' && inp.cam && inp.status === 'live') {
@@ -11209,7 +11429,7 @@ onmessage = async e => {
      - ไฟล์วิดีโอ/รูปเก็บสำเนาไว้ในพื้นที่ของเบราว์เซอร์ (OPFS) จึงไม่ต้องเลือกไฟล์ใหม่
      - บันทึกเป็นไฟล์ .webmix.json เพื่อย้ายเครื่องหรือเก็บหลายรายการ (ไฟล์สื่อไม่ได้รวมอยู่ในไฟล์ ต้องเลือกใหม่บนเครื่องอื่น) */
 
-  const SHOW_TYPES = ['bars', 'black', 'transparent', 'slate', 'clock', 'image', 'media', 'camera', 'screen', 'wireless', 'srt', 'title', 'guest', 'timer', 'score', 'ticker', 'cg', 'playlist', 'scene', 'replay', 'slides', 'visualizer', 'chat', 'captions'];
+  const SHOW_TYPES = ['bars', 'black', 'transparent', 'imgseq', 'photos', 'web', 'slate', 'clock', 'image', 'media', 'camera', 'screen', 'wireless', 'srt', 'title', 'guest', 'timer', 'score', 'ticker', 'cg', 'playlist', 'scene', 'replay', 'slides', 'visualizer', 'chat', 'captions'];
   const show = {
     ready: false, last: '', savedAt: 0,
     get name() { return store.get('showName', '') || 'โชว์ใหม่'; },
@@ -11248,6 +11468,8 @@ onmessage = async e => {
           if (i.type === 'chat') o.chat = { ...i.chat };
           if (i.type === 'captions') o.cap = { ...i.cap };
           if (i.type === 'slides') o.slides = { page: i.slides.page, file: i.fileName || '' };
+          if (i.type === 'imgseq' || i.type === 'photos') { const { start, since, held, prev, playing, subAt, ...keep } = i.st; o.st = { ...keep, count: i.storedCount || 0 }; }
+          if (i.type === 'web') o.url = i.url || '';
           if (i.layout) o.layout = JSON.parse(JSON.stringify(i.layout));
           if (i.color) o.color = { ...i.color };
           if (typeof i.vx === 'number' && i.vx !== 0.5) o.vx = i.vx;
@@ -11431,6 +11653,21 @@ onmessage = async e => {
         case 'screen':
           addInput({ type: 'screen', ...base, el: createVideo(null), status: 'nosignal', missing: true });
           break;
+        case 'web':
+          // เว็บต้องเลือกแท็บใหม่ทุกครั้งที่เปิดโชว์ (เบราว์เซอร์ไม่ให้จับภาพเอง) — กด 🔗 บนการ์ด
+          addInput({ type: 'web', ...base, url: normUrl(raw.url), el: createVideo(null), status: 'nosignal', missing: true });
+          break;
+        case 'imgseq': case 'photos': {
+          const s0 = raw.st || {}, n = clamp(+s0.count || 0, 0, STILLS[raw.type].max);
+          const st = raw.type === 'imgseq' ? { fps: clamp(+s0.fps || 25, 1, 60), loop: s0.loop !== false, index: 0 } : { sec: clamp(+s0.sec || 5, 1, 600), fade: clamp(+s0.fade || 0, 0, 5000), loop: s0.loop !== false, index: clamp(+s0.index || 0, 0, Math.max(0, n - 1)) };
+          const inp = createStillsInput(raw.type, { ...base, st, missing: true });
+          inp.storedCount = n;
+          return Promise.all(Array.from({ length: n }, (_, k) => mediaStore.get(stillKey(inp, k)))).then(files => {
+            if (inp.removed) return;
+            const ok = files.filter(Boolean);
+            if (ok.length === n && n) return setStillsFiles(inp, ok, false);
+          });
+        }
         case 'wireless':
           // มือถือที่เคยเชื่อมต่อจะโทรกลับมาเองด้วย ID เดิม แล้วเข้ามาที่ Input นี้
           addInput({ type: 'wireless', ...base, el: createVideo(null), status: 'nosignal', peerId: String(raw.peerId || ''), missing: true });
@@ -11707,7 +11944,8 @@ onmessage = async e => {
     show.autosave(true);
     setInterval(() => show.autosave(), 1500);
     addEventListener('pagehide', () => show.autosave());
-    mediaStore.prune(new Set(['stinger', ...inputs.filter(i => i.type === 'media' || i.type === 'image' || i.type === 'slides').map(i => i.id), ...playlist.keys(), ...audioSourceKeys(), ...library.keys()]));
+    mediaStore.prune(new Set(['stinger', ...inputs.filter(i => i.type === 'media' || i.type === 'image' || i.type === 'slides').map(i => i.id),
+      ...inputs.filter(i => i.type === 'imgseq' || i.type === 'photos').flatMap(i => Array.from({ length: i.storedCount || 0 }, (_, k) => stillKey(i, k))), ...playlist.keys(), ...audioSourceKeys(), ...library.keys()]));
 
     bindChatPane();
     $('#sfx-bar').addEventListener('click', e => {
