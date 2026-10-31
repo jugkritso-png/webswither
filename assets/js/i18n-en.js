@@ -2265,6 +2265,7 @@
     "เครื่องนี้ประมวลผลซูมนุ่มไม่ทัน — สลับเป็นซูมของเลนส์ให้แล้ว (เปลี่ยนได้ที่ปุ่ม FPS)": "This phone can't keep up with smooth zoom — switched to the lens zoom (change it under FPS)",
     "เครื่องนี้ประมวลผลซูมนุ่มไม่ทัน — ใช้ซูมของเลนส์แทน (เปลี่ยนได้ที่ปุ่ม FPS)": "This phone can't keep up with smooth zoom — using the lens zoom instead (change it under FPS)",
     "ตอนนี้ประมวลผลภาพ {} ms/เฟรม · {} fps": "Processing now {1} ms/frame · {2} fps",
+    "โปร่งใส (Transparent)": "Transparent", "แหล่งว่างไม่มีภาพ — ใช้เคลียร์ Overlay / เว้นช่องในซีน / ซ้อนแล้วเห็นภาพด้านล่าง": "An empty source with no picture — clear an overlay / leave a scene slot empty / layer it to see what's underneath",
     "ทีวี": "TV", "หน้า": "Page", "รายการ": "Item", "ความยาว": "Length", "เหลือ": "Remain", "สไลด์": "Slides"
   });
 })(window.WebMix = window.WebMix || {});

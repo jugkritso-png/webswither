@@ -251,6 +251,7 @@
   const TYPE_META = {
     bars: { icon: 'bars', label: 'BARS' },
     black: { icon: 'square', label: 'BLACK' },
+    transparent: { icon: 'checker', label: 'TRANSPARENT' },
     slate: { icon: 'type', label: 'SLATE' },
     clock: { icon: 'clock', label: 'CLOCK' },
     image: { icon: 'image', label: 'IMAGE' },
@@ -401,12 +402,24 @@
 
 
 
+  // ภาพย่อบนการ์ด: แหล่งโปร่งใสแสดงเป็นลายตาราง (แบบโปรแกรมกราฟิก) ให้รู้ว่าไม่มีภาพ
+  function drawChecker(ctx, w, h) {
+    const n = Math.max(6, Math.round(h / 14));
+    ctx.fillStyle = '#9aa0aa'; ctx.fillRect(0, 0, w, h);
+    ctx.fillStyle = '#d4d8de';
+    for (let y = 0; y * n < h; y++) for (let x = 0; x * n < w; x++) if ((x + y) % 2) ctx.fillRect(x * n, y * n, n, n);
+  }
+  function drawThumb(ctx, inp, w, h) {
+    if (inp && inp.type === 'transparent') { drawChecker(ctx, w, h); return; }
+    drawSource(ctx, inp, w, h);
+  }
+
   function drawSource(ctx, inp, w, h) {
     if (!inp) { fillBlack(ctx, w, h); return; }
     ctx.save();
     switch (inp.type) {
       case 'bars': drawBars(ctx, w, h); break;
-      case 'black': fillBlack(ctx, w, h); break;
+      case 'black': case 'transparent': fillBlack(ctx, w, h); break;
       case 'slate': drawSlate(ctx, w, h, inp); break;
       case 'clock': drawClock(ctx, w, h, inp); break;
       case 'title': case 'timer': case 'score': case 'ticker': case 'visualizer': case 'chat': case 'captions': fillBlack(ctx, w, h); drawGraphic(ctx, inp, w, h); break;
@@ -633,6 +646,7 @@
   // วาดแหล่งภาพแบบพื้นหลังโปร่งใส (รูป PNG, วิดีโอที่มี alpha, Title) — ไม่มีสัญญาณก็ไม่วาดอะไรทับ Program
   function drawSourceT(ctx, inp, w, h, cgSceneId) {
     switch (inp.type) {
+      case 'transparent': return;
       case 'title': case 'timer': case 'score': case 'ticker': case 'visualizer': case 'chat': case 'captions': drawGraphic(ctx, inp, w, h); return;
       case 'cg': {
         const fallback = inp.cg.onAirSnapshot && cgSceneId === inp.cg.onAirSceneId && !inp.cg.design.scenes.some(scene => scene.id === cgSceneId) ? inp.cg.onAirSnapshot : null;
@@ -794,6 +808,8 @@
       : { e: genTexture('ns:' + inp.id, `${inp.name}|${inp.srtState}|${inp.missing}|${inp.status}|${window.WebMix.i18n?.lang}`, GW, GH, (c, w, h) => drawNoSignal(c, w, h, inp)), full: true };
     switch (inp.type) {
       case 'black': return transparent ? { solid: [0, 0, 0, 1] } : { solid: [0, 0, 0, 1] };
+      // โปร่งใส: บนเลเยอร์ (Overlay / ซีน / PIP) ไม่วาดอะไร · เป็นภาพหลักของ Program = ดำ
+      case 'transparent': return transparent ? null : { solid: [0, 0, 0, 1] };
       case 'bars': return { e: genTexture('g:' + inp.id, 'bars', GW, GH, drawBars), full: true };
       case 'slate': case 'clock':
         return { e: genTexture('g:' + inp.id, `${inp.text}|${sec}`, GW, GH, (c, w, h) => drawSource(c, inp, w, h)), full: true };
@@ -1064,7 +1080,7 @@
       lufs.render();
       for (const inp of inputs) {
         const ctx = thumbs.get(inp.id);
-        if (ctx) drawSource(ctx, inp, ctx.canvas.width, ctx.canvas.height);
+        if (ctx) drawThumb(ctx, inp, ctx.canvas.width, ctx.canvas.height);
       }
     }
     audio.tick(now);
@@ -1320,6 +1336,7 @@
     const defs = {
       bars: { name: 'COLOR BARS' },
       black: { name: 'BLACK' },
+      transparent: { name: 'TRANSPARENT' },
       slate: { name: 'SLATE', text: defText('กลับมาพบกันในอีกสักครู่') },
       clock: { name: 'CLOCK', text: 'WEBMIX PRO STUDIO' }
     };
@@ -1529,7 +1546,7 @@
       grid.appendChild(card);
       const ctx = card.querySelector('canvas').getContext('2d');
       thumbs.set(inp.id, ctx);
-      drawSource(ctx, inp, tw, th);
+      drawThumb(ctx, inp, tw, th);
     });
     renderSourceBar();
     applySourceFilter();
@@ -4055,7 +4072,9 @@
       const r = sl.rect;
       ctx.save();
       ctx.beginPath(); ctx.rect(r.x, r.y, r.w, r.h); ctx.clip();
-      if (sl.child) {
+      if (sl.child && sl.child.type === 'transparent') {
+        // ช่องโปร่งใส: เห็นพื้นของซีน
+      } else if (sl.child) {
         ctx.translate(sl.box.x, sl.box.y);
         drawSource(ctx, sl.child, sl.box.w, sl.box.h);
       } else {
@@ -5995,8 +6014,8 @@
       if (!byId(o.sourceId)) {
         // ค่าเริ่มต้น: PIP ใช้ Input ที่สองที่ไม่ใช่ Program, KEY ใช้กล้อง/ไฟล์ล่าสุด
         const pick = name === 'pip'
-          ? inputs.find(i => i.id !== state.programId && i.type !== 'black')
-          : [...inputs].reverse().find(i => !['bars', 'black', 'clock', 'slate'].includes(i.type));
+          ? inputs.find(i => i.id !== state.programId && !['black', 'transparent'].includes(i.type))
+          : [...inputs].reverse().find(i => !['bars', 'black', 'transparent', 'clock', 'slate'].includes(i.type));
         o.sourceId = pick ? pick.id : null;
       }
       sel.innerHTML = inputs.length
@@ -9246,7 +9265,7 @@ onmessage = async e => {
     const out = [];
     const add = (state, name, detail, fix) => out.push({ state, name, detail, fix });
     const list = settings.destinations.filter(d => d.enabled);
-    const srcs = inputs.filter(i => !['color', 'bars', 'clock', 'black', 'title', 'timer', 'score', 'ticker'].includes(i.type));
+    const srcs = inputs.filter(i => !['color', 'bars', 'clock', 'black', 'transparent', 'title', 'timer', 'score', 'ticker'].includes(i.type));
     const dead = srcs.filter(i => i.status !== 'live');
     add(dead.length ? 'warn' : 'ok', 'แหล่งภาพทุกตัวมีสัญญาณ', dead.length ? `“${dead.map(i => i.name).slice(0, 3).join('”, “')}” ยังไม่มีสัญญาณ` : `${srcs.length || inputs.length} แหล่ง${inputs.some(i => i.type === 'wireless') ? ` · กล้องมือถือ ${inputs.filter(i => i.type === 'wireless').length} เครื่อง` : ''}`);
     const mics = audio.channels.filter(c => !c.muted && c.kind !== 'player' && c.kind !== 'pad');
@@ -10842,7 +10861,8 @@ onmessage = async e => {
       ['type', 'Slate ข้อความ', 'จอข้อความ เช่น “เริ่มเร็ว ๆ นี้”', () => addGenerator('slate')],
       ['clock', 'นาฬิกา', 'เวลาปัจจุบันเต็มจอ', () => addGenerator('clock')],
       ['bars', 'Color Bars', 'แถบสีสำหรับทดสอบภาพ', () => addGenerator('bars')],
-      ['square', 'Black', 'จอดำ', () => addGenerator('black')]]]
+      ['square', 'Black', 'จอดำ', () => addGenerator('black')],
+      ['checker', 'โปร่งใส (Transparent)', 'แหล่งว่างไม่มีภาพ — ใช้เคลียร์ Overlay / เว้นช่องในซีน / ซ้อนแล้วเห็นภาพด้านล่าง', () => addGenerator('transparent')]]]
   ];
   function openAddMenu(anchor, groups = ADD_GROUPS(), title = 'เพิ่มแหล่งภาพ') {
     closeMenu();
@@ -11189,7 +11209,7 @@ onmessage = async e => {
      - ไฟล์วิดีโอ/รูปเก็บสำเนาไว้ในพื้นที่ของเบราว์เซอร์ (OPFS) จึงไม่ต้องเลือกไฟล์ใหม่
      - บันทึกเป็นไฟล์ .webmix.json เพื่อย้ายเครื่องหรือเก็บหลายรายการ (ไฟล์สื่อไม่ได้รวมอยู่ในไฟล์ ต้องเลือกใหม่บนเครื่องอื่น) */
 
-  const SHOW_TYPES = ['bars', 'black', 'slate', 'clock', 'image', 'media', 'camera', 'screen', 'wireless', 'srt', 'title', 'guest', 'timer', 'score', 'ticker', 'cg', 'playlist', 'scene', 'replay', 'slides', 'visualizer', 'chat', 'captions'];
+  const SHOW_TYPES = ['bars', 'black', 'transparent', 'slate', 'clock', 'image', 'media', 'camera', 'screen', 'wireless', 'srt', 'title', 'guest', 'timer', 'score', 'ticker', 'cg', 'playlist', 'scene', 'replay', 'slides', 'visualizer', 'chat', 'captions'];
   const show = {
     ready: false, last: '', savedAt: 0,
     get name() { return store.get('showName', '') || 'โชว์ใหม่'; },
@@ -11327,7 +11347,7 @@ onmessage = async e => {
     restoreInput(raw, base) {
       const text = typeof raw.text === 'string' ? raw.text.slice(0, 80) : '';
       switch (raw.type) {
-        case 'bars': case 'black': case 'slate': case 'clock':
+        case 'bars': case 'black': case 'transparent': case 'slate': case 'clock':
           addInput({ type: raw.type, ...base, text });
           break;
         case 'scene':
