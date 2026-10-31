@@ -3105,3 +3105,22 @@ html.is-card-drag, html.is-card-drag * { cursor: grabbing !important; }
 .tpl-card b { font-size: 15px; }
 .tpl-card small { color: var(--muted, #9aa4b2); font-size: 12px; line-height: 1.4; }
 .tpl-card i { font-style: normal; font-size: 11px; color: var(--muted, #9aa4b2); }
+
+/* คลิปไฮไลต์ 9:16 */
+.hl-grid { display: grid; grid-template-columns: 216px 1fr; gap: 16px; align-items: start; }
+.hl-preview { width: 216px; height: 384px; border-radius: 10px; background: #000; box-shadow: 0 0 0 1px var(--line, rgba(255,255,255,.12)); }
+.hl-side { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.hl-side .hl-cut { align-self: flex-start; }
+.hl-progress .hl-bar { height: 6px; border-radius: 3px; background: rgba(255,255,255,.12); overflow: hidden; }
+.hl-progress .hl-bar i { display: block; height: 100%; width: 0; background: var(--accent, #3b82f6); transition: width .2s; }
+.hl-progress small { display: block; margin-top: 4px; opacity: .75; }
+.hl-list { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+.hl-item { display: grid; grid-template-columns: 40px 1fr auto; gap: 10px; align-items: center; padding: 6px 8px; border-radius: 8px; background: rgba(255,255,255,.05); }
+.hl-item video { width: 40px; height: 71px; object-fit: cover; border-radius: 4px; background: #000; }
+.hl-item small { display: block; opacity: .7; }
+@media (max-width: 560px) { .hl-grid { grid-template-columns: 1fr; } .hl-preview { justify-self: center; } }
+.hl-thumb { display: block; width: 40px; height: 71px; border-radius: 4px; background: repeating-linear-gradient(135deg, rgba(255,255,255,.06) 0 6px, transparent 6px 12px), #000; }
+.hl-item[data-state="error"] small { color: #f87171; }
+
+/* ออกอากาศอยู่: ไม่เบลอพื้นหลังหน้าต่าง (ประหยัดเครื่อง ภาพไลฟ์ไม่ตก) */
+.on-air .modal-backdrop, .on-air .menu { -webkit-backdrop-filter: none; backdrop-filter: none; }

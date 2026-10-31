@@ -9046,7 +9046,7 @@
       return this.stream;
     },
     reset() {
-      if (this.stream && !rec.active && !streamer.active) {
+      if (this.stream && !rec.active && !streamer.active && !hl.on) {
         this.stream.getVideoTracks().forEach(t => t.stop());
         this.stream = null;
       }
@@ -9948,6 +9948,8 @@ onmessage = async e => {
     if (!live) onAirSince = null;
     const lamp = $('#tally-lamp');
     lamp.classList.toggle('is-live', live);
+    // ระหว่างออกอากาศ: หน้าต่างไม่เบลอพื้นหลัง (เบลอต้องวาดใหม่ทุกเฟรมทับภาพ Program — เครื่องไม่มีการ์ดจอทำให้ภาพไลฟ์ตก)
+    document.documentElement.classList.toggle('on-air', live);
     lamp.textContent = live ? 'ON AIR' : 'OFF AIR';
     keepScreenOn(live && settings.keepAwake !== false);
     syncLiveService(live);
@@ -9969,6 +9971,230 @@ onmessage = async e => {
     if (rec.active || streamer.active) { e.preventDefault(); e.returnValue = ''; }
   });
 
+
+  /* ---- คลิปไฮไลต์ 9:16: บัฟเฟอร์ภาพ Program + เสียงมาสเตอร์ย้อนหลัง (เครื่องบันทึก 2 ตัวสลับกันทุก 60 วินาที
+     ตัวที่เก่ากว่ามีภาพ 60–120 วินาทีเสมอ) → กดตัด = เล่นช่วงท้ายของบัฟเฟอร์ วาดลงแคนวาสแนวตั้ง แล้วบันทึกเป็นไฟล์
+     กรอบภาพ: ครอปกลาง (เลื่อนซ้าย/ขวาได้) หรือภาพเต็มบนพื้นเบลอ · ไฟล์ลงโฟลเดอร์ REC ถ้าเลือกไว้ ไม่อย่างนั้นดาวน์โหลด */
+  const HL_LENS = [15, 30, 60], HL_SPAN = 60000;
+  const hl = { on: false, recs: [], timer: null, mime: '', list: [], busy: null, cfg: { len: 30, frame: 'blur', x: 0.5, title: '' } };
+  try { Object.assign(hl.cfg, store.get('hl-cfg', {})); } catch (e) {}
+  const hlSupported = () => !!window.MediaRecorder && !(window.WebMix.wcrec && window.WebMix.wcrec.preferred());
+  function hlStart() {
+    if (hl.on) return true;
+    if (!hlSupported()) return false;
+    hl.on = true;
+    hl.mime = ['video/webm;codecs=vp8,opus', 'video/webm;codecs=vp9,opus', 'video/webm'].find(t => MediaRecorder.isTypeSupported(t)) || '';
+    const spawn = () => {
+      if (!hl.on) return;
+      try {
+        const r = new MediaRecorder(output.get(), { ...(hl.mime ? { mimeType: hl.mime } : {}), videoBitsPerSecond: 4000000, audioBitsPerSecond: 128000 });
+        const rec = { r, chunks: [], t0: performance.now(), type: r.mimeType || hl.mime || 'video/webm' };
+        r.ondataavailable = e => { if (e.data.size) rec.chunks.push(e.data); };
+        r.start(500);
+        hl.recs.push(rec);
+      } catch (e) { console.warn('highlight buffer', e); }
+      while (hl.recs.length > 2) { const old = hl.recs.shift(); try { old.r.stop(); } catch (e) {} old.chunks = []; }
+    };
+    spawn();
+    hl.timer = setInterval(spawn, HL_SPAN);
+    return true;
+  }
+  function hlStop() {
+    hl.on = false;
+    clearInterval(hl.timer); hl.timer = null;
+    for (const rec of hl.recs) { try { rec.r.stop(); } catch (e) {} rec.chunks = []; }
+    hl.recs = [];
+    output.reset();
+  }
+  // วินาทีที่มีในบัฟเฟอร์ตอนนี้
+  const hlBuffered = () => hl.recs[0] ? Math.min(HL_SPAN * 2, performance.now() - hl.recs[0].t0) / 1000 : 0;
+  // ตัวจับเวลาใน Worker: วาดต่อได้แม้สลับไปแท็บอื่น (setInterval ในหน้าถูกหน่วงเหลือวินาทีละครั้ง)
+  function workerTimer(ms, fn) {
+    try {
+      const w = new Worker(URL.createObjectURL(new Blob([`setInterval(()=>postMessage(0),${ms})`], { type: 'text/javascript' })));
+      w.onmessage = fn;
+      return () => w.terminate();
+    } catch (e) { const id = setInterval(fn, ms); return () => clearInterval(id); }
+  }
+  function hlDrawFrame(ctx, v, cw, ch, cfg) {
+    const vw = v.videoWidth || v.width || 16, vh = v.videoHeight || v.height || 9;
+    ctx.fillStyle = '#000'; ctx.fillRect(0, 0, cw, ch);
+    if (cfg.frame === 'crop') {
+      // เต็มจอแนวตั้ง: ตัดด้านข้างออก เลือกตำแหน่งได้ (0 = ซ้ายสุด · 1 = ขวาสุด)
+      const s = Math.max(cw / vw, ch / vh), dw = vw * s, dh = vh * s;
+      ctx.drawImage(v, (cw - dw) * cfg.x, (ch - dh) / 2, dw, dh);
+    } else {
+      // ภาพเต็มตรงกลาง + ภาพเดียวกันขยายเบลอเป็นพื้นหลัง
+      const s = Math.max(cw / vw, ch / vh), bw = vw * s, bh = vh * s;
+      ctx.save(); ctx.filter = 'blur(28px) brightness(0.55)'; ctx.drawImage(v, (cw - bw) / 2, (ch - bh) / 2, bw, bh); ctx.restore();
+      const f = cw / vw, fh = vh * f;
+      ctx.drawImage(v, 0, (ch - fh) / 2, cw, fh);
+    }
+    if (cfg.title) {
+      const size = Math.round(cw * 0.065);
+      ctx.save(); ctx.font = `800 ${size}px ${FONT}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      fitFont(ctx, cfg.title, 800, size, FONT, cw * 0.88);
+      ctx.lineWidth = Math.max(4, size * 0.16); ctx.strokeStyle = 'rgba(0,0,0,.75)'; ctx.lineJoin = 'round';
+      ctx.strokeText(cfg.title, cw / 2, ch * 0.13); ctx.fillStyle = '#fff'; ctx.fillText(cfg.title, cw / 2, ch * 0.13);
+      ctx.restore();
+    }
+  }
+  // ขั้นที่ 1 (เร็ว ไม่เข้ารหัสใหม่): เก็บไฟล์ย้อนหลังของเครื่องบันทึกตัวเก่า + จุดเริ่มของช่วงที่ต้องการ
+  async function hlGrab(len) {
+    const rec = hl.recs[0];
+    if (!rec) throw new Error('ยังไม่ได้เปิดบัฟเฟอร์ไฮไลต์');
+    try { rec.r.requestData(); } catch (e) {}
+    await new Promise(r => setTimeout(r, 300));
+    const have = (performance.now() - rec.t0) / 1000;
+    if (!rec.chunks.length || have < 3) throw new Error('ภาพย้อนหลังยังไม่พอ — รอสักครู่แล้วลองใหม่');
+    const src = await seekableClip(new Blob(rec.chunks, { type: rec.type }), rec.type);
+    return { src, have, len: Math.min(len, have) };
+  }
+  // ขั้นที่ 2 (ใช้เครื่องหนัก): เล่นช่วงนั้น วาดลงกรอบแนวตั้ง แล้วเข้ารหัสเป็นไฟล์
+  async function hlRender(raw, cfg, onProgress) {
+    const url = URL.createObjectURL(raw.src);
+    const v = document.createElement('video');
+    v.playsInline = true; v.preload = 'auto';
+    await new Promise((res, rej) => { v.onloadedmetadata = res; v.onerror = () => rej(new Error('เปิดภาพย้อนหลังไม่ได้')); v.src = url; });
+    const dur = isFinite(v.duration) && v.duration > 0 ? v.duration : raw.have;
+    const len = Math.min(raw.len, dur), start = Math.max(0, dur - len);
+    // 1080×1920 (ต้นทางเล็กกว่า 1080p ใช้ 720×1280)
+    const big = (v.videoHeight || H) >= 900, cw = big ? 1080 : 720, ch = big ? 1920 : 1280;
+    const canvas = document.createElement('canvas'); canvas.width = cw; canvas.height = ch;
+    const ctx = canvas.getContext('2d');
+    // เสียงของคลิป: ผ่าน Web Audio ไปลงไฟล์เท่านั้น ไม่ดังออกลำโพง
+    const ac = audio.ensure();
+    const node = ac.createMediaElementSource(v), dest = ac.createMediaStreamDestination();
+    node.connect(dest);
+    const stream = new MediaStream([...canvas.captureStream(30).getVideoTracks(), ...dest.stream.getAudioTracks()]);
+    const mime = ['video/mp4;codecs=avc1,mp4a.40.2', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'].find(t => MediaRecorder.isTypeSupported(t)) || '';
+    const out = new MediaRecorder(stream, { ...(mime ? { mimeType: mime } : {}), videoBitsPerSecond: big ? 8000000 : 5000000, audioBitsPerSecond: 160000 });
+    const parts = [];
+    out.ondataavailable = e => { if (e.data.size) parts.push(e.data); };
+    v.currentTime = start;
+    await new Promise(res => { v.onseeked = res; setTimeout(res, 2000); });
+    hlDrawFrame(ctx, v, cw, ch, cfg);
+    const stopTimer = workerTimer(1000 / 30, () => { hlDrawFrame(ctx, v, cw, ch, cfg); onProgress?.(Math.min(1, (v.currentTime - start) / len)); });
+    const done = new Promise(res => { out.onstop = res; });
+    out.start(1000);
+    await v.play().catch(() => {});
+    await new Promise(res => {
+      const end = () => res();
+      v.onended = end;
+      const t = setInterval(() => { if (v.currentTime >= dur - 0.05 || v.ended || v.paused) { clearInterval(t); end(); } }, 100);
+    });
+    stopTimer();
+    out.stop();
+    await done;
+    v.pause(); node.disconnect(); URL.revokeObjectURL(url);
+    const type = out.mimeType || mime || 'video/webm';
+    const blob = new Blob(parts, { type });
+    return { blob: type.includes('webm') ? await seekableClip(blob, type) : blob, len, ext: type.includes('mp4') ? 'mp4' : 'webm', w: cw, h: ch };
+  }
+  async function hlSave(item) {
+    if (recFolder) {
+      try {
+        const fh = await recFolder.getFileHandle(item.name, { create: true });
+        const w = await fh.createWritable(); await w.write(item.blob); await w.close();
+        toast(`บันทึก “${item.name}” ลงโฟลเดอร์ ${recFolder.name} แล้ว`, 'success', 5000);
+        return;
+      } catch (e) { console.warn('highlight folder', e); }
+    }
+    downloadBlob(item.blob, item.name);
+    toast(`ดาวน์โหลด “${item.name}” แล้ว`, 'success', 4000);
+  }
+  const hlLive = () => !!(streamer.ws || streamer.reconnecting || rec.active);
+  // แปลงคลิปที่รออยู่ทีละคลิป · ระหว่างไลฟ์/บันทึกรอจนจบ (ไม่ให้ภาพไลฟ์สะดุด) เว้นแต่กด “แปลงตอนนี้”
+  async function hlProcess(force) {
+    if (hl.busy) return;
+    const item = hl.list.find(it => it.state === 'wait' && (force === it || !hlLive()));
+    if (!item) return;
+    hl.busy = { p: 0, item };
+    item.state = 'work';
+    try {
+      const r = await hlRender(item.raw, item.cfg, p => { hl.busy.p = p; });
+      Object.assign(item, r, { state: 'done', raw: null, name: `WebMix-Highlight-${item.stamp}.${r.ext}`, url: URL.createObjectURL(r.blob) });
+      await hlSave(item);
+    } catch (e) { item.state = 'error'; item.error = e.message; toast(`ทำคลิปไม่สำเร็จ: ${e.message}`, 'error', 6000); }
+    finally { hl.busy = null; hl.onChange?.(); }
+    hlProcess();
+  }
+  setInterval(() => hlProcess(), 2000);
+  async function hlCut(cfg) {
+    const raw = await hlGrab(cfg.len);
+    const item = { state: 'wait', raw, cfg: { ...cfg }, len: raw.len, at: Date.now(), stamp: stamp(), title: cfg.title };
+    hl.list.unshift(item);
+    for (let i = hl.list.length - 1; hl.list.length > 10 && i >= 0; i--) if (hl.list[i].state !== 'work') { const [old] = hl.list.splice(i, 1); if (old.url) URL.revokeObjectURL(old.url); }
+    if (hlLive()) toast(`เก็บช่วง ${raw.len.toFixed(0)} วินาทีแล้ว — จะทำเป็นคลิป 9:16 ให้หลังจบไลฟ์ (ไลฟ์ไม่สะดุด) · กด “แปลงตอนนี้” ในหน้าต่างไฮไลต์ถ้าต้องการทันที`, 'success', 6000);
+    hl.onChange?.();
+    hlProcess();
+    return item;
+  }
+  async function openHighlightDialog() {
+    if (!hlSupported()) { toast('เครื่องนี้ทำคลิปไฮไลต์ไม่ได้ (ต้องใช้ Chrome / Edge หรือแอป Windows / macOS / Android)', 'warn', 6000); return; }
+    hlStart();
+    const c = hl.cfg;
+    const when = it => new Date(it.at).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
+    const listHtml = () => hl.list.map((it, i) => `<div class="hl-item" data-state="${it.state}">${it.url ? `<video src="${it.url}" muted playsinline preload="metadata"></video>` : '<span class="hl-thumb"></span>'}<div><b>${esc(it.title || 'ไฮไลต์')}</b><small>${it.len.toFixed(0)} วิ · ${when(it)} · ${it.state === 'done' ? `${it.w}×${it.h} · ${fmtBytes(it.blob.size)}` : it.state === 'work' ? 'กำลังทำคลิป…' : it.state === 'error' ? `ไม่สำเร็จ: ${esc(it.error || '')}` : hlLive() ? 'รอจบไลฟ์แล้วทำให้' : 'รอคิว'}</small></div>${it.state === 'done' ? `<button type="button" class="btn btn-sm" data-hl-save="${i}">${icon('download')} บันทึกอีกครั้ง</button>` : it.state === 'wait' ? `<button type="button" class="btn btn-sm" data-hl-now="${i}">แปลงตอนนี้</button>` : ''}</div>`).join('');
+    const r = await dialog({
+      title: 'คลิปไฮไลต์ 9:16',
+      body: `
+        <div class="hl-grid">
+          <canvas class="hl-preview" width="216" height="384"></canvas>
+          <div class="hl-side">
+            <p class="note hl-buf"></p>
+            <div class="field"><span>ความยาว (วินาทีล่าสุด)</span><div class="seg hl-len">${HL_LENS.map(n => `<button type="button" data-len="${n}" class="${n === c.len ? 'is-active' : ''}">${n} วิ</button>`).join('')}</div></div>
+            <label class="field"><span>กรอบภาพ</span><select name="frame" class="select"><option value="blur" ${c.frame === 'blur' ? 'selected' : ''}>ภาพเต็มบนพื้นเบลอ</option><option value="crop" ${c.frame === 'crop' ? 'selected' : ''}>ครอปเต็มจอแนวตั้ง</option></select></label>
+            <label class="field hl-x" ${c.frame === 'crop' ? '' : 'hidden'}><span>ตำแหน่งครอป (ซ้าย ↔ ขวา)</span><input type="range" name="x" min="0" max="1" step="0.01" value="${c.x}"></label>
+            <label class="field"><span>ข้อความบนคลิป (ไม่บังคับ)</span><input name="title" class="input" maxlength="60" value="${esc(c.title)}" placeholder="เช่น ประตูชัย นาทีที่ 89"></label>
+            <button type="button" class="btn btn-primary hl-cut">${icon('scissors')} ตัดคลิป</button>
+            <div class="hl-progress" hidden><div class="hl-bar"><i></i></div><small></small></div>
+          </div>
+        </div>
+        <div class="hl-list">${listHtml()}</div>
+        <p class="note">บัฟเฟอร์ทำงานต่อหลังปิดหน้าต่างนี้ — เกิดช็อตเด็ดกด H หรือปุ่มกรรไกรแล้วกด “ตัดคลิป” · ไฟล์ลง${recFolder ? `โฟลเดอร์ ${esc(recFolder.name)}` : 'โฟลเดอร์ดาวน์โหลด'} · บัฟเฟอร์ใช้หน่วยความจำราว 60 MB</p>`,
+      actions: [{ label: 'ปิดบัฟเฟอร์', value: 'off' }, { label: 'ปิด', primary: true }],
+      onOpen(modal) {
+        const pv = $('.hl-preview', modal), pctx = pv.getContext('2d');
+        modal.addEventListener('input', () => {
+          c.frame = $('[name=frame]', modal).value; c.x = +$('[name=x]', modal).value; c.title = $('[name=title]', modal).value.trim();
+          $('.hl-x', modal).hidden = c.frame !== 'crop';
+          store.set('hl-cfg', c);
+        });
+        modal.addEventListener('click', async e => {
+          const len = e.target.closest('[data-len]');
+          if (len) { c.len = +len.dataset.len; $$('.hl-len button', modal).forEach(x => x.classList.toggle('is-active', x === len)); store.set('hl-cfg', c); return; }
+          const sv = e.target.closest('[data-hl-save]');
+          if (sv) { hlSave(hl.list[+sv.dataset.hlSave]); return; }
+          const now = e.target.closest('[data-hl-now]');
+          if (now) {
+            const it = hl.list[+now.dataset.hlNow];
+            if (hlLive() && !(await confirmDialog('แปลงคลิปตอนนี้?', 'กำลังไลฟ์ / บันทึกอยู่ — การทำคลิปใช้เครื่องหนัก ภาพที่ออกอากาศอาจกระตุกระหว่างนี้ (ราวเท่าความยาวคลิป)', 'แปลงตอนนี้'))) return;
+            hlProcess(it); return;
+          }
+          if (e.target.closest('.hl-cut')) {
+            try { await hlCut({ ...c }); } catch (err) { toast(`ตัดคลิปไม่สำเร็จ: ${err.message}`, 'error', 6000); }
+          }
+        });
+        let sig = '';
+        hl.onChange = () => { if (modal.isConnected) { $('.hl-list', modal).innerHTML = listHtml(); sig = ''; } };
+        // ภาพตัวอย่างกรอบ 9:16 จาก Program ปัจจุบัน · เวลาที่มีในบัฟเฟอร์ · ความคืบหน้า
+        const tick = setInterval(() => {
+          if (!modal.isConnected) { clearInterval(tick); return; }
+          hlDrawFrame(pctx, pgmCanvas, pv.width, pv.height, c);
+          const sec = Math.floor(hlBuffered());
+          $('.hl-buf', modal).textContent = sec < c.len ? `กำลังเก็บภาพย้อนหลัง — มีแล้ว ${sec} วินาที (ตัดตอนนี้ได้คลิปยาว ${sec} วินาที)` : `พร้อมตัด — มีภาพย้อนหลัง ${Math.min(sec, 120)} วินาที`;
+          const busy = hl.busy, pr = $('.hl-progress', modal);
+          pr.hidden = !busy;
+          $('.hl-cut', modal).disabled = sec < 3;
+          const ns = hl.list.map(it => it.state).join() + hlLive();
+          if (ns !== sig) { sig = ns; $('.hl-list', modal).innerHTML = listHtml(); }
+          if (busy) { $('.hl-bar i', modal).style.width = `${Math.round(busy.p * 100)}%`; $('small', pr).textContent = `กำลังทำคลิป ${Math.round(busy.p * 100)}% — ใช้เวลาเท่าความยาวคลิป ไลฟ์ไม่สะดุด`; }
+        }, 500);
+      }
+    });
+    if (r?.value === 'off') { hlStop(); toast('ปิดบัฟเฟอร์ไฮไลต์แล้ว', 'info'); }
+  }
   /* ------------------------------------------------------------ extras */
   function snapshot() {
     pgmCanvas.toBlob(blob => {
@@ -12172,7 +12398,7 @@ onmessage = async e => {
       title: () => setOverlay('title', !overlays.title.on),
       pip: () => setOverlay('pip', !overlays.pip.on),
       key: () => setOverlay('key', !overlays.key.on),
-      stream: toggleStream, record: toggleRecord, snapshot,
+      stream: toggleStream, record: toggleRecord, snapshot, highlight: () => openHighlightDialog(),
       'output-window': openOutputWindow, fullscreen: toggleFullscreen, multiview: () => multiview.open(), remote: () => remoteCtl.openDialog(),
       settings: () => openSettings(), help: openHelp, show: openShowDialog,
       wireless: showWirelessDialog, 'add-mic': openMicDialog,
@@ -12225,7 +12451,7 @@ onmessage = async e => {
       const slideKey = { PageDown: 1, ArrowRight: 1, PageUp: -1, ArrowLeft: -1 }[e.key];
       if (slideKey && slideStep(slideKey)) { e.preventDefault(); return; }
       const k = e.key.toLowerCase();
-      const map = { ' ': cut, enter: autoTransition, f: toggleFtb, t: actions.title, l: actions.title, p: actions.pip, k: actions.key, m: () => multiview.open(), i: () => replayCapture() };
+      const map = { ' ': cut, enter: autoTransition, f: toggleFtb, t: actions.title, l: actions.title, p: actions.pip, k: actions.key, m: () => multiview.open(), i: () => replayCapture(), h: () => openHighlightDialog() };
       const oi = OVL_KEYS.indexOf(k);
       if (oi >= 0) {
         const i = oi + (e.shiftKey ? 4 : 0);
@@ -12830,7 +13056,7 @@ onmessage = async e => {
     $$('#seg-cardsize button').forEach(b => { b.classList.toggle('is-active', b.dataset.size === cardSize()); b.addEventListener('click', () => setCardSize(b.dataset.size)); });
 
     // สำหรับดีบัก/ทดสอบอัตโนมัติ
-    window.webmix = { failover, chatViewers: (p, n) => chatViewers(p, n), viewersNow: () => viewersNow(), perf: () => ({ fps, renderMs, frameNo, thumbs: thumbs.size, inputs: inputs.length }), chatFeed, chatAdd, chatShow, chatHide, playlist, dataSources, timerControl, multiview, renderer, gpu, setRenderer: v => { settings.renderer = v; renderer.resolve(); updateStatus(); }, show, ovl, setChannel, toggleInputOverlay, useRecFolder: dir => { recFolder = dir; }, inputs, state, settings, overlays, audio, rec, iso, stinger, replayCapture, slideGo, midi, checkAppUpdate, checkWebUpdate, appUpdate, macros, runMacro, openCamControl, abr: { state: abr, decide: abrDecide, apply: abrApply, tick: abrTick }, openDeskSummary, openDeskPreflight, liveStats, openDryRun, openFacebookDialog, fb, setDryRunSeconds: n => { DRY_RUN_SEC = n; }, disk, diskTick, setDiskFree: b => { disk.fake = b; return diskTick(); }, streamer, wireless, cut, autoTransition, setPreview, tr, ftb, padFire, chanKey, remote: remoteCtl, lufs, layoutSize, renderInputs, renderAlerts, openOutputWindow, setOrient };
+    window.webmix = { hl, failover, chatViewers: (p, n) => chatViewers(p, n), viewersNow: () => viewersNow(), perf: () => ({ fps, renderMs, frameNo, thumbs: thumbs.size, inputs: inputs.length }), chatFeed, chatAdd, chatShow, chatHide, playlist, dataSources, timerControl, multiview, renderer, gpu, setRenderer: v => { settings.renderer = v; renderer.resolve(); updateStatus(); }, show, ovl, setChannel, toggleInputOverlay, useRecFolder: dir => { recFolder = dir; }, inputs, state, settings, overlays, audio, rec, iso, stinger, replayCapture, slideGo, midi, checkAppUpdate, checkWebUpdate, appUpdate, macros, runMacro, openCamControl, abr: { state: abr, decide: abrDecide, apply: abrApply, tick: abrTick }, openDeskSummary, openDeskPreflight, liveStats, openDryRun, openFacebookDialog, fb, setDryRunSeconds: n => { DRY_RUN_SEC = n; }, disk, diskTick, setDiskFree: b => { disk.fake = b; return diskTick(); }, streamer, wireless, cut, autoTransition, setPreview, tr, ftb, padFire, chanKey, remote: remoteCtl, lufs, layoutSize, renderInputs, renderAlerts, openOutputWindow, setOrient };
   }
 
   boot();
