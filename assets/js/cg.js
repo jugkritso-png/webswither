@@ -18,6 +18,13 @@
   const clamp = (value, min, max, fallback) => Number.isFinite(+value) ? Math.max(min, Math.min(max, +value)) : fallback;
   const cleanText = (value, max, fallback = '') => String(value ?? fallback).replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '').slice(0, max);
   const color = (value, fallback) => /^(#[\da-f]{3,8}|rgba?\([\d\s.,%]+\))$/i.test(String(value || '')) ? String(value) : fallback;
+  // สีเดิม + ความโปร่ง (ใช้ไล่สีพื้นเทมเพลต) — สีที่ไม่ใช่ hex คืนค่าเดิม
+  const withAlpha = (c, a) => {
+    const m = /^#([\da-f]{3}|[\da-f]{6})$/i.exec(c || '');
+    if (!m) return c;
+    const h = m[1].length === 3 ? m[1].replace(/./g, x => x + x) : m[1];
+    return `rgba(${parseInt(h.slice(0, 2), 16)},${parseInt(h.slice(2, 4), 16)},${parseInt(h.slice(4, 6), 16)},${a})`;
+  };
   const defaults = () => ({
     schemaVersion: SCHEMA_VERSION, id: uid(), name: tr('กราฟิกใหม่'), output: { width: 1920, height: 1080 }, activeSceneId: 'scene-main', playback: { in: 'fade', out: 'fade', durationMs: 500 },
     scenes: [{ id: 'scene-main', name: 'Lower Third', elements: templateElements('lower-third', { headline: tr('ชื่อผู้พูด'), subtitle: tr('หัวข้อ / ตำแหน่ง'), accent: '#ef4444', secondary: '#111827', text: '#ffffff' }) }]
@@ -25,18 +32,47 @@
   function makeElement(type, name, x, y, width, height, style = {}, content = {}) {
     return { id: uid(), type, name, visible: true, locked: false, transform: { x, y, width, height, rotation: 0 }, style, content };
   }
+  // เทมเพลตแบบงานข่าว / ถ่ายทอดสด: อยู่ในเขต Title Safe 90% (x 96–1824, y 54–1026) · พื้นไล่สีโปร่งเล็กน้อย · แถบสีเน้น
+  // ตัวอักษรย่อให้พอดีช่อง (ไม่บีบให้ผิดรูป) และอยู่กึ่งกลางแนวตั้ง · คำกำกับตัวพิมพ์ใหญ่ เว้นระยะตัวอักษร
   function templateElements(template, v = {}) {
-    const accent = color(v.accent, '#ef4444'), secondary = color(v.secondary, '#111827'), text = color(v.text, '#ffffff');
+    const accent = color(v.accent, '#e11d2e'), secondary = color(v.secondary, '#0f172a'), text = color(v.text, '#ffffff');
     const headline = cleanText(v.headline, 100, tr('ชื่อผู้พูด')), subtitle = cleanText(v.subtitle, 140, tr('หัวข้อ / ตำแหน่ง'));
     const label = cleanText(v.label, 24, 'LIVE'), ticker = cleanText(v.ticker, 240, tr('ข้อความวิ่งสำหรับไลฟ์'));
-    const shape = (name, x, y, width, height, fill, radius = 10) => makeElement('shape', name, x, y, width, height, { fill, radius });
-    const txt = (name, value, x, y, width, height, size, fill = text, weight = 700, align = 'left') => makeElement('text', name, x, y, width, height, { color: fill, fontFamily: 'IBM Plex Sans Thai', fontSize: size, fontWeight: weight, align, lineHeight: 1.15 }, { value });
-    if (template === 'top-banner') return [shape('แถบพื้นหลัง', 0, 0, 1920, 132, secondary, 0), shape('เส้นเน้น', 0, 125, 1920, 7, accent, 0), txt('หัวข้อ', headline, 64, 24, 1300, 58, 42), txt('ข้อความรอง', subtitle, 64, 78, 1200, 42, 26, text, 500), shape('ป้าย', 1640, 28, 210, 58, accent, 24), txt('คำกำกับ', label, 1645, 33, 200, 48, 24, text, 800, 'center')];
-    if (template === 'live-bug') return [shape('พื้นป้าย LIVE', 1580, 48, 150, 62, accent, 10), txt('LIVE', label, 1585, 53, 140, 50, 24, text, 800, 'center'), shape('พื้นหัวข้อ', 1740, 48, 150, 62, secondary, 10), txt('หัวข้อ', headline || subtitle, 1745, 53, 140, 50, 19, text, 700, 'center')];
-    if (template === 'ticker') return [shape('แถบพื้นหลัง', 0, 950, 1920, 86, secondary, 0), shape('ป้ายข่าว', 34, 960, 235, 66, accent, 8), txt('คำกำกับ', label || 'ข่าวด่วน', 42, 966, 219, 54, 24, text, 800, 'center'), makeElement('ticker', 'ข้อความวิ่ง', 300, 960, 1580, 68, { color: text, fontFamily: 'IBM Plex Sans Thai', fontSize: 26, fontWeight: 600, align: 'left', lineHeight: 1.2, padding: 0, tickerSpeed: clamp(v.speed, 20, 180, 80) }, { value: ticker })];
-    if (template === 'score-card') return [shape('กรอบคะแนน', 590, 830, 740, 170, secondary, 16), shape('ป้ายสถานะ', 590, 830, 140, 170, accent, 16), txt('สถานะ', label, 598, 887, 124, 54, 24, text, 800, 'center'), txt('ทีม A', cleanText(v.teamA, 24, 'ทีม A'), 760, 884, 210, 58, 28), txt('คะแนน', `${cleanText(v.scoreA, 4, '2')} : ${cleanText(v.scoreB, 4, '1')}`, 940, 868, 240, 82, 46, text, 800, 'center'), txt('ทีม B', cleanText(v.teamB, 24, 'ทีม B'), 1160, 884, 155, 58, 28, text, 700, 'right')];
-    if (template === 'full-screen') return [shape('พื้นประกาศ', 150, 360, 1620, 360, 'rgba(10,13,20,0.9)', 20), shape('เส้นเน้น', 150, 360, 14, 360, accent, 0), txt('หัวข้อ', headline, 240, 415, 1440, 110, 62, text, 800, 'center'), txt('ข้อความรอง', subtitle, 240, 535, 1440, 92, 36, accent, 600, 'center')];
-    return [shape('พื้นชื่อ', 64, 828, 760, 176, secondary, 12), shape('แถบสี', 64, 828, 16, 176, accent, 0), txt('ชื่อผู้พูด', headline, 104, 846, 680, 78, 52, text, 800), txt('ตำแหน่ง', subtitle, 104, 922, 680, 55, 29, text, 500)];
+    const shape = (name, x, y, width, height, fill, radius = 0, extra = {}) => makeElement('shape', name, x, y, width, height, { fill, radius, ...extra });
+    const panel = (name, x, y, width, height, radius = 0, angle = 0) => shape(name, x, y, width, height, secondary, radius, { fill2: withAlpha(secondary, 0.78), gradAngle: angle, shadow: true });
+    const bar = (name, x, y, width, height, radius = 0) => shape(name, x, y, width, height, accent, radius, { fill2: withAlpha(accent, 0.82), gradAngle: 0 });
+    const txt = (name, value, x, y, width, height, size, o = {}) => makeElement('text', name, x, y, width, height, {
+      color: o.color || text, fontFamily: 'IBM Plex Sans Thai', fontSize: size, fontWeight: o.weight || 700, align: o.align || 'left', lineHeight: 1.15,
+      vAlign: 'middle', fit: 'shrink', letterSpacing: o.spacing || 0, uppercase: !!o.upper, padding: o.pad ?? 0, shadow: !!o.shadow
+    }, { value });
+    if (template === 'top-banner') return [
+      panel('แถบพื้นหลัง', 96, 54, 1728, 120, 6, 0), bar('แถบสีด้านล่าง', 96, 168, 1728, 6),
+      bar('ป้ายคำกำกับ', 96, 54, 220, 120, 6), txt('คำกำกับ', label, 96, 54, 220, 120, 34, { weight: 800, align: 'center', upper: true, spacing: 3 }),
+      txt('หัวข้อ', headline, 344, 62, 1450, 62, 44, { weight: 800 }), txt('ข้อความรอง', subtitle, 344, 120, 1450, 44, 28, { weight: 500, color: withAlpha(text, 0.86) })];
+    if (template === 'live-bug') return [
+      bar('พื้นป้าย LIVE', 1640, 54, 184, 60, 8), shape('จุด LIVE', 1662, 75, 18, 18, '#ffffff', 9),
+      txt('LIVE', label, 1690, 54, 120, 60, 28, { weight: 800, upper: true, spacing: 4 }),
+      panel('พื้นหัวข้อ', 1504, 122, 320, 52, 8, 0), txt('หัวข้อ', headline || subtitle, 1518, 122, 292, 52, 24, { weight: 700, align: 'right' })];
+    if (template === 'ticker') return [
+      panel('แถบพื้นหลัง', 0, 958, 1920, 68, 0, 0), bar('เส้นบน', 0, 952, 1920, 6),
+      bar('ป้ายข่าว', 96, 958, 250, 68), txt('คำกำกับ', label || 'ข่าวด่วน', 96, 958, 250, 68, 30, { weight: 800, align: 'center', upper: true, spacing: 2 }),
+      makeElement('ticker', 'ข้อความวิ่ง', 370, 958, 1454, 68, { color: text, fontFamily: 'IBM Plex Sans Thai', fontSize: 32, fontWeight: 600, align: 'left', lineHeight: 1.2, padding: 0, vAlign: 'middle', tickerSpeed: clamp(v.speed, 20, 180, 90) }, { value: ticker })];
+    if (template === 'score-card') return [
+      panel('กรอบคะแนน', 96, 54, 640, 72, 8, 0),
+      txt('ทีม A', cleanText(v.teamA, 24, 'ทีม A'), 106, 54, 210, 72, 30, { weight: 800, upper: true, spacing: 1, align: 'center' }),
+      bar('พื้นคะแนน', 326, 62, 160, 56, 6), txt('คะแนน', `${cleanText(v.scoreA, 4, '2')} – ${cleanText(v.scoreB, 4, '1')}`, 326, 62, 160, 56, 38, { weight: 800, align: 'center' }),
+      txt('ทีม B', cleanText(v.teamB, 24, 'ทีม B'), 496, 54, 230, 72, 30, { weight: 800, upper: true, spacing: 1, align: 'center' }),
+      panel('พื้นเวลา', 96, 126, 220, 44, 8, 0), txt('สถานะ', label, 96, 126, 220, 44, 22, { weight: 700, align: 'center', upper: true, spacing: 2, color: withAlpha(text, 0.9) })];
+    if (template === 'full-screen') return [
+      panel('พื้นประกาศ', 240, 300, 1440, 480, 14, 90), bar('เส้นเน้นบน', 240, 300, 1440, 10, 0),
+      txt('หัวข้อ', headline, 300, 380, 1320, 150, 76, { weight: 800, align: 'center' }),
+      shape('เส้นคั่น', 860, 556, 200, 4, accent, 2),
+      txt('ข้อความรอง', subtitle, 300, 580, 1320, 120, 40, { weight: 600, align: 'center', color: withAlpha(text, 0.9) })];
+    // Lower Third: แผ่นชื่อ (พื้นเข้มไล่สี + แถบสีด้านซ้าย) ซ้อนแถบตำแหน่งสีเน้น
+    return [
+      panel('แผ่นชื่อ', 96, 812, 820, 100, 0, 0), bar('แถบเน้น', 96, 812, 12, 100),
+      txt('ชื่อ', headline, 136, 812, 760, 100, 54, { weight: 800 }),
+      bar('แถบตำแหน่ง', 96, 912, 640, 54), txt('ตำแหน่ง', subtitle, 136, 912, 580, 54, 28, { weight: 600, upper: true, spacing: 1.5 })];
   }
   function migrateLegacy(raw) {
     const template = LEGACY_TEMPLATES.includes(raw?.template) ? raw.template : 'lower-third';
@@ -66,11 +102,13 @@
         color: color(st.color, '#ffffff'), backgroundColor: st.backgroundColor === 'transparent' ? 'transparent' : color(st.backgroundColor, 'transparent'),
         fontFamily: font, fontSize: clamp(st.fontSize, 8, 240, 48), fontWeight: [400, 500, 600, 700, 800, 900].includes(+st.fontWeight) ? +st.fontWeight : 700,
         align: ['left', 'center', 'right'].includes(st.align) ? st.align : 'left', lineHeight: clamp(st.lineHeight, 0.8, 2.5, 1.2), padding: clamp(st.padding, 0, 80, 0), radius: clamp(st.radius, 0, 80, 0),
-        shadow: !!st.shadow, tickerSpeed: clamp(st.tickerSpeed, 20, 300, 80)
+        shadow: !!st.shadow, tickerSpeed: clamp(st.tickerSpeed, 20, 300, 80),
+        // ระยะห่างตัวอักษร · ตัวพิมพ์ใหญ่ · ย่อให้พอดีช่อง (shrink) หรือบีบแนวนอนแบบเดิม (squash) · จัดแนวตั้ง
+        letterSpacing: clamp(st.letterSpacing, -5, 40, 0), uppercase: !!st.uppercase, fit: st.fit === 'shrink' ? 'shrink' : 'squash', vAlign: st.vAlign === 'middle' ? 'middle' : 'top'
       };
       result.content = { mode: 'static', value: cleanText(content.value ?? raw?.text, 1000, 'ข้อความ') };
     } else if (type === 'shape') {
-      result.style = { fill: color(st.fill, '#ef4444'), radius: clamp(st.radius, 0, 300, 0), borderColor: st.borderColor === 'transparent' ? 'transparent' : color(st.borderColor, 'transparent'), borderWidth: clamp(st.borderWidth, 0, 24, 0), shadow: !!st.shadow };
+      result.style = { fill: color(st.fill, '#ef4444'), fill2: st.fill2 ? color(st.fill2, '') : '', gradAngle: clamp(st.gradAngle, 0, 360, 0), radius: clamp(st.radius, 0, 300, 0), borderColor: st.borderColor === 'transparent' ? 'transparent' : color(st.borderColor, 'transparent'), borderWidth: clamp(st.borderWidth, 0, 24, 0), shadow: !!st.shadow };
     } else {
       const src = typeof content.src === 'string' && content.src.length <= MAX_IMAGE_DATA && /^data:image\/(png|jpeg|webp);base64,[a-z\d+/=]+$/i.test(content.src) ? content.src : '';
       result.style = { fit: st.fit === 'contain' ? 'contain' : 'cover', radius: clamp(st.radius, 0, 300, 0) };
@@ -132,26 +170,45 @@
       const t = el.transform, x = t.x, y = t.y, ew = t.width, eh = t.height;
       ctx.save(); ctx.translate(x + ew / 2, y + eh / 2); ctx.rotate(t.rotation * Math.PI / 180); ctx.translate(-ew / 2, -eh / 2);
       if (el.type === 'shape') {
-        ctx.fillStyle = el.style.fill;
+        if (el.style.fill2) {
+          // ไล่สีตามมุม (0 = ซ้าย→ขวา · 90 = บน→ล่าง)
+          const a = el.style.gradAngle * Math.PI / 180, dx = Math.cos(a) * ew / 2, dy = Math.sin(a) * eh / 2;
+          const g = ctx.createLinearGradient(ew / 2 - dx, eh / 2 - dy, ew / 2 + dx, eh / 2 + dy);
+          g.addColorStop(0, el.style.fill); g.addColorStop(1, el.style.fill2);
+          ctx.fillStyle = g;
+        } else ctx.fillStyle = el.style.fill;
         if (el.style.shadow) { ctx.shadowColor = 'rgba(0,0,0,.35)'; ctx.shadowBlur = 18; ctx.shadowOffsetY = 5; }
         roundedRect(ctx, 0, 0, ew, eh, el.style.radius); ctx.fill();
         if (el.style.borderWidth > 0 && el.style.borderColor !== 'transparent') { ctx.strokeStyle = el.style.borderColor; ctx.lineWidth = el.style.borderWidth; ctx.stroke(); }
       } else if (el.type === 'text' || el.type === 'ticker') {
         if (el.style.backgroundColor !== 'transparent') { ctx.fillStyle = el.style.backgroundColor; roundedRect(ctx, 0, 0, ew, eh, el.style.radius); ctx.fill(); }
-        const pad = el.style.padding, fontSize = el.style.fontSize;
-        ctx.beginPath(); ctx.rect(pad, 0, Math.max(0, ew - pad * 2), eh); ctx.clip();
-        ctx.fillStyle = el.style.color; ctx.font = `${el.style.fontWeight} ${fontSize}px "${el.style.fontFamily}"`;
-        ctx.textAlign = el.style.align; ctx.textBaseline = 'top';
-        if (el.style.shadow) { ctx.shadowColor = 'rgba(0,0,0,.55)'; ctx.shadowBlur = 8; }
-        const tx = el.style.align === 'center' ? ew / 2 : el.style.align === 'right' ? ew - pad : pad;
+        const pad = el.style.padding, st = el.style, avail = Math.max(1, ew - pad * 2);
+        ctx.beginPath(); ctx.rect(pad, 0, avail, eh); ctx.clip();
+        const up = l => st.uppercase ? l.toLocaleUpperCase() : l;
+        const lines = el.type === 'ticker' ? [up(el.content.value)] : el.content.value.split('\n').slice(0, 12).map(up);
+        let size = st.fontSize;
+        const setFont = px => { ctx.font = `${st.fontWeight} ${px}px "${st.fontFamily}"`; if ('letterSpacing' in ctx) ctx.letterSpacing = `${st.letterSpacing * px / st.fontSize}px`; };
+        setFont(size);
+        // ย่อขนาดให้บรรทัดที่ยาวที่สุดพอดีช่อง (ไม่บีบตัวอักษรให้ผอม) — ไม่ต่ำกว่าครึ่งของขนาดที่ตั้ง
+        if (el.type !== 'ticker' && st.fit === 'shrink') {
+          const widest = Math.max(...lines.map(l => ctx.measureText(l).width));
+          if (widest > avail) { size = Math.max(st.fontSize * 0.5, st.fontSize * avail / widest); setFont(size); }
+        }
+        ctx.fillStyle = st.color; ctx.textAlign = st.align;
+        if (st.shadow) { ctx.shadowColor = 'rgba(0,0,0,.55)'; ctx.shadowBlur = 8; ctx.shadowOffsetY = 2; }
+        const middle = st.vAlign === 'middle', lh = size * st.lineHeight;
+        ctx.textBaseline = middle ? 'middle' : 'top';
+        const yOf = i => middle ? eh / 2 + (i - (lines.length - 1) / 2) * lh : i * lh;
+        const tx = st.align === 'center' ? ew / 2 : st.align === 'right' ? ew - pad : pad;
+        const maxW = st.fit === 'shrink' ? undefined : avail;
         if (el.type === 'ticker') {
-          const line = el.content.value, tw = ctx.measureText(line).width, gap = 90, cycle = tw + gap;
-          const offset = cycle > 0 ? (Date.now() / 1000 * el.style.tickerSpeed) % cycle : 0;
+          const line = lines[0], tw = ctx.measureText(line).width, gap = 90, cycle = tw + gap;
+          const offset = cycle > 0 ? (Date.now() / 1000 * st.tickerSpeed) % cycle : 0;
           ctx.textAlign = 'left';
-          for (let px = ew - offset; px < ew; px += cycle) ctx.fillText(line, px, 0, Math.max(1, ew));
-          if (ew - offset + tw < ew) ctx.fillText(line, ew - offset + cycle, 0, Math.max(1, ew));
+          for (let px = ew - offset; px < ew; px += cycle) ctx.fillText(line, px, yOf(0));
+          if (ew - offset + tw < ew) ctx.fillText(line, ew - offset + cycle, yOf(0));
         } else {
-          el.content.value.split('\n').slice(0, 12).forEach((line, i) => ctx.fillText(line, tx, i * fontSize * el.style.lineHeight, Math.max(1, ew - pad * 2)));
+          lines.forEach((line, i) => maxW ? ctx.fillText(line, tx, yOf(i), maxW) : ctx.fillText(line, tx, yOf(i)));
         }
       } else if (el.type === 'image') {
         const img = getImage(el.content.src);

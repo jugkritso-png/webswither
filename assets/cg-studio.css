@@ -122,3 +122,8 @@ body { font-size: 13px; background: var(--bg); padding: 8px; display: flex; flex
 @media (max-width: 1120px) { .app-shell { grid-template-columns: 236px minmax(400px, 1fr) 272px; } .doc-name input { width: 140px; } .top-actions .button { padding: 0 9px; font-size: 12px; } }
 @media (max-width: 860px) { body { padding: 6px; } .app-shell { grid-template-columns: 1fr; } .center-panel { grid-template-rows: 48px minmax(250px, 1fr) 26px 150px 62px 26px; } }
 @media (max-width: 540px) { .center-panel { grid-template-rows: 44px minmax(220px, 1fr) 24px 140px auto 26px; } .topbar { height: auto; } .brand-name { font-size: 14px; } }
+
+/* Safe area มาตรฐาน HD (SMPTE RP 2046-1): Title Safe 90% · Action Safe 93% */
+.safe-overlay { inset: 5%; }
+.safe-overlay .action-safe { position: absolute; inset: calc(-1.5 / 90 * 100%); border: 1px dotted rgba(127,166,255,.35); }
+.safe-overlay .action-safe span { top: auto; bottom: 3px; left: 5px; position: absolute; }

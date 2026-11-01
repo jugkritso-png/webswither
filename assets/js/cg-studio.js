@@ -98,8 +98,15 @@
     $('#shape-properties').hidden = element.type !== 'shape'; $('#image-properties').hidden = element.type !== 'image';
     if (textElement) {
       put('#text-content', element.content.value); put('#font-size', element.style.fontSize); put('#font-weight', String(element.style.fontWeight));
+      put('#letter-spacing', element.style.letterSpacing || 0); put('#text-valign', element.style.vAlign || 'top'); put('#text-fit', element.style.fit || 'squash');
+      $('#text-upper').checked = !!element.style.uppercase; $('#text-shadow').checked = !!element.style.shadow;
       put('#font-family', element.style.fontFamily); put('#text-color', element.style.color.startsWith('#') && element.style.color.length === 7 ? element.style.color : '#ffffff'); put('#text-align', element.style.align); put('#ticker-speed', element.style.tickerSpeed);
-    } else if (element.type === 'shape') { put('#shape-fill', element.style.fill.startsWith('#') && element.style.fill.length === 7 ? element.style.fill : '#ef4c38'); put('#shape-radius', element.style.radius); }
+    } else if (element.type === 'shape') {
+      put('#shape-fill', element.style.fill.startsWith('#') && element.style.fill.length === 7 ? element.style.fill : '#ef4c38'); put('#shape-radius', element.style.radius);
+      const grad = !!element.style.fill2; $('#shape-grad').checked = grad; $('.shape-grad-fields').hidden = !grad;
+      put('#shape-fill2', /^#[\da-f]{6}$/i.test(element.style.fill2 || '') ? element.style.fill2 : '#111827'); put('#shape-angle', element.style.gradAngle || 0);
+      $('#shape-shadow').checked = !!element.style.shadow;
+    }
     else put('#image-fit', element.style.fit);
   }
   function positionSelection() {
@@ -159,7 +166,7 @@
     const scene = activeScene(); if (!scene) return;
     const ordered = scene.elements;
     const el = type === 'text' || type === 'ticker'
-      ? { id: `el-${Math.random().toString(36).slice(2, 9)}`, type, name: type === 'ticker' ? 'ตัววิ่ง' : 'ข้อความใหม่', visible: true, locked: false, transform: { x: 650, y: 440, width: 620, height: 92, rotation: 0, zIndex: ordered.length }, style: { color: '#ffffff', backgroundColor: 'transparent', fontFamily: 'IBM Plex Sans Thai', fontSize: 52, fontWeight: 700, align: 'left', lineHeight: 1.2, padding: 0, radius: 0, tickerSpeed: 80 }, content: { mode: 'static', value: type === 'ticker' ? 'ข้อความวิ่งสำหรับไลฟ์' : 'ข้อความใหม่' }, ...extra }
+      ? { id: `el-${Math.random().toString(36).slice(2, 9)}`, type, name: type === 'ticker' ? 'ตัววิ่ง' : 'ข้อความใหม่', visible: true, locked: false, transform: { x: 650, y: 440, width: 620, height: 92, rotation: 0, zIndex: ordered.length }, style: { color: '#ffffff', backgroundColor: 'transparent', fontFamily: 'IBM Plex Sans Thai', fontSize: 52, fontWeight: 700, align: 'left', lineHeight: 1.2, padding: 0, radius: 0, tickerSpeed: 80, fit: 'shrink', vAlign: 'middle' }, content: { mode: 'static', value: type === 'ticker' ? 'ข้อความวิ่งสำหรับไลฟ์' : 'ข้อความใหม่' }, ...extra }
       : type === 'shape'
         ? { id: `el-${Math.random().toString(36).slice(2, 9)}`, type, name: 'Shape ใหม่', visible: true, locked: false, transform: { x: 700, y: 420, width: 520, height: 220, rotation: 0, zIndex: ordered.length }, style: { fill: '#ef4c38', radius: 14, borderColor: 'transparent', borderWidth: 0, shadow: false }, content: {}, ...extra }
         : { id: `el-${Math.random().toString(36).slice(2, 9)}`, type, name: 'Image', visible: true, locked: false, transform: { x: 700, y: 380, width: 480, height: 270, rotation: 0, zIndex: ordered.length }, style: { fit: 'contain', radius: 0 }, content: { src: '', alt: '' }, ...extra };
@@ -339,6 +346,15 @@
   bindValue('#text-align', value => patchElement(el => { el.style.align = value; }), 'change');
   bindValue('#shape-fill', value => patchElement(el => { el.style.fill = value; }, { history: false }));
   bindValue('#shape-radius', value => patchElement(el => { el.style.radius = Number(value); }, { history: false }));
+  bindValue('#letter-spacing', value => patchElement(el => { el.style.letterSpacing = Number(value) || 0; }, { history: false }));
+  bindValue('#text-valign', value => patchElement(el => { el.style.vAlign = value; }), 'change');
+  bindValue('#text-fit', value => patchElement(el => { el.style.fit = value; }), 'change');
+  $('#text-upper').addEventListener('change', event => patchElement(el => { el.style.uppercase = event.target.checked; }));
+  $('#text-shadow').addEventListener('change', event => patchElement(el => { el.style.shadow = event.target.checked; }));
+  $('#shape-grad').addEventListener('change', event => patchElement(el => { el.style.fill2 = event.target.checked ? ($('#shape-fill2').value || '#111827') : ''; }));
+  bindValue('#shape-fill2', value => patchElement(el => { el.style.fill2 = value; }, { history: false }));
+  bindValue('#shape-angle', value => patchElement(el => { el.style.gradAngle = Number(value) || 0; }, { history: false }));
+  $('#shape-shadow').addEventListener('change', event => patchElement(el => { el.style.shadow = event.target.checked; }));
   bindValue('#ticker-speed', value => patchElement(el => { el.style.tickerSpeed = Number(value); }, { history: false }));
   bindValue('#image-fit', value => patchElement(el => { el.style.fit = value; }), 'change');
   $('#element-visible').addEventListener('change', event => patchElement(el => { el.visible = event.target.checked; }));
