@@ -148,7 +148,8 @@
     return hasApi() && (forced || webkitGtk);
   }
 
-  async function pickVideoConfig(width, height, fps, bitrate, preferAvc, requireAvc = false, constantBitrate = false) {
+  // hw = ต้องเป็นชิปของเครื่อง (prefer-hardware) — บนคอมใช้กับการส่งตรงผ่าน Gateway เท่านั้น ไม่ย้ายงานหนักมาไว้ที่ CPU ของผู้ใช้
+  async function pickVideoConfig(width, height, fps, bitrate, preferAvc, requireAvc = false, constantBitrate = false, hw = false) {
     const level = height > 1080 ? '33' : height > 720 ? '28' : '1f';
     // High → Main → Baseline: ตัวเข้ารหัสของมือถือบางรุ่น (MediaCodec) ไม่รับโปรไฟล์ High
     const avc = ['6400', '4d00', '42e0'].map(p => ({ codec: `avc1.${p}${level}`, codecId: 'V_MPEG4/ISO/AVC', avc: { format: 'avc' }, mime: 'h264' }));
@@ -156,7 +157,7 @@
     if (requireAvc) list = avc;
     else if (!preferAvc) list = [list[list.length - 1], ...avc];
     for (const c of list) {
-      const base = { codec: c.codec, width, height, bitrate, framerate: fps, latencyMode: 'realtime', ...(c.avc ? { avc: c.avc } : {}) };
+      const base = { codec: c.codec, width, height, bitrate, framerate: fps, latencyMode: 'realtime', ...(c.avc ? { avc: c.avc } : {}), ...(hw ? { hardwareAcceleration: 'prefer-hardware' } : {}) };
       // สตรีม: บิตเรตคงที่ช่วยให้ปลายทาง (RTMP) ไม่ล้นบัฟเฟอร์ — ถ้าตัวเข้ารหัสไม่รองรับใช้แบบปกติ
       for (const cfg of constantBitrate ? [{ ...base, bitrateMode: 'constant' }, base] : [base]) {
         try { if ((await within(VideoEncoder.isConfigSupported(cfg), 3000, {})).supported) return { cfg, codecId: c.codecId, mime: c.mime }; } catch (e) {}
@@ -173,9 +174,9 @@
 
   // ลองเข้ารหัส H.264 จริง ๆ สั้น ๆ แล้ววัดว่าทันเฟรมเรตไหม — บางเครื่อง (เช่น emulator) รองรับแต่ช้ามาก
   // คืน { ok, fps } · ok = ได้อย่างน้อย 90% ของเฟรมเรตที่ต้องการ
-  async function avcBenchmark(width, height, fps, bitrate, ms = 2500) {
+  async function avcBenchmark(width, height, fps, bitrate, ms = 2500, hw = false) {
     width &= ~1; height &= ~1;
-    const sel = hasApi() && await pickVideoConfig(width, height, fps, bitrate, true, true, true);
+    const sel = hasApi() && await pickVideoConfig(width, height, fps, bitrate, true, true, true, hw);
     if (!sel) return { ok: false, fps: 0 };
     const canvas = document.createElement('canvas');
     canvas.width = width; canvas.height = height;
@@ -222,10 +223,10 @@
 
   /* ------------------------------------------------------------ recorder */
   // canvas: ภาพ Program · audioNode: โหนดเสียง Master (null = ไม่มีเสียง)
-  async function createRecorder({ canvas, audioNode, fps, videoBitsPerSecond, audioBitsPerSecond, preferAvc = true, requireAvc = false, constantBitrate = false }) {
+  async function createRecorder({ canvas, audioNode, fps, videoBitsPerSecond, audioBitsPerSecond, preferAvc = true, requireAvc = false, constantBitrate = false, requireHw = false }) {
     if (!hasApi()) throw new Error('เบราว์เซอร์นี้ไม่มี WebCodecs');
     const width = canvas.width & ~1, height = canvas.height & ~1;
-    const vsel = await pickVideoConfig(width, height, fps, videoBitsPerSecond, preferAvc, requireAvc, constantBitrate);
+    const vsel = await pickVideoConfig(width, height, fps, videoBitsPerSecond, preferAvc, requireAvc, constantBitrate, requireHw);
     if (!vsel) throw new Error(requireAvc ? 'เข้ารหัส H.264 ด้วย WebCodecs ไม่ได้' : 'ไม่มีตัวเข้ารหัสวิดีโอ (H.264 / VP8) ใน WebCodecs');
 
     const actx = audioNode ? audioNode.context : null;

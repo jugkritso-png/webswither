@@ -221,12 +221,14 @@
     checkHwAvc();
   }
 
-  // มือถือ (แอป Android): หน้าเว็บเข้ารหัส H.264 ด้วยชิปของเครื่อง (WebCodecs → MediaCodec) แล้วให้ Gateway ในแอป
-  // ส่งต่อเลยโดยไม่ถอดรหัส/เข้ารหัสซ้ำ — งานลดลงเกือบครึ่ง เครื่องร้อนน้อยลง ภาพคมขึ้น
+  // เข้ารหัส H.264 ด้วยชิปของเครื่อง (WebCodecs) แล้วให้ Gateway ส่งต่อเลยโดยไม่ถอดรหัส/เข้ารหัสซ้ำ (vcopy)
+  // · แอป Android: ชิปของมือถือ (MediaCodec) กับ Gateway ในแอป — งานลดลงเกือบครึ่ง เครื่องร้อนน้อยลง ภาพคมขึ้น
+  // · คอม (เว็บ Chrome / Edge และแอปเดสก์ท็อป): เฉพาะเมื่อมีชิปเข้ารหัสจริง (prefer-hardware) — Gateway บนเซิร์ฟเวอร์
+  //   ไม่ต้องเข้ารหัสวิดีโอเลย รับไลฟ์พร้อมกันได้มากขึ้นหลายเท่า และภาพไม่ถูกบีบอัดสองรอบ
   // ปิดได้ด้วย localStorage 'webmix-vcopy' = '0'
   const hwAvc = { key: '', ok: false };
   function checkHwAvc(delay = 4000) {
-    if (!desktop || !desktop.mobile || !window.WebMix.wcrec) return Promise.resolve();
+    if (!window.WebMix.wcrec || !window.WebMix.wcrec.hasApi()) return Promise.resolve();
     let off = false;
     try { off = localStorage.getItem('webmix-vcopy') === '0'; } catch (e) {}
     const key = `${W}x${H}@${settings.fps}`;
@@ -239,14 +241,14 @@
     hwAvc.running = new Promise(resolve => {
       hwAvc.timer = setTimeout(() => {
         if (hwAvc.key !== key || streamer.active) { resolve(); return; }
-        window.WebMix.wcrec.avcBenchmark(W, H, settings.fps, settings.videoKbps * 1000)
+        window.WebMix.wcrec.avcBenchmark(W, H, settings.fps, settings.videoKbps * 1000, 2500, !desktop?.mobile)
           .then(r => { if (hwAvc.key === key) { hwAvc.ok = r.ok; hwAvc.fps = r.fps; } }).catch(() => {})
           .finally(() => { hwAvc.running = null; resolve(); });
       }, delay);
     });
     return hwAvc.running;
   }
-  const useVideoCopy = () => usingLocalGateway() && hwAvc.ok && hwAvc.key === `${W}x${H}@${settings.fps}`;
+  const useVideoCopy = () => hwAvc.ok && hwAvc.key === `${W}x${H}@${settings.fps}` && !!(usingLocalGateway() || gatewayUrl());
 
   /* -------------------------------------------------------------- state */
   const inputs = [];
@@ -9889,7 +9891,7 @@ onmessage = async e => {
         r = window.WebMix.wcrec.recorder({
           canvas: pgmCanvas, audioNode: audio.post || null, fps: settings.fps,
           videoBitsPerSecond: streamKbps() * 1000, audioBitsPerSecond: 160000,
-          requireAvc: true, constantBitrate: true
+          requireAvc: true, constantBitrate: true, requireHw: !desktop?.mobile
         });
       } else r = makeRecorder('stream');
     } catch (e) {
