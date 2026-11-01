@@ -222,20 +222,26 @@
   // ส่งต่อเลยโดยไม่ถอดรหัส/เข้ารหัสซ้ำ — งานลดลงเกือบครึ่ง เครื่องร้อนน้อยลง ภาพคมขึ้น
   // ปิดได้ด้วย localStorage 'webmix-vcopy' = '0'
   const hwAvc = { key: '', ok: false };
-  function checkHwAvc() {
-    if (!desktop || !desktop.mobile || !window.WebMix.wcrec) return;
+  function checkHwAvc(delay = 4000) {
+    if (!desktop || !desktop.mobile || !window.WebMix.wcrec) return Promise.resolve();
     let off = false;
     try { off = localStorage.getItem('webmix-vcopy') === '0'; } catch (e) {}
     const key = `${W}x${H}@${settings.fps}`;
-    hwAvc.key = key; hwAvc.ok = false;
-    if (off) return;
+    if (hwAvc.ok && hwAvc.key === key) return Promise.resolve();
+    if (hwAvc.key === key && hwAvc.running) return hwAvc.running;
+    hwAvc.key = key; hwAvc.ok = false; hwAvc.at = Date.now();
+    if (off) return Promise.resolve();
     // วัดความเร็วจริงก่อน (บางเครื่องรองรับแต่ช้ากว่าให้ Gateway เข้ารหัส) — รอให้หน้าเริ่มทำงานเสร็จก่อนค่อยวัด
     clearTimeout(hwAvc.timer);
-    hwAvc.timer = setTimeout(() => {
-      if (hwAvc.key !== key || streamer.active) return;
-      window.WebMix.wcrec.avcBenchmark(W, H, settings.fps, settings.videoKbps * 1000)
-        .then(r => { if (hwAvc.key === key) { hwAvc.ok = r.ok; hwAvc.fps = r.fps; } }).catch(() => {});
-    }, 4000);
+    hwAvc.running = new Promise(resolve => {
+      hwAvc.timer = setTimeout(() => {
+        if (hwAvc.key !== key || streamer.active) { resolve(); return; }
+        window.WebMix.wcrec.avcBenchmark(W, H, settings.fps, settings.videoKbps * 1000)
+          .then(r => { if (hwAvc.key === key) { hwAvc.ok = r.ok; hwAvc.fps = r.fps; } }).catch(() => {})
+          .finally(() => { hwAvc.running = null; resolve(); });
+      }, delay);
+    });
+    return hwAvc.running;
   }
   const useVideoCopy = () => usingLocalGateway() && hwAvc.ok && hwAvc.key === `${W}x${H}@${settings.fps}`;
 
@@ -1196,7 +1202,9 @@
     setRate(f) { if (this.worker) this.worker.postMessage(1000 / f); }
   };
   function rafLoop(now) {
-    if (!document.hidden && now - lastFrame >= 1000 / 61) frame(now);
+    // มือถือ: วาดไม่เกินเฟรมเรตเอาต์พุต (จอ 90/120 Hz ไม่ต้องวาด 60 ครั้ง/วินาที ถ้าส่งออกแค่ 30) — ลดงานเกือบครึ่ง เครื่องไม่ร้อน
+    const gap = desktop?.mobile ? 1000 / (Math.min(60, +settings.fps || 30) + 1) : 1000 / 61;
+    if (!document.hidden && now - lastFrame >= gap) frame(now);
     requestAnimationFrame(rafLoop);
   }
 
@@ -9229,7 +9237,9 @@
       : ['video/mp4;codecs=avc1.640033,mp4a.40.2', 'video/mp4;codecs=avc1,mp4a.40.2', 'video/webm;codecs=h264,opus'];
     const vpx = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'];
     const rest = ['video/mp4;codecs=avc1,mp4a.40.2', 'video/mp4'];
-    const list = H >= 1440 ? [...h264, ...vpx, ...rest] : [...vpx, ...h264, ...rest];
+    // มือถือส่งสตรีม: H.264 (ชิปของเครื่อง) ก่อน แล้ว VP8 — VP9 เข้ารหัสด้วย CPU หนักเกินไปสำหรับมือถือ
+    const list = desktop?.mobile && purpose === 'stream' ? [...h264, 'video/webm;codecs=vp8,opus', 'video/webm']
+      : H >= 1440 ? [...h264, ...vpx, ...rest] : [...vpx, ...h264, ...rest];
     return list.find(t => MediaRecorder.isTypeSupported(t)) || '';
   }
 
@@ -9834,6 +9844,7 @@ onmessage = async e => {
   function connectGateway(initial) {
     let r;
     const vcopy = useVideoCopy();
+    streamer.vcopy = vcopy;
     try {
       if (vcopy) {
         audio.ensure();
@@ -9968,6 +9979,8 @@ onmessage = async e => {
   let liveDialog = null, closeLiveDialog = null;
   function openLiveDialog() {
     if (liveDialog) return;
+    // ยังไม่ได้ใช้ชิปเข้ารหัส (ทดสอบครั้งแรกไม่ผ่าน เช่นเครื่องกำลังยุ่งตอนเปิดแอป) → ทดสอบใหม่ก่อนเริ่มไลฟ์
+    if (!streamer.ws && !streamer.reconnecting && !hwAvc.ok && Date.now() - (hwAvc.at || 0) > 20000) checkHwAvc(200);
     if (isPhoneUI()) return openMobileLive();
     // แผงไลฟ์ด้านขวา: สถานะ · ตัวเลขสุขภาพสตรีม · ปลายทาง (เริ่ม/หยุดแยก) · ปรับบิตเรตอัตโนมัติ · คุณภาพ
     dialog({
@@ -10028,6 +10041,8 @@ onmessage = async e => {
 
   // แผงไลฟ์บนมือถือ (bottom sheet): สุขภาพสตรีม · การ์ดปลายทาง · กดค้างเพื่อหยุด
   function openMobileLive() {
+    // ยังไม่ได้ใช้ชิปเข้ารหัส (ทดสอบครั้งแรกไม่ผ่าน เช่นเครื่องกำลังยุ่งตอนเปิดแอป) → ทดสอบใหม่ก่อนเริ่มไลฟ์
+    if (!streamer.ws && !streamer.reconnecting && !hwAvc.ok && Date.now() - (hwAvc.at || 0) > 20000) checkHwAvc(200);
     dialog({
       title: 'ไลฟ์',
       body: '<div class="dest-live"></div>',
@@ -10089,7 +10104,9 @@ onmessage = async e => {
         + tile('เข้ารหัส', spd ? spd.toFixed(2) : '—', spd ? 'x' : '', spd && spd < 0.9 ? 'is-bad' : '')
         + tile('หลุด / ต่อใหม่', s ? s.reconnects : 0, 'ครั้ง');
       const q = $('.lv-q', liveDialog);
-      if (q) q.textContent = `${formatTag(Math.min(W, H), settings.fps)} · H.264 · ${settings.videoKbps} kbps${W < H ? ' · 9:16' : ''}`;
+      // มือถือ: บอกว่าเข้ารหัสด้วยชิปแล้วส่งตรง หรือแปลง 2 ขั้น (หนักกว่า) — ใช้ดูสาเหตุเวลาเครื่องอืด
+      const path = desktop?.mobile ? (((live || streamer.ws) ? streamer.vcopy : useVideoCopy()) ? ' · ชิปเข้ารหัสของเครื่อง (ส่งตรง)' : ' · แปลง 2 ขั้น (ใช้เครื่องหนัก)') : '';
+      if (q) q.textContent = `${formatTag(Math.min(W, H), settings.fps)} · H.264 · ${settings.videoKbps} kbps${W < H ? ' · 9:16' : ''}${path}`;
     }
     box.innerHTML = settings.destinations.map(d => {
       const st = streamer.dests.get(d.id);
@@ -10596,6 +10613,8 @@ onmessage = async e => {
   // หน้าเตรียมก่อนไลฟ์: ตรวจความพร้อมทีละข้อ แล้วนับถอยหลัง 3-2-1 ก่อนเริ่มทุกปลายทางที่ติ๊กไว้
   async function openPreflight() {
     if (!isPhoneUI()) return openDeskPreflight();
+    // แอปมือถือ: ทดสอบชิปเข้ารหัสใหม่ถ้ายังไม่ผ่าน (รอไม่เกิน ~3 วินาที) — ผ่านแล้วไลฟ์นี้ส่งตรง ไม่ต้องแปลง 2 ขั้น
+    if (desktop?.mobile && !hwAvc.ok && Date.now() - (hwAvc.at || 0) > 20000) await Promise.race([checkHwAvc(0), new Promise(r => setTimeout(r, 3500))]);
     const list = settings.destinations.filter(d => d.enabled);
     const items = [];
     const add = (state, title, detail) => items.push({ state, title, detail });
@@ -10614,7 +10633,7 @@ onmessage = async e => {
     if (battery) add(battery.charging || battery.level >= 0.5 ? 'ok' : 'warn', `แบตเตอรี่ ${batteryText()}`, battery.charging ? 'เสียบสายชาร์จอยู่' : 'แนะนำเสียบสายชาร์จระหว่างไลฟ์');
     const hasCam = inputs.some(i => ['camera', 'wireless', 'guest'].includes(i.type));
     add(hasCam ? 'ok' : 'warn', 'กล้องและไมค์', hasCam ? `${inputs.filter(i => ['camera', 'wireless', 'guest'].includes(i.type)).length} กล้อง · ${audio.channels.length} ช่องเสียง` : 'ยังไม่มีกล้อง — เพิ่มจากปุ่ม “เพิ่มแหล่งภาพ”');
-    if (desktop && desktop.info) add('ok', 'ตัวเข้ารหัส', useVideoCopy() ? 'ชิปของเครื่อง (ไม่เข้ารหัสซ้ำ)' : desktop.info.encoder === 'libx264' ? 'CPU (libx264)' : 'ชิปของเครื่อง (MediaCodec)');
+    if (desktop && desktop.info) add(desktop.mobile && !useVideoCopy() ? 'warn' : 'ok', 'ตัวเข้ารหัส', useVideoCopy() ? 'ชิปของเครื่อง ส่งตรง (เบาเครื่อง)' : desktop.mobile ? 'แปลงภาพ 2 ขั้น — ชิปของเครื่องทดสอบไม่ผ่าน ใช้เครื่องหนักกว่า ลองลดความละเอียดเป็น 720p / 30 fps' : desktop.info.encoder === 'libx264' ? 'CPU (libx264)' : 'ชิปของเครื่อง (MediaCodec)');
     try {
       const est = await navigator.storage?.estimate?.();
       if (est && est.quota) {
@@ -11103,6 +11122,7 @@ onmessage = async e => {
           <div><small>แบต</small><b>${battery ? Math.round(battery.level * 100) + '%' : '—'}</b></div>
           <div><small>เวลา</small><b>${live && streamer.start ? fmtDuration(Date.now() - streamer.start) : '—'}</b></div>
         </div>
+        ${desktop?.mobile ? `<p class="ml-enc">${(live ? streamer.vcopy : useVideoCopy()) ? 'เข้ารหัสด้วยชิปของเครื่อง (ส่งตรง — เบาเครื่อง)' : 'แปลงภาพ 2 ขั้น (ใช้เครื่องหนักกว่า)'}${streamer.encoder?.speed ? ` · ${streamer.encoder.speed.toFixed(2)}x` : ''}</p>` : ''}
       </section>
       <div class="ml-dests">${settings.destinations.map(d => {
         const st = streamer.dests.get(d.id);

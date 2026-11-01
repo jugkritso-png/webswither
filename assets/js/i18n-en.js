@@ -2595,6 +2595,12 @@
     "สร้างไลฟ์ {} แล้ว — กด STREAM เพื่อเริ่มได้เลย": "{1} live created — press STREAM to start",
     "{}สร้างไลฟ์บน YouTube / Facebook…": "{1}Create a live on YouTube / Facebook…",
     "สร้างไลฟ์ล่วงหน้าจากในแอป: แผงไลฟ์ → “สร้างไลฟ์บน YouTube / Facebook…” ตั้งชื่อ คำอธิบาย เวลาเริ่ม และใครดูได้ แล้วระบบใส่ Server + Stream key ในปลายทางให้ (ไม่ทับช่องที่มีคีย์แล้ว) · YouTube ใช้ OAuth Client ID ของคุณ (Google Cloud → YouTube Data API v3) · Facebook ใช้ App ID เดียวกับคอมเมนต์ + สิทธิ์ publish_video · การเข้าสู่ระบบไม่ถูกบันทึกลงเครื่อง": "Create a live from inside the app: Live panel → “Create a live on YouTube / Facebook…” sets the title, description, start time and who can watch, then fills in the server + stream key of a destination (never overwriting one that has a key) · YouTube uses your own OAuth Client ID (Google Cloud → YouTube Data API v3) · Facebook uses the same App ID as comments + the publish_video permission · sign-ins are not saved on the device",
+    "· ชิปเข้ารหัสของเครื่อง (ส่งตรง)": "· device's hardware encoder (passed straight through)",
+    "· แปลง 2 ขั้น (ใช้เครื่องหนัก)": "· converted twice (heavier on the device)",
+    "เข้ารหัสด้วยชิปของเครื่อง (ส่งตรง — เบาเครื่อง)": "Encoded by the device's chip (passed straight through — light on the phone)",
+    "แปลงภาพ 2 ขั้น (ใช้เครื่องหนักกว่า)": "Picture converted twice (heavier on the phone)",
+    "ชิปของเครื่อง ส่งตรง (เบาเครื่อง)": "Device chip, passed straight through (light on the phone)",
+    "แปลงภาพ 2 ขั้น — ชิปของเครื่องทดสอบไม่ผ่าน ใช้เครื่องหนักกว่า ลองลดความละเอียดเป็น 720p / 30 fps": "Picture converted twice — the device's encoder chip failed its test, so this is heavier; try lowering to 720p / 30 fps",
     "ทีวี": "TV", "หน้า": "Page", "รายการ": "Item", "ความยาว": "Length", "เหลือ": "Remain", "สไลด์": "Slides"
   });
 })(window.WebMix = window.WebMix || {});

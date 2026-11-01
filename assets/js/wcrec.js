@@ -180,8 +180,9 @@
     const canvas = document.createElement('canvas');
     canvas.width = width; canvas.height = height;
     const g = canvas.getContext('2d');
-    let out = 0, broken = false, n = 0;
-    const enc = new VideoEncoder({ output: () => { out++; }, error: () => { broken = true; } });
+    // นับอัตราจากเฟรมแรกที่ออกมา (ชิปเข้ารหัสใช้เวลาเริ่มต้นราวครึ่งวินาที — ไม่นับช่วงนั้นเป็นความช้า)
+    let out = 0, broken = false, n = 0, tFirst = 0, tLast = 0;
+    const enc = new VideoEncoder({ output: () => { const t = performance.now(); if (!out) tFirst = t; tLast = t; out++; }, error: () => { broken = true; } });
     try { enc.configure(sel.cfg); } catch (e) { return { ok: false, fps: 0 }; }
     const t0 = performance.now();
     await new Promise(resolve => {
@@ -197,7 +198,7 @@
       }, Math.max(4, 1000 / fps / 4));
     });
     // ไม่รอ flush นาน — นับเฉพาะที่เข้ารหัสออกมาภายในเวลาทดสอบ
-    const got = out / (ms / 1000);
+    const got = out > 5 && tLast > tFirst ? (out - 1) / ((tLast - tFirst) / 1000) : out / (ms / 1000);
     try { enc.close(); } catch (e) {}
     return { ok: !broken && got >= fps * 0.9, fps: Math.round(got * 10) / 10 };
   }

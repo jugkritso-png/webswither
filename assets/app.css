@@ -3124,3 +3124,4 @@ html.is-card-drag, html.is-card-drag * { cursor: grabbing !important; }
 
 /* ออกอากาศอยู่: ไม่เบลอพื้นหลังหน้าต่าง (ประหยัดเครื่อง ภาพไลฟ์ไม่ตก) */
 .on-air .modal-backdrop, .on-air .menu { -webkit-backdrop-filter: none; backdrop-filter: none; }
+.ml-enc { margin: 8px 0 0; font-size: 12px; opacity: .75; }
