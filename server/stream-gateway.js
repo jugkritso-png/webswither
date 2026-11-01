@@ -172,6 +172,15 @@ function authorize(req, token) {
 // การเชื่อมต่อทั้งหมด (สตรีมและ SRT ขาเข้า) — ใช้ตรวจโควตาและแสดงในหน้าผู้ดูแล
 const sessions = new Map();
 const sessionList = () => [...sessions.values()].map(s => s.snapshot());
+// โหมดพักรับงาน (drain): มีไฟล์ drain ข้างไฟล์ผู้ใช้ = ไม่รับสตรีม / SRT ใหม่ แต่ไลฟ์ที่ออกอากาศอยู่ไปต่อได้
+// (รวมถึงไลฟ์ที่หลุดแล้วต่อกลับภายใน 2 นาที) — install.sh เปิดโหมดนี้ก่อนอัปเดต แล้วรอจนไม่มีใครไลฟ์ค่อยสลับ
+// Gateway ที่เพิ่งเปิดลบไฟล์นี้เอง (เปิดใหม่ = อัปเดตเสร็จแล้ว)
+const path = require('path'), fs = require('fs');
+const DRAIN_FILE = path.join(path.dirname(users.USERS_FILE), 'drain');
+try { fs.unlinkSync(DRAIN_FILE); } catch (e) {}
+const draining = () => { try { return fs.existsSync(DRAIN_FILE); } catch (e) { return false; } };
+const DRAIN_MSG = 'เซิร์ฟเวอร์กำลังอัปเดต — ยังไม่รับไลฟ์ใหม่ชั่วคราว ลองใหม่ในอีกไม่กี่นาที (ไลฟ์ที่ออกอากาศอยู่ไม่ถูกตัด)';
+const recentlyLive = new Map();   // ชื่อผู้ใช้ → เวลาที่สตรีมล่าสุดจบ/หลุด (ให้ต่อกลับได้ระหว่าง drain)
 const countFor = (kind, name, pred = () => true) => [...sessions.values()].filter(s => s.kind === kind && (name == null || s.user.name === name) && pred(s)).length;
 
 // เมื่อสตรีมที่กำลังไลฟ์หลุดโดยไม่ได้กดหยุด และไม่กลับมาภายใน 30 วินาที → แจ้งเตือน
@@ -236,6 +245,7 @@ function ingestControl(ws, req, auth) {
     if (msg.type === 'sources') return send({ type: 'sources', proto: String(msg.proto || ''), list: [], error: NET_ONLY_DESKTOP });
     if (msg.type !== 'open') return;
     if (msg.mode === 'ndi' || msg.mode === 'omt') return fail(NET_ONLY_DESKTOP);
+    if (draining()) return fail(DRAIN_MSG);
     const kind = ['caller', 'rtsp', 'rtmp'].includes(msg.mode) ? msg.mode : 'listener';
     if ((kind === 'listener' || kind === 'caller') && !SRT_SUPPORTED) return fail('ffmpeg ในเซิร์ฟเวอร์นี้ไม่รองรับ SRT');
     const lim = auth.user.limits;
@@ -485,7 +495,7 @@ const server = http.createServer((req, res) => {
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'x-frame-options': 'DENY', 'content-security-policy': "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'" });
       return res.end(monitor.ADMIN_HTML);
     }
-    return json(200, monitor.status(sessionList()));
+    return json(200, { ...monitor.status(sessionList()), draining: draining() });
   }
   if (u.pathname === '/metrics') {
     const ok = METRICS_TOKEN ? token === METRICS_TOKEN : (() => { const a = authorize(req, token); return !a.error && a.user.admin; })();
@@ -494,7 +504,7 @@ const server = http.createServer((req, res) => {
     return res.end(monitor.metrics(sessionList()));
   }
   res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' });
-  res.end(`WebMix Stream Gateway: OK (${countFor('stream', null, s => s.encoding)} streams, ${ingests.size} SRT inputs)\n`);
+  res.end(`WebMix Stream Gateway: OK (${countFor('stream', null, s => s.encoding)} streams, ${ingests.size} SRT inputs)${draining() ? ' draining' : ''}\n`);
 });
 const wss = new WebSocketServer({ server, maxPayload: 64 * 1024 * 1024 });
 server.listen(PORT);
@@ -566,6 +576,7 @@ wss.on('connection', (ws, req) => {
       }
     }
     const mine = countFor('stream', user.name, s => s.encoding);
+    if (draining() && !(Date.now() - (recentlyLive.get(user.name) || 0) < 120000)) { reject(DRAIN_MSG, 'draining'); return false; }
     if (userLimits && mine >= userLimits.streams) {
       reject(`บัญชี ${user.name} สตรีมพร้อมกันได้สูงสุด ${userLimits.streams} สตรีม — หยุดสตรีมอื่นของบัญชีนี้ก่อน`, 'stream limit');
       return false;
@@ -809,6 +820,7 @@ wss.on('connection', (ws, req) => {
     // หลุดระหว่างไลฟ์ (ไม่ใช่การกดหยุด) → แจ้งเตือนถ้าไม่กลับมาใน 30 วินาที
     const wasLive = [...dests.values()].some(d => d.wanted && d.state === 'live');
     if (wasLive && code !== 1000 && session.encoding) streamDropped(user.name, auth.ip);
+    if (session.encoding) recentlyLive.set(user.name, Date.now());
     sessions.delete(sessionId);
     monitor.forget(`enc:${sessionId}`);
     monitor.forget(`dest:${sessionId}:`);

@@ -22,6 +22,14 @@ services:
       TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
       ALERT_NAME: ${DOMAIN}
       METRICS_TOKEN: ${METRICS_TOKEN:-}
+    # เครือข่ายของ container ตั้งแยกจากเครื่อง: BBR (ถ้าเครื่องรองรับ — install.sh ตรวจให้) · ไม่ลดความเร็วหลังช่วงเงียบ
+    sysctls:
+      net.ipv4.tcp_congestion_control: ${TCP_CC:-cubic}
+      net.ipv4.tcp_slow_start_after_idle: "0"
+    ulimits:
+      nofile: { soft: 65536, hard: 65536 }
+    # ให้ Gateway เดิมปิดตัวเองเรียบร้อย (ปิด ffmpeg ทุกตัว) ก่อนถูกบังคับหยุด
+    stop_grace_period: 20s
     volumes:
       # รายชื่อผู้ใช้ (users.json) อยู่ใน volume — ไม่หายเมื่ออัปเดต
       - gateway_data:/data

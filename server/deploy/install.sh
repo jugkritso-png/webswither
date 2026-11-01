@@ -16,7 +16,11 @@
 #    TELEGRAM_BOT_TOKEN=... TELEGRAM_CHAT_ID=...   ส่งแจ้งเตือนเข้า Telegram
 #    BRANCH=...                branch ของโค้ด (ค่าเริ่มต้น = branch หลักของ repo)
 #
+#    WAIT_MINUTES=120          ตอนอัปเดต: รอให้ไลฟ์ที่ออกอากาศอยู่จบได้นานสุดกี่นาที (ระหว่างรอไม่รับไลฟ์ใหม่)
+#    FORCE=1                   อัปเดตทันทีโดยไม่รอ (ไลฟ์ที่ออกอากาศอยู่จะหลุดแล้วต่อใหม่เอง)
+#
 #  รันซ้ำเมื่อไหร่ก็ได้เพื่ออัปเดตเป็นเวอร์ชันล่าสุด — รหัส (token) และโดเมนเดิมจะถูกเก็บไว้
+#  และไม่ตัดไลฟ์ที่ออกอากาศอยู่: สร้างเวอร์ชันใหม่ไว้ก่อน หยุดรับไลฟ์ใหม่ รอไลฟ์เดิมจบ แล้วค่อยสลับ
 # ==========================================================================
 set -euo pipefail
 
@@ -32,6 +36,8 @@ REQ_MAX_STREAMS="${MAX_STREAMS:-}"
 REQ_WEBHOOK="${ALERT_WEBHOOK:-}"
 REQ_TG_TOKEN="${TELEGRAM_BOT_TOKEN:-}"
 REQ_TG_CHAT="${TELEGRAM_CHAT_ID:-}"
+WAIT_MINUTES="${WAIT_MINUTES:-120}"
+FORCE="${FORCE:-}"
 
 say()  { printf '\033[1;33m==>\033[0m %s\n' "$*"; }
 ok()   { printf '\033[1;32m ✓\033[0m %s\n' "$*"; }
@@ -92,6 +98,29 @@ fi
 STREAM_TOKEN="${STREAM_TOKEN:-$(openssl rand -hex 16)}"
 TURN_SECRET="${TURN_SECRET:-$(openssl rand -hex 24)}"
 
+# ไลฟ์ส่งข้อมูลต่อเนื่องเป็นชั่วโมง: BBR ส่ง RTMP ไป YouTube / Facebook ได้เต็มเส้นแม้มีแพ็กเก็ตหาย
+# บัฟเฟอร์ UDP ใหญ่ขึ้นให้ SRT รับภาพบิตเรตสูงไม่หลุด · ไม่ลดความเร็วส่งหลังช่วงเงียบ · เปิดไฟล์/การเชื่อมต่อได้มาก
+say "ปรับเครือข่ายของเครื่องสำหรับไลฟ์"
+modprobe tcp_bbr 2>/dev/null || true
+TCP_CC=cubic
+if grep -qw bbr /proc/sys/net/ipv4/tcp_available_congestion_control 2>/dev/null; then
+  TCP_CC=bbr
+  echo tcp_bbr > /etc/modules-load.d/webmix.conf
+fi
+cat > /etc/sysctl.d/90-webmix.conf <<SYSCTL
+# WebMix Stream Gateway (install.sh) — ลบไฟล์นี้แล้วรีบูตเพื่อกลับเป็นค่าเดิม
+net.core.default_qdisc = fq
+net.ipv4.tcp_congestion_control = $TCP_CC
+net.ipv4.tcp_slow_start_after_idle = 0
+net.ipv4.tcp_mtu_probing = 1
+net.core.rmem_max = 33554432
+net.core.wmem_max = 33554432
+net.core.netdev_max_backlog = 16384
+fs.file-max = 1048576
+SYSCTL
+sysctl --system >/dev/null 2>&1 || sysctl -p /etc/sysctl.d/90-webmix.conf >/dev/null 2>&1 || true
+ok "TCP $TCP_CC · บัฟเฟอร์ UDP 32 MB (SRT) · เปิดการเชื่อมต่อได้ 65536"
+
 umask 077
 cat > .env <<EOF
 DOMAIN=$DOMAIN
@@ -106,6 +135,7 @@ MAX_STREAMS=$MAX_STREAMS
 ALERT_WEBHOOK='$ALERT_WEBHOOK'
 TELEGRAM_BOT_TOKEN='$TELEGRAM_BOT_TOKEN'
 TELEGRAM_CHAT_ID='$TELEGRAM_CHAT_ID'
+TCP_CC=$TCP_CC
 EOF
 ok "โดเมน: $DOMAIN"
 
@@ -117,8 +147,31 @@ if command -v ufw >/dev/null && ufw status 2>/dev/null | grep -q "Status: active
 fi
 
 # ---------------------------------------------------------------- 5. Start
-say "สร้างและเปิด Gateway (ครั้งแรกใช้เวลาประมาณ 2–4 นาที)"
-docker compose up -d --build --remove-orphans
+say "สร้าง Gateway เวอร์ชันนี้ (ครั้งแรกใช้เวลาประมาณ 2–4 นาที — ไลฟ์ที่ออกอากาศอยู่ไม่สะดุด)"
+docker compose build -q
+
+# อัปเดตเครื่องที่มี Gateway ทำงานอยู่: หยุดรับไลฟ์ใหม่ (drain) แล้วรอไลฟ์เดิมจบก่อนสลับ
+health() { docker compose exec -T gateway node -e "require('http').get('http://127.0.0.1:'+process.env.PORT,r=>{let b='';r.on('data',d=>b+=d);r.on('end',()=>process.stdout.write(b))}).on('error',()=>{})" 2>/dev/null || true; }
+if [ -n "$(docker compose ps -q gateway 2>/dev/null)" ] && [ -z "$FORCE" ]; then
+  docker compose exec -T gateway sh -c 'touch "$(dirname "$USERS_FILE")/drain"' 2>/dev/null || true
+  END=$(( $(date +%s) + WAIT_MINUTES * 60 )); SHOWN=""
+  while :; do
+    LIVE="$(health | sed -n 's/.*OK (\([0-9]*\) streams, \([0-9]*\) SRT inputs).*/\1 \2/p')"
+    [ -z "$LIVE" ] && break                                  # Gateway เดิมไม่ตอบ — สลับได้เลย
+    STREAMS="${LIVE% *}"; INPUTS="${LIVE#* }"
+    [ "$STREAMS" = 0 ] && [ "$INPUTS" = 0 ] && break
+    if [ "$(date +%s)" -ge "$END" ]; then
+      say "รอครบ $WAIT_MINUTES นาทีแล้วยังมีไลฟ์ — สลับเลย (ไลฟ์จะหลุดแล้วต่อใหม่เองในไม่กี่วินาที)"; break
+    fi
+    if [ -z "$SHOWN" ]; then
+      say "มีไลฟ์ออกอากาศอยู่ $STREAMS รายการ · รับ SRT $INPUTS สัญญาณ — หยุดรับไลฟ์ใหม่แล้ว รอให้จบก่อนอัปเดต (สูงสุด $WAIT_MINUTES นาที · FORCE=1 = ไม่รอ)"
+      SHOWN=1
+    fi
+    sleep 30
+  done
+fi
+say "เปิด Gateway เวอร์ชันใหม่"
+docker compose up -d --remove-orphans
 
 say "รอใบรับรอง HTTPS"
 READY=""
