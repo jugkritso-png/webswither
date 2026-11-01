@@ -66,6 +66,8 @@
     // MIDI: on = เปิดใช้ · map = การกระทำ → ปุ่ม/ปุ่มหมุนบนคอนโทรลเลอร์ ("note:ช่อง:เลข" หรือ "cc:ช่อง:เลข")
     midi: { on: false, map: {} },
     gateway: store.raw('webmix-gateway-url') || '',
+    // Gateway สำรอง: ตัวหลักใช้ไม่ได้ (ล่ม / กำลังอัปเดต) → ย้ายไลฟ์ไปตัวนี้เอง
+    gatewayBackup: '',
     destinations: [], rememberKey: false,
     // บันทึกสำรองอัตโนมัติเมื่อเริ่มไลฟ์ · บันทึกแยกทุกกล้อง (ISO) พร้อมกับการบันทึก Program
     autoRec: false, isoRec: false,
@@ -113,6 +115,7 @@
     orient: PLATFORMS[platform].vertical ? 'vcrop' : 'h'
   });
   if (!Array.isArray(settings.destinations)) settings.destinations = [];
+  if (typeof settings.gatewayBackup !== 'string') settings.gatewayBackup = '';
   if (!settings.destinations.length && (saved.server || saved.streamKey)) {
     settings.destinations.push(newDest(PLATFORMS[saved.platform] ? saved.platform : 'custom', saved.server || '', saved.streamKey || ''));
   }
@@ -9733,6 +9736,11 @@ onmessage = async e => {
      ถ้าการเชื่อมต่อกับ Gateway หลุดระหว่างไลฟ์ (เน็ตสะดุด, Gateway รีสตาร์ท) ระบบจะเชื่อมต่อใหม่
      และเริ่มปลายทางที่ไลฟ์อยู่ให้เอง — ตรวจจับการเชื่อมต่อที่ค้าง (ไม่มีสถานะจาก Gateway เกิน 8 วินาที) ด้วย */
   const RECONNECT_DELAYS = [1000, 2000, 4000, 8000, 10000];
+  // Gateway สำรอง (เฉพาะ Gateway บนเซิร์ฟเวอร์): ใช้เมื่อตัวหลักกำลังอัปเดต ต่อไม่ติดตอนเริ่ม หรือต่อใหม่ไม่ติดระหว่างไลฟ์
+  // ไลฟ์ครั้งถัดไปกลับไปเริ่มที่ตัวหลัก
+  let gwOnBackup = false;
+  const backupGateway = () => !usingLocalGateway() && /^wss?:\/\/\S+$/i.test((settings.gatewayBackup || '').trim()) ? settings.gatewayBackup.trim() : '';
+  const streamGatewayUrl = () => gwOnBackup && backupGateway() ? backupGateway() : gatewayUrl();
   function cancelReconnect() {
     clearTimeout(streamer.reconnectTimer);
     streamer.reconnectTimer = null;
@@ -9740,6 +9748,7 @@ onmessage = async e => {
 
   function finishStream(byUser, wasLive, reason) {
     cancelReconnect();
+    gwOnBackup = false;
     store.set('live-open', null);
     abrReset(true);
     streamer.abrSwitch = false;
@@ -9766,6 +9775,18 @@ onmessage = async e => {
     const wasLive = streamer.active || streamer.reconnecting;
     // ปลายทางที่ยังไลฟ์อยู่ตอนหลุด จะถูกเริ่มใหม่เมื่อเชื่อมต่อได้
     const resume = settings.destinations.filter(d => { const st = streamer.dests.get(d.id); return st && st.state !== 'stopped'; });
+    // ย้ายไป Gateway สำรอง: ตัวหลักกำลังอัปเดต · เริ่มไลฟ์แล้วต่อไม่ติดเลย · ต่อใหม่ระหว่างไลฟ์แล้วยังไม่ติด
+    const draining = /กำลังอัปเดต/.test(reason || '');
+    if (!byUser && !gwOnBackup && backupGateway() && resume.length && (draining || !ws.opened || (streamer.reconnecting && streamer.attempt >= 1))) {
+      gwOnBackup = true;
+      toast(`Gateway หลัก${draining ? 'กำลังอัปเดต' : 'ใช้ไม่ได้'} — ย้ายไลฟ์ไป Gateway สำรองแล้ว`, 'warn', 7000);
+      Object.assign(streamer, { ws: null, recorder: null, active: false, reconnecting: wasLive, state: wasLive ? 'reconnecting' : 'connecting', kbps: 0, encoder: null, queue: [] });
+      for (const d of resume) streamer.dests.set(d.id, { state: 'connecting', message: 'ย้ายไป Gateway สำรอง…', kbps: 0 });
+      setStreamButton(); refreshLiveDialog(); updateOnAir();
+      cancelReconnect();
+      streamer.reconnectTimer = setTimeout(() => { streamer.reconnectTimer = null; connectGateway(resume); }, 300);
+      return;
+    }
     if (byUser || fatal || !wasLive || !resume.length) { finishStream(byUser, wasLive, reason); return; }
 
     streamer.attempt = (streamer.attempt || 0) + 1;
@@ -9876,9 +9897,10 @@ onmessage = async e => {
       toast('เริ่มสตรีมไม่ได้: ' + e.message, 'error');
       return;
     }
-    const gw = gatewayUrl();
+    const gw = streamGatewayUrl();
     const sep = gw.includes('?') ? '&' : '?';
     const ws = new WebSocket(`${gw}${sep}fps=${settings.fps}&vb=${streamKbps()}&res=${H}${vcopy ? '&vcopy=1' : ''}`);
+    ws.addEventListener('open', () => { ws.opened = true; });
     const reconnecting = !!streamer.reconnecting;
     Object.assign(streamer, { ws, recorder: r, videoCopy: vcopy, state: reconnecting ? 'reconnecting' : 'connecting', sent: 0, kbps: 0, lastBytes: 0, lastAt: performance.now(), queue: [...initial] });
     // เข้ารหัสด้วยชิปของเครื่องไม่สำเร็จ → เลิกใช้ทางนี้ แล้วเชื่อมต่อใหม่ให้ Gateway เข้ารหัสเอง (ระบบเชื่อมต่อใหม่อัตโนมัติ)
@@ -11587,6 +11609,8 @@ onmessage = async e => {
           ${desktop ? desktopGatewayHtml() : ''}
           <label class="field gateway-remote"><span>${desktop ? 'Stream Gateway บนเซิร์ฟเวอร์ (WebSocket)' : 'Stream Gateway (WebSocket)'}</span>
             <input name="gateway" class="input mono" placeholder="wss://gateway.example.com:8080/?token=..." value="${esc(settings.gateway)}"></label>
+          <label class="field gateway-backup"><span>Gateway สำรอง (ไม่บังคับ) — ตัวหลักล่มหรือกำลังอัปเดต ไลฟ์ย้ายมาที่นี่เอง</span>
+            <input name="gatewayBackup" class="input mono" placeholder="wss://gateway2.example.com/?token=..." value="${esc(settings.gatewayBackup || '')}"></label>
           <p class="note" ${desktop ? 'hidden' : ''}>เบราว์เซอร์ส่ง RTMP เองไม่ได้ ต้องมี Gateway (โฟลเดอร์ <code>server/</code> ในโปรเจกต์) คอยแปลงสัญญาณ — หน้า HTTPS ต้องใช้ <code>wss://</code> · ภาพถูกส่งขึ้น Gateway ครั้งเดียวแล้วกระจายไปทุกปลายทาง จึงใช้อินเทอร์เน็ตขาขึ้นเท่ากับสตรีมช่องเดียว</p>
           </details>
         </div>`,
@@ -11636,7 +11660,7 @@ onmessage = async e => {
         });
         fo.fps.addEventListener('change', suggest);
         if (fo.localGateway) {
-          const syncGw = () => { $('.gateway-remote', modal).hidden = fo.localGateway.checked; };
+          const syncGw = () => { $$('.gateway-remote, .gateway-backup', modal).forEach(el => { el.hidden = fo.localGateway.checked; }); };
           fo.localGateway.addEventListener('change', syncGw);
           syncGw();
         }
@@ -11747,6 +11771,7 @@ onmessage = async e => {
       }
       const gwBefore = gatewayUrl();
       settings.gateway = f.gateway.value.trim();
+      if (f.gatewayBackup) settings.gatewayBackup = f.gatewayBackup.value.trim();
       if (f.localGateway) settings.localGateway = f.localGateway.checked;
       const gatewayChanged = gwBefore !== gatewayUrl();
       if (gatewayChanged) wireless.restart();
@@ -12441,7 +12466,7 @@ onmessage = async e => {
       const { live, active, errors } = destCounts();
       const enc = streamer.encoder && streamer.encoder.speed ? ` · ENC ${streamer.encoder.speed.toFixed(2)}x` : '';
       const encSlow = streamer.encoder && streamer.encoder.speed && streamer.encoder.speed < 0.95;
-      setStat('#st-stream', `LIVE ${fmtDuration(Date.now() - streamer.start)} · ${streamer.kbps} kbps · ${live}/${active} ปลายทาง${enc}${abr.kbps ? ` · ลดบิตเรต ${abr.kbps}/${settings.videoKbps}` : ''}${slow ? ' · เน็ตช้า' : ''}${viewersNow().any ? ` · ผู้ชม ${viewersNow().total.toLocaleString()}` : ''}`, slow || errors || encSlow || abr.kbps ? 'warn' : 'live');
+      setStat('#st-stream', `LIVE${gwOnBackup ? ' (Gateway สำรอง)' : ''} ${fmtDuration(Date.now() - streamer.start)} · ${streamer.kbps} kbps · ${live}/${active} ปลายทาง${enc}${abr.kbps ? ` · ลดบิตเรต ${abr.kbps}/${settings.videoKbps}` : ''}${slow ? ' · เน็ตช้า' : ''}${viewersNow().any ? ` · ผู้ชม ${viewersNow().total.toLocaleString()}` : ''}`, slow || errors || encSlow || abr.kbps ? 'warn' : 'live');
     } else {
       const n = settings.destinations.filter(d => d.enabled).length;
       setStat('#st-stream', streamer.reconnecting ? `RECONNECTING… (ครั้งที่ ${streamer.attempt})` : streamer.state === 'connecting' ? 'CONNECTING…' : gatewayUrl() ? `READY · ${n} ปลายทาง` : 'NOT SET',
@@ -13303,7 +13328,7 @@ onmessage = async e => {
     $$('#seg-cardsize button').forEach(b => { b.classList.toggle('is-active', b.dataset.size === cardSize()); b.addEventListener('click', () => setCardSize(b.dataset.size)); });
 
     // สำหรับดีบัก/ทดสอบอัตโนมัติ
-    window.webmix = { yt, openScheduleDialog, hl, failover, chatViewers: (p, n) => chatViewers(p, n), viewersNow: () => viewersNow(), perf: () => ({ fps, renderMs, frameNo, thumbs: thumbs.size, inputs: inputs.length }), chatFeed, chatAdd, chatShow, chatHide, playlist, dataSources, timerControl, multiview, renderer, gpu, setRenderer: v => { settings.renderer = v; renderer.resolve(); updateStatus(); }, show, ovl, setChannel, toggleInputOverlay, useRecFolder: dir => { recFolder = dir; }, inputs, state, settings, overlays, audio, rec, iso, stinger, replayCapture, slideGo, midi, checkAppUpdate, checkWebUpdate, appUpdate, macros, runMacro, openCamControl, abr: { state: abr, decide: abrDecide, apply: abrApply, tick: abrTick }, openDeskSummary, openDeskPreflight, liveStats, openDryRun, openFacebookDialog, fb, setDryRunSeconds: n => { DRY_RUN_SEC = n; }, disk, diskTick, setDiskFree: b => { disk.fake = b; return diskTick(); }, streamer, wireless, cut, autoTransition, setPreview, tr, ftb, padFire, chanKey, remote: remoteCtl, lufs, layoutSize, renderInputs, renderAlerts, openOutputWindow, setOrient };
+    window.webmix = { gwState: () => ({ backup: gwOnBackup, url: streamGatewayUrl() }), yt, openScheduleDialog, hl, failover, chatViewers: (p, n) => chatViewers(p, n), viewersNow: () => viewersNow(), perf: () => ({ fps, renderMs, frameNo, thumbs: thumbs.size, inputs: inputs.length }), chatFeed, chatAdd, chatShow, chatHide, playlist, dataSources, timerControl, multiview, renderer, gpu, setRenderer: v => { settings.renderer = v; renderer.resolve(); updateStatus(); }, show, ovl, setChannel, toggleInputOverlay, useRecFolder: dir => { recFolder = dir; }, inputs, state, settings, overlays, audio, rec, iso, stinger, replayCapture, slideGo, midi, checkAppUpdate, checkWebUpdate, appUpdate, macros, runMacro, openCamControl, abr: { state: abr, decide: abrDecide, apply: abrApply, tick: abrTick }, openDeskSummary, openDeskPreflight, liveStats, openDryRun, openFacebookDialog, fb, setDryRunSeconds: n => { DRY_RUN_SEC = n; }, disk, diskTick, setDiskFree: b => { disk.fake = b; return diskTick(); }, streamer, wireless, cut, autoTransition, setPreview, tr, ftb, padFire, chanKey, remote: remoteCtl, lufs, layoutSize, renderInputs, renderAlerts, openOutputWindow, setOrient };
   }
 
   boot();

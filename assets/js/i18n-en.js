@@ -2620,6 +2620,14 @@
     "แผ่นชื่อ": "Name plate",
     "แถบเน้น": "Accent bar",
     "แถบตำแหน่ง": "Title strip",
+    "กำลังอัปเดต": " is updating",
+    "ใช้ไม่ได้": " is unavailable",
+    "Gateway หลัก{} — ย้ายไลฟ์ไป Gateway สำรองแล้ว": "The primary gateway{1} — the live moved to the backup gateway",
+    "ย้ายไป Gateway สำรอง…": "Moving to the backup gateway…",
+    "Gateway สำรอง (ไม่บังคับ) — ตัวหลักล่มหรือกำลังอัปเดต ไลฟ์ย้ายมาที่นี่เอง": "Backup gateway (optional) — if the primary is down or updating, the live moves here by itself",
+    "(Gateway สำรอง)": "(backup gateway)",
+    "LIVE{} {} · {} kbps · {}/{} ปลายทาง{}{}{}{}": "LIVE{1} {2} · {3} kbps · {4}/{5} destinations{6}{7}{8}{9}",
+    "Gateway สำรอง: ตั้งค่า → การสตรีม → ขั้นสูง → “Gateway สำรอง” — ถ้า Gateway หลักกำลังอัปเดต ต่อไม่ติดตอนเริ่ม หรือล่มระหว่างไลฟ์ ระบบย้ายไลฟ์ไปตัวสำรองให้เอง (แถบสถานะขึ้น “Gateway สำรอง”) ไลฟ์ครั้งถัดไปเริ่มที่ตัวหลักเหมือนเดิม": "Backup gateway: Settings → Streaming → Advanced → “Backup gateway” — if the primary gateway is updating, can't be reached at the start, or goes down during a live, the live moves to the backup by itself (the status bar shows “backup gateway”); the next live starts on the primary again",
     "ทีวี": "TV", "หน้า": "Page", "รายการ": "Item", "ความยาว": "Length", "เหลือ": "Remain", "สไลด์": "Slides"
   });
 })(window.WebMix = window.WebMix || {});
