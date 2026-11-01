@@ -1087,15 +1087,17 @@
   function gpuFrame() {
     gpu.ensureSize(W, H);
     // Preview ก่อน (พื้นที่เล็ก) แล้วคัดลอกออก จากนั้นวาด Program เต็มขนาด
-    gpu.begin(PW, PH);
-    const pfull = { x: 0, y: 0, w: PW, h: PH };
-    glDrawInput(byId(state.previewId), pfull, pfull);
-    for (const c of ovl) {
-      if (c.anim > 0) glOverlayChannel(c, PW, PH, c.anim, true);
-      else if (c.staged && byId(c.inputId)) glOverlayChannel(c, PW, PH, 1, true);
+    if (previewNeeded(performance.now())) {
+      gpu.begin(PW, PH);
+      const pfull = { x: 0, y: 0, w: PW, h: PH };
+      glDrawInput(byId(state.previewId), pfull, pfull);
+      for (const c of ovl) {
+        if (c.anim > 0) glOverlayChannel(c, PW, PH, c.anim, true);
+        else if (c.staged && byId(c.inputId)) glOverlayChannel(c, PW, PH, 1, true);
+      }
+      glClassicOverlays(PW, PH);
+      pvwCtx.drawImage(gpu.canvas, 0, 0, PW, PH, 0, 0, PW, PH);
     }
-    glClassicOverlays(PW, PH);
-    pvwCtx.drawImage(gpu.canvas, 0, 0, PW, PH, 0, 0, PW, PH);
 
     gpu.begin(W, H);
     glProgramBase(W, H);
@@ -1163,9 +1165,11 @@
       if (ftb.level > 0) { pgmCtx.fillStyle = `rgba(0,0,0,${ftb.level})`; pgmCtx.fillRect(0, 0, W, H); }
       feedReplay();
 
-      drawSource(pvwCtx, byId(state.previewId), PW, PH);
-      drawOverlayChannels(pvwCtx, PW, PH, true);
-      drawOverlays(pvwCtx, PW, PH);
+      if (previewNeeded(now)) {
+        drawSource(pvwCtx, byId(state.previewId), PW, PH);
+        drawOverlayChannels(pvwCtx, PW, PH, true);
+        drawOverlays(pvwCtx, PW, PH);
+      }
     }
 
     enforceMarks();
@@ -1188,6 +1192,18 @@
     if (now - fpsSince >= 1000) { fps = frameCount * 1000 / (now - fpsSince); frameCount = 0; fpsSince = now; }
   }
 
+  // จอ Preview มองไม่เห็น (มือถือแสดงแค่ Program / หน้าอื่นบังอยู่) และไม่มีใครใช้ภาพ Preview → ข้ามการวาด ลดงานเกือบครึ่ง
+  // ยังวาดเมื่อ: แหล่งภาพ “ภาพ Preview” · Multiview เปิดอยู่ · รีโมตต่ออยู่ (ส่งภาพย่อ Preview)
+  let pvwSeen = true, pvwSeenAt = 0;
+  function previewNeeded(now) {
+    if (now - pvwSeenAt > 500) {
+      pvwSeenAt = now;
+      const r = pvwCanvas.getBoundingClientRect();
+      pvwSeen = pvwCanvas.offsetParent !== null && r.width > 4 && r.height > 4 && r.bottom > 0 && r.top < innerHeight;
+    }
+    return pvwSeen || inputs.some(i => i.type === 'mixsrc' && i.mix === 'preview') || !!(multiview.win && !multiview.win.closed) || !!multiview.inline || remoteCtl.conns.size > 0;
+  }
+
   // แสดงผลด้วย requestAnimationFrame ตอนหน้าเปิดอยู่ และใช้ Worker จับเวลาแทนตอนสลับแท็บ
   // (เบราว์เซอร์หยุด rAF ในแท็บที่ซ่อน ภาพที่บันทึก/สตรีมจะค้างถ้าไม่ทำแบบนี้)
   const ticker = {
@@ -1202,8 +1218,9 @@
     setRate(f) { if (this.worker) this.worker.postMessage(1000 / f); }
   };
   function rafLoop(now) {
-    // มือถือ: วาดไม่เกินเฟรมเรตเอาต์พุต (จอ 90/120 Hz ไม่ต้องวาด 60 ครั้ง/วินาที ถ้าส่งออกแค่ 30) — ลดงานเกือบครึ่ง เครื่องไม่ร้อน
-    const gap = desktop?.mobile ? 1000 / (Math.min(60, +settings.fps || 30) + 1) : 1000 / 61;
+    // วาดไม่เกินเฟรมเรตเอาต์พุต: สตรีม/ไฟล์ใช้แค่ settings.fps — วาด 60 ครั้ง/วินาทีตอนส่งออก 30 คืองานเปล่าครึ่งหนึ่ง
+    // (ภาพที่ออกอากาศเหมือนเดิม · เครื่องเบาลง ไม่ร้อน) · +1 กันจังหวะจอที่คลาดเล็กน้อยทำให้ตกเฟรม
+    const gap = 1000 / (Math.min(60, +settings.fps || 30) + 1);
     if (!document.hidden && now - lastFrame >= gap) frame(now);
     requestAnimationFrame(rafLoop);
   }
