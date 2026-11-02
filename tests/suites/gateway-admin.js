@@ -86,7 +86,7 @@ const destStatus = (ws, id) => { for (let i = ws.msgs.length - 1; i >= 0; i--) {
   ok('slot frees when a stream stops', b2.readyState === WebSocket.OPEN && !errorMsg(b2));
 
   // --- admin page, status and metrics
-  ok('/admin refuses user tokens', (await get(`/admin?token=${alice}`)).status === 403 && (await get('/admin')).status === 403);
+  ok('/admin data refuses user tokens', (await get(`/admin/status.json?token=${alice}`)).status === 403 && (await get('/admin/status.json')).status === 403 && !(await get('/admin')).body.includes('alice'));
   const page = await get('/admin?token=admintok');
   ok('/admin page for the admin', page.status === 200 && /WebMix Stream Gateway/.test(page.body));
   const st = JSON.parse((await get('/admin/status.json?token=admintok')).body);

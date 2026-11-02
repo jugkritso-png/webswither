@@ -22,6 +22,9 @@ services:
       TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
       ALERT_NAME: ${DOMAIN}
       METRICS_TOKEN: ${METRICS_TOKEN:-}
+      # หน้าผู้ดูแล (/admin): ความเร็วอัปโหลดของเครื่อง (Mbps) ไว้แสดงว่าเน็ตขาออกเหลือเท่าไร · หน้า WebMix ในลิงก์เชิญ
+      UPLINK_MBPS: ${UPLINK_MBPS:-0}
+      STUDIO_URL: ${STUDIO_URL:-}
     # เครือข่ายของ container ตั้งแยกจากเครื่อง: BBR (ถ้าเครื่องรองรับ — install.sh ตรวจให้) · ไม่ลดความเร็วหลังช่วงเงียบ
     sysctls:
       net.ipv4.tcp_congestion_control: ${TCP_CC:-cubic}

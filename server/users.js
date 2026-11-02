@@ -11,6 +11,7 @@
 //   node stream-gateway.js user remove <ชื่อ>
 //
 // STREAM_TOKEN (ถ้าตั้งไว้) คือผู้ดูแลระบบ: ไม่จำกัดโควตาต่อผู้ใช้ และเปิดหน้า /admin ได้
+// ผู้ใช้ที่ตั้ง manage: true (ติ๊ก "ให้เป็นผู้ดูแลด้วย" ในหน้า /admin) เปิดหน้า /admin ได้ แต่ยังใช้โควตาของตัวเอง
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
@@ -19,6 +20,12 @@ const USERS_FILE = process.env.USERS_FILE || path.join(__dirname, 'data', 'users
 const ADMIN_TOKEN = process.env.STREAM_TOKEN || '';
 const DEFAULT_LIMITS = { streams: 1, destinations: 6, srt: 2 };
 const NAME_RE = /^[a-z0-9][a-z0-9._-]{0,31}$/i;
+// แพ็กเกจสำเร็จรูปในหน้า /admin (กำหนดตัวเลขเองได้)
+const PLANS = {
+  basic: { label: 'ไลฟ์ทั่วไป', limits: { streams: 1, destinations: 2, srt: 1 } },
+  shop: { label: 'ร้านค้า / เพจ', limits: { streams: 2, destinations: 4, srt: 1 } },
+  station: { label: 'สถานี / งานใหญ่', limits: { streams: 4, destinations: 6, srt: 2 } }
+};
 
 const sha256 = s => crypto.createHash('sha256').update(String(s)).digest('hex');
 function sameSecret(a, b) {
@@ -45,6 +52,8 @@ function save(users) {
   const tmp = USERS_FILE + '.tmp';
   fs.writeFileSync(tmp, JSON.stringify({ users }, null, 2) + '\n', { mode: 0o600 });
   fs.renameSync(tmp, USERS_FILE);
+  // ไม่พึ่ง mtime อย่างเดียว (บันทึกสองครั้งในมิลลิวินาทีเดียวกันได้)
+  try { cache = { mtime: fs.statSync(USERS_FILE).mtimeMs, users: users.map(u => ({ ...u })) }; } catch (e) {}
 }
 
 const limitsOf = u => ({
@@ -64,9 +73,68 @@ function authenticate(token) {
   const hash = sha256(token);
   const u = users.find(x => crypto.timingSafeEqual(Buffer.from(x.tokenHash), Buffer.from(hash)));
   if (!u || u.disabled) return null;
-  return { name: u.name, admin: false, limits: limitsOf(u) };
+  return { name: u.name, admin: false, manage: !!u.manage, limits: limitsOf(u) };
 }
 const authRequired = () => !!ADMIN_TOKEN || load().length > 0;
+
+/* ------------------------------------------------------- จัดการผู้ใช้ (หน้า /admin และ CLI) */
+const newToken = () => crypto.randomBytes(24).toString('base64url');
+function cleanLimits(l, base) {
+  const out = { ...base };
+  for (const k of ['streams', 'destinations', 'srt']) {
+    if (l == null || l[k] == null) continue;
+    const n = Number(l[k]);
+    if (!Number.isInteger(n) || n < 0 || n > 100) throw new Error(`${k} ต้องเป็นจำนวนเต็ม 0–100`);
+    out[k] = n;
+  }
+  return out;
+}
+function editable(name) {
+  const users = load().map(u => ({ ...u }));
+  const u = users.find(x => x.name === name);
+  if (!u) throw new Error(`ไม่พบผู้ใช้ "${name}"`);
+  return { users, u };
+}
+const publicUser = u => ({ name: u.name, limits: limitsOf(u), disabled: !!u.disabled, manage: !!u.manage, created: u.created || null, lastUsed: u.lastUsed || null });
+const list = () => load().map(publicUser);
+// สร้างผู้ใช้ → token (แสดงครั้งเดียว เก็บเฉพาะ hash)
+function create(name, limits, opts = {}) {
+  name = String(name || '').trim();
+  if (!NAME_RE.test(name)) throw new Error('ชื่อใช้ได้เฉพาะ a-z 0-9 . _ - (ไม่เกิน 32 ตัว ขึ้นต้นด้วยตัวอักษรหรือตัวเลข)');
+  const users = load().map(u => ({ ...u }));
+  if (users.some(x => x.name.toLowerCase() === name.toLowerCase())) throw new Error(`มีผู้ใช้ "${name}" อยู่แล้ว`);
+  const token = newToken();
+  const u = { name, tokenHash: sha256(token), limits: cleanLimits(limits, DEFAULT_LIMITS), created: new Date().toISOString() };
+  if (opts.manage) u.manage = true;
+  users.push(u);
+  save(users);
+  return { user: publicUser(u), token };
+}
+function rotate(name) {
+  const { users, u } = editable(name);
+  const token = newToken();
+  u.tokenHash = sha256(token);
+  save(users);
+  return { user: publicUser(u), token };
+}
+function update(name, { limits, disabled, manage } = {}) {
+  const { users, u } = editable(name);
+  if (limits) u.limits = cleanLimits(limits, limitsOf(u));
+  if (disabled != null) u.disabled = !!disabled;
+  if (manage != null) { if (manage) u.manage = true; else delete u.manage; }
+  save(users);
+  return publicUser(u);
+}
+function remove(name) {
+  const { users } = editable(name);
+  save(users.filter(x => x.name !== name));
+}
+// เวลาใช้งานล่าสุด (แสดงในหน้า /admin) — เขียนไฟล์ไม่เกินชั่วโมงละครั้งต่อคน
+function touch(name) {
+  const u0 = load().find(x => x.name === name);
+  if (!u0 || (u0.lastUsed && Date.now() - Date.parse(u0.lastUsed) < 3600000)) return;
+  try { const { users, u } = editable(name); u.lastUsed = new Date().toISOString(); save(users); } catch (e) {}
+}
 
 /* ------------------------------------------------------------- CLI */
 function parseFlags(args) {
@@ -90,7 +158,6 @@ function cli(args) {
     if (!u) throw new Error(`ไม่พบผู้ใช้ "${name}"`);
     return u;
   };
-  const newToken = () => crypto.randomBytes(24).toString('base64url');
   const showToken = (u, token) => {
     console.log(`\nผู้ใช้: ${u.name}\nToken: ${token}`);
     console.log('\nให้ผู้ใช้ใส่ Gateway URL ในหน้าตั้งค่าของ WebMix เป็น');
@@ -150,4 +217,4 @@ function cli(args) {
   }
 }
 
-module.exports = { authenticate, authRequired, cli, USERS_FILE, DEFAULT_LIMITS };
+module.exports = { authenticate, authRequired, cli, USERS_FILE, DEFAULT_LIMITS, PLANS, list, create, rotate, update, remove, touch };

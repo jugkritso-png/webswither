@@ -15,6 +15,7 @@
 #    ALERT_WEBHOOK=https://...  ส่งแจ้งเตือนเข้า Discord / Slack / Google Chat (webhook URL)
 #    TELEGRAM_BOT_TOKEN=... TELEGRAM_CHAT_ID=...   ส่งแจ้งเตือนเข้า Telegram
 #    BRANCH=...                branch ของโค้ด (ค่าเริ่มต้น = branch หลักของ repo)
+#    UPLINK_MBPS=1000          ความเร็วอัปโหลดของเซิร์ฟเวอร์ (Mbps) — หน้า /admin แสดงว่าเน็ตขาออกเหลือเท่าไร
 #
 #    WAIT_MINUTES=120          ตอนอัปเดต: รอให้ไลฟ์ที่ออกอากาศอยู่จบได้นานสุดกี่นาที (ระหว่างรอไม่รับไลฟ์ใหม่)
 #    FORCE=1                   อัปเดตทันทีโดยไม่รอ (ไลฟ์ที่ออกอากาศอยู่จะหลุดแล้วต่อใหม่เอง)
@@ -36,6 +37,7 @@ REQ_MAX_STREAMS="${MAX_STREAMS:-}"
 REQ_WEBHOOK="${ALERT_WEBHOOK:-}"
 REQ_TG_TOKEN="${TELEGRAM_BOT_TOKEN:-}"
 REQ_TG_CHAT="${TELEGRAM_CHAT_ID:-}"
+REQ_UPLINK="${UPLINK_MBPS:-}"
 WAIT_MINUTES="${WAIT_MINUTES:-120}"
 FORCE="${FORCE:-}"
 
@@ -76,7 +78,7 @@ cd "$INSTALL_DIR/server/deploy"
 
 # ---------------------------------------------------------------- 3. Config
 DOMAIN="" STREAM_TOKEN="" MAX_DESTINATIONS="" VIDEO_ENCODER="" X264_PRESET="" SRT_PORTS="" TURN_SECRET="" PUBLIC_IP=""
-MAX_STREAMS="" ALERT_WEBHOOK="" TELEGRAM_BOT_TOKEN="" TELEGRAM_CHAT_ID=""
+MAX_STREAMS="" ALERT_WEBHOOK="" TELEGRAM_BOT_TOKEN="" TELEGRAM_CHAT_ID="" UPLINK_MBPS=""
 # shellcheck disable=SC1091
 [ -f .env ] && . ./.env
 DOMAIN="${REQ_DOMAIN:-$DOMAIN}"
@@ -89,6 +91,8 @@ MAX_STREAMS="${REQ_MAX_STREAMS:-${MAX_STREAMS:-$(( CORES / 2 > 0 ? CORES / 2 : 1
 ALERT_WEBHOOK="${REQ_WEBHOOK:-$ALERT_WEBHOOK}"
 TELEGRAM_BOT_TOKEN="${REQ_TG_TOKEN:-$TELEGRAM_BOT_TOKEN}"
 TELEGRAM_CHAT_ID="${REQ_TG_CHAT:-$TELEGRAM_CHAT_ID}"
+UPLINK_MBPS="${REQ_UPLINK:-$UPLINK_MBPS}"
+case "$UPLINK_MBPS" in ""|*[!0-9]*) UPLINK_MBPS=0 ;; esac
 
 PUBLIC_IP="$(curl -fsS4 --max-time 10 https://api.ipify.org || curl -fsS4 --max-time 10 https://ifconfig.me || true)"
 if [ -z "$DOMAIN" ]; then
@@ -136,6 +140,7 @@ ALERT_WEBHOOK='$ALERT_WEBHOOK'
 TELEGRAM_BOT_TOKEN='$TELEGRAM_BOT_TOKEN'
 TELEGRAM_CHAT_ID='$TELEGRAM_CHAT_ID'
 TCP_CC=$TCP_CC
+UPLINK_MBPS=$UPLINK_MBPS
 EOF
 ok "โดเมน: $DOMAIN"
 
@@ -202,8 +207,8 @@ echo "พอร์ตที่ต้องเปิดในไฟร์วอ�
 echo "รับสัญญาณ SRT:          srt://$DOMAIN:<พอร์ต $SRT_PORTS> (เปิด UDP $SRT_PORTS ในไฟร์วอลล์ของผู้ให้บริการด้วย)"
 echo "ตรวจสถานะในเบราว์เซอร์:  https://$DOMAIN/"
 echo "ดูค่านี้อีกครั้ง:         cat $INSTALL_DIR/server/deploy/gateway-url.txt"
-echo "หน้าสถานะผู้ดูแล:        https://$DOMAIN/admin?token=$STREAM_TOKEN"
-echo "เพิ่มผู้ใช้ (token แยกคน): cd $INSTALL_DIR/server/deploy && docker compose exec gateway node stream-gateway.js user add <ชื่อ>"
+echo "หน้าผู้ดูแล:             https://$DOMAIN/admin  (เข้าด้วย STREAM_TOKEN ในไฟล์ $INSTALL_DIR/server/deploy/.env)"
+echo "                         ดูไลฟ์ทุกคน · เพิ่มคนพร้อมลิงก์เชิญ · แก้แพ็กเกจ · หยุดไลฟ์ · พักรับไลฟ์ใหม่"
 [ -n "$ALERT_WEBHOOK$TELEGRAM_BOT_TOKEN" ] && echo "แจ้งเตือน:                เปิดแล้ว" || echo "แจ้งเตือน:                ยังไม่ได้ตั้ง (รันซ้ำพร้อม ALERT_WEBHOOK=... หรือ TELEGRAM_BOT_TOKEN=... TELEGRAM_CHAT_ID=...)"
 echo "ดู log:                  cd $INSTALL_DIR/server/deploy && docker compose logs -f gateway"
 echo "อัปเดตเวอร์ชัน:           รันคำสั่งติดตั้งเดิมซ้ำ"

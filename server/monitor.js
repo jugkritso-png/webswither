@@ -1,4 +1,4 @@
-// การเฝ้าระวังของ Stream Gateway: แจ้งเตือน, หน้าสถานะผู้ดูแล (/admin) และ metrics สำหรับ Prometheus (/metrics)
+// การเฝ้าระวังของ Stream Gateway: แจ้งเตือน, ข้อมูลของหน้าผู้ดูแล (/admin — หน้าเว็บอยู่ใน admin.html) และ metrics สำหรับ Prometheus (/metrics)
 //
 // แจ้งเตือน (ตั้งอย่างใดอย่างหนึ่งหรือทั้งสองแบบ):
 //   ALERT_WEBHOOK       URL ของ Discord / Slack / Google Chat / webhook อื่น (ส่ง JSON { text, content })
@@ -59,13 +59,20 @@ function condition(key, bad, text, okText, after = ALERT_AFTER) {
   const now = Date.now();
   if (bad) {
     if (!w.since) w.since = now;
-    if (!w.alerted && now - w.since >= after) { w.alerted = true; notify(key, typeof text === 'function' ? text() : text); }
+    if (!w.alerted && now - w.since >= after) { w.alerted = true; w.text = typeof text === 'function' ? text() : text; notify(key, w.text); }
   } else {
     if (w.alerted && okText) notify(key, okText, 'ok');
     w.since = 0;
     w.alerted = false;
   }
 }
+// เหตุการณ์ทั่วไป (เริ่ม/หยุดไลฟ์ งานของผู้ดูแล) — แสดงในหน้า /admin เท่านั้น ไม่ส่งแจ้งเตือน
+function log(text) {
+  recent.unshift({ at: new Date().toISOString(), level: 'info', text });
+  recent.length = Math.min(recent.length, 50);
+}
+// ปัญหาที่ยังค้างอยู่ตอนนี้ (แจ้งเตือนไปแล้วและยังไม่หาย)
+const active = () => [...watches.entries()].filter(([, w]) => w.alerted).map(([key, w]) => ({ key: key.split(':')[0], text: w.text || '' }));
 function forget(prefix) {
   for (const k of watches.keys()) if (k.startsWith(prefix)) watches.delete(k);
 }
@@ -147,33 +154,7 @@ function metrics(sessions) {
 }
 
 function status(sessions) {
-  return { server: NAME, alerts: alertsEnabled(), system: system(), sessions, recent };
+  return { server: NAME, alerts: alertsEnabled(), system: system(), sessions, recent, problems: active() };
 }
 
-/* ---- หน้าสถานะผู้ดูแล ---- */
-const ADMIN_HTML = `<!doctype html><html lang="th"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>WebMix Gateway</title><meta name="referrer" content="no-referrer"><style>
-:root{color-scheme:dark;--bg:#0b0d12;--panel:#151922;--line:#262c38;--text:#e7eaf0;--muted:#8b94a7;--red:#f87171;--green:#4ade80;--amber:#f5a524}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 system-ui,"IBM Plex Sans Thai",sans-serif;padding:16px}
-h1{font-size:18px;margin:0 0 12px}h2{font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin:20px 0 8px}
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px}.card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px 12px}
-.k{color:var(--muted);font-size:12px}.v{font-size:20px;font-weight:700;font-variant-numeric:tabular-nums}
-table{width:100%;border-collapse:collapse;background:var(--panel);border:1px solid var(--line);border-radius:8px;overflow:hidden}
-td,th{padding:7px 10px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}th{color:var(--muted);font-weight:500;font-size:12px}
-.live{color:var(--green)}.error{color:var(--red)}.connecting,.waiting{color:var(--amber)}.muted{color:var(--muted)}.wrap{overflow-x:auto}
-</style></head><body><h1>WebMix Stream Gateway <span id="name" class="muted"></span></h1>
-<div class="grid" id="sys"></div><h2>สตรีมและสัญญาณขาเข้า</h2><div class="wrap"><table><thead><tr><th>ผู้ใช้</th><th>ประเภท</th><th>รายละเอียด</th><th>เริ่มเมื่อ</th></tr></thead><tbody id="sessions"></tbody></table></div>
-<h2>แจ้งเตือนล่าสุด <span id="alerts" class="muted"></span></h2><div class="wrap"><table><tbody id="recent"></tbody></table></div>
-<script>
-const q=new URLSearchParams(location.search);const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const gb=b=>(b/1073741824).toFixed(1)+' GB';const t=s=>new Date(s).toLocaleTimeString('th-TH',{hour12:false});
-async function load(){try{const r=await fetch('/admin/status.json?token='+encodeURIComponent(q.get('token')||''),{cache:'no-store'});if(!r.ok){document.body.innerHTML='<h1>ต้องใช้ token ของผู้ดูแล</h1>';return}
-const d=await r.json();document.getElementById('name').textContent='· '+d.server;const s=d.system;
-document.getElementById('sys').innerHTML=[['CPU',Math.round(s.cpu*100)+'%'],['Load',s.load.join(' / ')],['หน่วยความจำ',gb(s.memUsed)+' / '+gb(s.memTotal)],['สตรีม',d.sessions.filter(x=>x.kind==='stream'&&x.encoding).length],['SRT ขาเข้า',d.sessions.filter(x=>x.kind==='srt-in').length],['ทำงานมา',Math.floor(s.uptime/3600)+' ชม. '+Math.floor(s.uptime%3600/60)+' นาที']].map(([k,v])=>'<div class="card"><div class="k">'+k+'</div><div class="v">'+esc(v)+'</div></div>').join('');
-document.getElementById('sessions').innerHTML=d.sessions.map(x=>'<tr><td>'+esc(x.user)+'<div class="muted">'+esc(x.ip)+'</div></td><td>'+(x.kind==='stream'?'สตรีม':'SRT ขาเข้า')+'</td><td>'+(x.kind==='stream'?(x.encoder?'<div class="muted">'+esc(x.format)+' · speed '+esc(x.encoder.speed)+'x</div>':'<div class="muted">'+esc(x.format)+'</div>')+x.destinations.map(p=>'<div><span class="'+esc(p.state)+'">●</span> '+esc(p.name)+' <span class="muted">'+esc(p.state)+(p.kbps?' · '+p.kbps+' kbps':'')+(p.message?' · '+esc(p.message):'')+'</span></div>').join(''):'<span class="'+esc(x.state)+'">●</span> '+esc(x.label)+' <span class="muted">'+esc(x.state)+(x.info?' · '+esc(x.info.codec)+' '+esc(x.info.width)+'×'+esc(x.info.height):'')+'</span>')+'</td><td>'+t(x.startedAt)+'</td></tr>').join('')||'<tr><td colspan="4" class="muted">ไม่มี</td></tr>';
-document.getElementById('alerts').textContent=d.alerts?'':'(ยังไม่ได้ตั้งช่องทางแจ้งเตือน — ALERT_WEBHOOK หรือ TELEGRAM_BOT_TOKEN)';
-document.getElementById('recent').innerHTML=d.recent.map(a=>'<tr><td class="muted" style="white-space:nowrap">'+t(a.at)+'</td><td class="'+(a.level==='alert'?'error':a.level==='ok'?'live':'')+'">'+esc(a.text)+'</td></tr>').join('')||'<tr><td class="muted">ไม่มี</td></tr>'}catch(e){}}
-load();setInterval(load,3000);
-</script></body></html>`;
-
-module.exports = { notify, condition, forget, check, metrics, status, counters, alertsEnabled, ADMIN_HTML };
+module.exports = { notify, log, condition, forget, check, metrics, status, counters, alertsEnabled };

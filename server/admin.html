@@ -1,0 +1,515 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>WebMix Stream Gateway — ผู้ดูแล</title>
+<style>
+:root{color-scheme:dark;--bg:#090b0f;--panel:#11141a;--panel2:#171b23;--line:#242a35;--line2:#2f3644;--text:#e7eaf0;--soft:#b9c2d3;--muted:#8b94a7;--faint:#7d8699;
+  --blue:#2f6fe8;--blue2:#4f86f0;--bluebg:#1b2a4a;--link:#7fa6ff;--green:#22c55e;--greenbg:#0f2a1a;--amber:#f5a524;--amberbg:#2a2010;--amberline:#5c4417;--red:#dc2626;--redtext:#f87171;--redbg:#2a1214;
+  --font:system-ui,-apple-system,"Segoe UI","IBM Plex Sans Thai","Noto Sans Thai",sans-serif;--mono:ui-monospace,"JetBrains Mono",Menlo,Consolas,monospace}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 var(--font)}
+a{color:var(--link)}a:hover{color:#a9c2ff}
+button,input{font:inherit;color:inherit}
+h1,h2,p{margin:0}
+.top{min-height:56px;background:var(--panel);border-bottom:1px solid var(--line);display:flex;align-items:center;gap:16px;padding:0 24px;flex-wrap:wrap}
+.brand{display:flex;align-items:center;gap:8px;font-weight:700;font-size:16px}
+.brand small{font-weight:500;color:var(--muted);font-size:13px}
+nav{display:flex;gap:4px;margin-left:16px}
+nav a{height:44px;padding:0 16px;border-radius:6px;display:flex;align-items:center;color:var(--muted);text-decoration:none;font-weight:600}
+nav a[aria-current=page]{background:#1e232d;color:var(--text)}
+.top .spacer{flex:1}
+main{width:100%;max-width:1080px;margin:0 auto;padding:32px 24px 80px;display:flex;flex-direction:column;gap:24px}
+.btn{height:44px;padding:0 16px;border-radius:6px;border:1px solid var(--line2);background:var(--panel2);color:var(--text);font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:8px;text-decoration:none;white-space:nowrap}
+.btn:hover{border-color:#3b4354}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:#fff}.btn.primary:hover{background:#3b7af0}
+.btn.ghost{background:transparent}
+.btn.danger{background:transparent;border-color:transparent;color:var(--redtext)}
+.btn.small{height:36px;padding:0 12px}
+.btn:disabled{opacity:.5;cursor:default}
+.btn:focus-visible,a:focus-visible,input:focus-visible,summary:focus-visible{outline:2px solid var(--blue2);outline-offset:2px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:20px}
+.summary{display:flex;align-items:center;gap:16px;padding:24px;border-radius:12px;flex-wrap:wrap;background:var(--greenbg)}
+.summary.warn{background:var(--amberbg)}.summary.bad{background:var(--redbg)}.summary.info{background:var(--bluebg)}
+.summary h1{font-size:28px;font-weight:700}
+.summary p{margin-top:4px;font-size:16px;color:var(--soft)}
+.summary .grow{flex:1;min-width:240px}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px}
+.stat{display:flex;flex-direction:column;gap:8px}
+.stat .k{font-size:14px;color:var(--muted)}.stat b{font-size:28px;line-height:1.2}.stat .n{font-size:13px;color:var(--faint)}
+.bar{height:8px;border-radius:4px;background:#07090c;overflow:hidden}.bar i{display:block;height:100%;background:var(--green)}
+.bar i.warn{background:var(--amber)}.bar i.bad{background:#ef4444}
+h2{font-size:20px;font-weight:700}
+.sec{display:flex;flex-direction:column;gap:12px}
+.live{display:flex;flex-direction:column;gap:16px}
+.live.warn{border-color:var(--amberline)}
+.row{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.row .push{margin-left:auto}
+.pill{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 12px;border-radius:999px;background:var(--red);color:#fff;font-size:13px;font-weight:700}
+.pill.sm{height:24px;padding:0 10px;font-size:12px}
+.pill.off{background:var(--panel2);border:1px solid var(--line2);color:var(--muted);font-weight:600}
+.pill.mgr{background:var(--bluebg);color:var(--link)}
+.dot{width:10px;height:10px;border-radius:50%;background:var(--green);flex:none}
+.chips{display:flex;gap:8px;flex-wrap:wrap}
+.chip{display:inline-flex;align-items:center;gap:8px;min-height:36px;padding:4px 12px;border-radius:8px;background:var(--panel2)}
+.chip.warn{background:var(--amberbg);color:var(--amber);font-weight:600}.chip.warn .dot{background:var(--amber)}
+.chip.bad{background:var(--redbg);color:var(--redtext);font-weight:600}.chip.bad .dot{background:var(--redtext)}
+.chip.idle .dot{background:var(--muted)}
+.muted{color:var(--muted)}.soft{color:var(--soft)}.mono{font-family:var(--mono)}
+details>summary{list-style:none;cursor:pointer;color:var(--link);font-weight:600;font-size:13px;width:max-content}
+details>summary::-webkit-details-marker{display:none}
+.tech{margin-top:8px;font-family:var(--mono);font-size:13px;color:var(--muted)}
+.events{list-style:none;margin:0;padding:0;background:var(--panel);border:1px solid var(--line);border-radius:12px}
+.events li{display:flex;gap:12px;align-items:baseline;padding:14px 20px;border-bottom:1px solid var(--line)}
+.events li:last-child{border-bottom:0}
+.events time{font-family:var(--mono);font-size:13px;color:var(--faint);width:48px;flex:none}
+.events .alert{color:var(--redtext)}.events .ok{color:#4ade80}
+.empty{padding:24px;text-align:center;color:var(--muted)}
+.users{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:12px}
+.user{display:flex;flex-direction:column;gap:20px}
+.user.editing{border-color:var(--blue2)}
+.user.off{background:#0d1015;border-style:dashed;border-color:var(--line2)}
+.avatar{width:44px;height:44px;border-radius:50%;background:var(--bluebg);color:var(--link);display:grid;place-items:center;font-size:18px;font-weight:700;flex:none;text-transform:uppercase}
+.user.off .avatar{background:var(--panel2);color:var(--muted)}
+.user .who{flex:1;min-width:220px}
+.user .who b{font-size:17px}
+.user .who p{margin-top:6px;color:var(--soft)}
+.user.off .who b{color:var(--soft)}.user.off .who p{color:var(--muted)}
+fieldset{margin:0;padding:0;border:0;display:flex;flex-direction:column;gap:10px;min-width:0}
+legend{font-size:15px;font-weight:600;margin-bottom:10px;padding:0}
+.plans{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px}
+.plan{display:flex;gap:12px;padding:16px;border-radius:10px;border:1px solid var(--line2);background:var(--panel2);cursor:pointer}
+.plan:has(input:checked){border:2px solid var(--blue2);background:var(--bluebg);padding:15px}
+.plan input{width:20px;height:20px;accent-color:var(--blue);margin:2px 0 0;flex:none}
+.plan b{display:block;font-size:15px}.plan span span{font-size:13px;color:var(--muted)}
+.plan:has(input:checked) span span{color:var(--soft)}
+.nums{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.field{display:flex;flex-direction:column;gap:8px}
+.field>span{font-size:15px;font-weight:600}
+.field small{font-size:13px;color:var(--muted)}
+.input{height:48px;border-radius:8px;border:1px solid var(--line2);background:#07090c;color:var(--text);font-size:16px;padding:0 14px;width:100%}
+.input.sm{height:44px;font-size:15px}
+.input[aria-invalid=true]{border-color:var(--redtext)}
+.err{color:var(--redtext);font-size:13px}
+.actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding-top:16px;border-top:1px solid var(--line)}
+.actions .spacer{flex:1}
+.check{display:flex;align-items:center;gap:10px;margin-top:12px}
+.check input{width:20px;height:20px;accent-color:var(--blue)}
+dialog{width:min(560px,calc(100vw - 32px));padding:0;background:var(--panel);color:var(--text);border:1px solid var(--line2);border-radius:12px;box-shadow:0 12px 32px rgba(0,0,0,.55)}
+dialog::backdrop{background:rgba(5,6,8,.75)}
+.dh{padding:24px 24px 0}.dh .step{font-size:13px;color:var(--muted)}.dh h2{margin-top:4px;font-size:22px}.dh p{margin-top:8px;font-size:15px;color:var(--soft)}
+.db{padding:24px;display:flex;flex-direction:column;gap:20px}
+.df{display:flex;justify-content:flex-end;gap:8px;padding:16px 24px;border-top:1px solid var(--line);flex-wrap:wrap}
+.linkbox{display:flex;flex-direction:column;gap:8px;padding:16px;border-radius:10px;background:var(--panel2)}
+.linkbox .mono{font-size:14px;color:var(--soft);word-break:break-all}
+.note{display:flex;gap:12px;padding:14px 16px;border-radius:10px;background:var(--amberbg);color:var(--amber);font-size:14px;line-height:22px}
+.note svg{flex:none;margin-top:1px}
+.toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);display:flex;align-items:center;gap:12px;background:var(--panel2);border:1px solid var(--line2);border-radius:8px;box-shadow:0 12px 32px rgba(0,0,0,.55);padding:8px 8px 8px 16px;max-width:calc(100vw - 32px);z-index:10}
+.toast[hidden]{display:none}
+.toast.error{border-color:#7f1d1d}
+.login{max-width:440px;margin:10vh auto 0}
+.login form{display:flex;flex-direction:column;gap:16px}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+@media (max-width:640px){
+  .top{padding:8px 16px;gap:8px}nav{margin-left:0;width:100%}nav a{flex:1;justify-content:center}
+  main{padding:20px 16px 80px}.summary{padding:20px}.summary h1{font-size:24px}
+  .row .push{margin-left:0}
+}
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="brand"><svg width="24" height="24" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="2" width="20" height="20" rx="6" fill="#ef4444"></rect><circle cx="12" cy="12" r="4" fill="#090b0f"></circle></svg>WebMix เซิร์ฟเวอร์ <small id="srv"></small></div>
+  <nav aria-label="หน้า" id="nav" hidden>
+    <a href="#/" data-page="home">หน้าแรก</a>
+    <a href="#/users" data-page="users">คนที่ใช้งาน</a>
+  </nav>
+  <span class="spacer"></span>
+  <button type="button" class="btn ghost small" id="logout" hidden>ออกจากระบบ</button>
+</header>
+
+<main id="login" class="login" hidden>
+  <form id="login-form">
+    <h1 style="font-size:24px">เข้าหน้าผู้ดูแล</h1>
+    <label class="field"><span>รหัสผู้ดูแล (token)</span>
+      <input class="input" id="login-token" type="password" autocomplete="current-password" required>
+      <small>STREAM_TOKEN ของเซิร์ฟเวอร์ หรือรหัสของคนที่ตั้งเป็นผู้ดูแล · เก็บไว้ในแท็บนี้เท่านั้น ปิดแท็บแล้วต้องใส่ใหม่</small></label>
+    <p class="err" id="login-err" role="alert"></p>
+    <button class="btn primary" type="submit">เข้าสู่ระบบ</button>
+  </form>
+</main>
+
+<main id="page-home" hidden>
+  <section aria-label="สรุป" class="summary" id="summary"></section>
+  <section aria-label="เครื่องเซิร์ฟเวอร์" class="stats" id="stats"></section>
+  <section class="sec" aria-labelledby="live-h">
+    <h2 id="live-h">กำลังไลฟ์อยู่ตอนนี้</h2>
+    <div class="sec" id="lives"></div>
+  </section>
+  <section class="sec" aria-labelledby="news-h">
+    <h2 id="news-h">เกิดอะไรขึ้นล่าสุด</h2>
+    <ul class="events" id="events"></ul>
+    <p class="muted" style="font-size:13px" id="alert-note"></p>
+  </section>
+  <section class="card sec" aria-labelledby="upd-h">
+    <div class="row">
+      <div style="flex:1;min-width:240px">
+        <h2 id="upd-h" style="font-size:17px">ก่อนอัปเดตเซิร์ฟเวอร์</h2>
+        <p class="muted" id="drain-text" style="margin-top:4px"></p>
+      </div>
+      <button type="button" class="btn" id="drain-btn"></button>
+    </div>
+  </section>
+</main>
+
+<main id="page-users" hidden>
+  <div class="row">
+    <div style="flex:1;min-width:240px">
+      <h1 style="font-size:28px">คนที่ใช้งาน</h1>
+      <p class="muted" style="margin-top:4px;font-size:15px">ทุกคนได้รหัสเข้าใช้ของตัวเอง กำหนดได้ว่าแต่ละคนไลฟ์ได้มากแค่ไหน</p>
+    </div>
+    <button type="button" class="btn primary" id="add-btn"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>เพิ่มคน</button>
+  </div>
+  <ul class="users" id="users"></ul>
+</main>
+
+<dialog id="add-dlg" aria-labelledby="add-h">
+  <form id="add-form" novalidate>
+    <div class="dh"><span class="step">ขั้นที่ 1 จาก 2</span><h2 id="add-h">เพิ่มคนที่จะใช้เซิร์ฟเวอร์</h2></div>
+    <div class="db">
+      <label class="field"><span>ชื่อ</span>
+        <input class="input" name="name" id="add-name" autocomplete="off" spellcheck="false" maxlength="32" aria-describedby="add-name-hint">
+        <small id="add-name-hint">ภาษาอังกฤษ ตัวเลข . _ หรือ - เช่น shop-live</small></label>
+      <div id="add-plans"></div>
+      <details><summary>ตั้งค่าเพิ่มเติม</summary>
+        <label class="check"><input type="checkbox" name="manage"> ให้เป็นผู้ดูแลด้วย (เปิดหน้านี้และจัดการคนอื่นได้)</label></details>
+      <p class="err" id="add-err" role="alert"></p>
+    </div>
+    <div class="df"><button type="button" class="btn" data-close>ยกเลิก</button><button type="submit" class="btn primary">ถัดไป</button></div>
+  </form>
+</dialog>
+
+<dialog id="tok-dlg" aria-labelledby="tok-h">
+  <div class="dh"><span class="step" id="tok-step">ขั้นที่ 2 จาก 2</span><h2 id="tok-h"></h2>
+    <p>เปิดลิงก์บนเครื่องที่ใช้ WebMix แล้วพร้อมไลฟ์ผ่านเซิร์ฟเวอร์นี้ทันที ไม่ต้องตั้งค่าเอง</p></div>
+  <div class="db">
+    <div class="linkbox">
+      <span class="mono" id="tok-link"></span>
+      <div class="row" style="gap:8px"><button type="button" class="btn primary" id="tok-copy"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"></rect><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"></path></svg>คัดลอกลิงก์</button></div>
+    </div>
+    <div role="note" class="note"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l9 16H3z"></path><path d="M12 10v4M12 17v.01"></path></svg>
+      <span>ลิงก์นี้เหมือนกุญแจ — ส่งให้เจ้าตัวคนเดียว และแสดงแค่ครั้งนี้ ถ้าหายกด “ทำรหัสใหม่” ในหน้าคนที่ใช้งาน</span></div>
+    <details><summary>ใส่เองในแอป (ไม่ใช้ลิงก์)</summary>
+      <p class="soft" style="margin-top:10px;line-height:22px">ตั้งค่า → การสตรีม → Stream Gateway ใส่<br><span class="mono" id="tok-url" style="word-break:break-all"></span></p></details>
+  </div>
+  <div class="df"><button type="button" class="btn" data-close>เสร็จแล้ว</button></div>
+</dialog>
+
+<dialog id="confirm-dlg" aria-labelledby="cf-h">
+  <div class="dh"><h2 id="cf-h"></h2><p id="cf-p"></p></div>
+  <div class="df"><button type="button" class="btn" data-close>ยกเลิก</button><button type="button" class="btn primary" id="cf-ok"></button></div>
+</dialog>
+
+<div class="toast" id="toast" role="status" hidden><span id="toast-text"></span><button type="button" class="btn ghost small" id="toast-undo" style="color:var(--link);border:0" hidden>ย้อนกลับ</button></div>
+
+<script>
+(() => {
+'use strict';
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const KEY = 'webmix-admin-token';
+let token = '';
+try { token = sessionStorage.getItem(KEY) || ''; } catch (e) {}
+// ?token= ในลิงก์เดิมยังใช้ได้ — ย้ายไปเก็บในแท็บแล้วลบออกจากแถบที่อยู่ (ไม่ค้างในประวัติ/ภาพหน้าจอ)
+const q = new URLSearchParams(location.search);
+if (q.get('token')) { token = q.get('token'); try { sessionStorage.setItem(KEY, token); } catch (e) {} history.replaceState(null, '', location.pathname + location.hash); }
+
+let data = null, editing = null, timer = 0;
+
+async function api(path, body) {
+  const r = await fetch(path, body === undefined ? { headers: { authorization: 'Bearer ' + token }, cache: 'no-store' }
+    : { method: 'POST', headers: { authorization: 'Bearer ' + token, 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  let j = {};
+  try { j = await r.json(); } catch (e) {}
+  if (r.status === 403) { logout('รหัสไม่ถูกต้อง หรือไม่ใช่รหัสของผู้ดูแล'); throw new Error('forbidden'); }
+  if (!r.ok) throw new Error(j.error || 'ทำรายการไม่สำเร็จ (' + r.status + ')');
+  return j;
+}
+
+/* ---------- ข้อความที่คนทั่วไปอ่านเข้าใจ ---------- */
+function ago(iso) {
+  if (!iso) return '';
+  const m = Math.round((Date.now() - Date.parse(iso)) / 60000);
+  if (m < 2) return 'เมื่อสักครู่';
+  if (m < 60) return m + ' นาทีก่อน';
+  const h = Math.round(m / 60); if (h < 24) return h + ' ชม. ก่อน';
+  const d = Math.round(h / 24); if (d < 45) return d + ' วันก่อน';
+  return Math.round(d / 30) + ' เดือนก่อน';
+}
+function duration(ms) {
+  const m = Math.max(0, Math.floor(ms / 60000)), h = Math.floor(m / 60);
+  return h ? h + ' ชม. ' + (m % 60) + ' นาที' : m < 1 ? 'ไม่ถึงนาที' : m + ' นาที';
+}
+const time = iso => new Date(iso).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit', hour12: false });
+const describeLimits = l => 'ไลฟ์ได้ครั้งละ ' + l.streams + ' รายการ · ส่งได้ ' + l.destinations + ' ช่องต่อรายการ' + (l.srt ? ' · รับกล้องภาคสนามได้ ' + l.srt + ' ตัว' : '');
+function planOf(l) {
+  for (const [id, p] of Object.entries(data.plans)) if (p.limits.streams === l.streams && p.limits.destinations === l.destinations && p.limits.srt === l.srt) return id;
+  return 'custom';
+}
+function destChip(d) {
+  const st = d.state === 'live' ? ['', 'ออกอากาศ'] : d.state === 'connecting' ? ['warn', 'กำลังเชื่อมต่อ…'] : d.state === 'error' && d.wanted ? ['warn', 'หลุด — กำลังต่อใหม่เอง'] : d.state === 'error' ? ['bad', 'ส่งไม่ได้'] : ['idle', 'หยุดอยู่'];
+  const title = d.message ? ' title="' + esc(d.message) + '"' : '';
+  return '<span class="chip ' + st[0] + '"' + title + '><span class="dot" aria-hidden="true"></span>' + esc(d.name) + ' ' + st[1] + '</span>';
+}
+const srtChip = x => '<span class="chip' + (x.state === 'error' ? ' warn' : x.state === 'live' ? '' : ' idle') + '"><span class="dot" aria-hidden="true"></span>รับภาพ ' + esc(x.label) + (x.state === 'live' ? '' : x.state === 'error' ? ' — สัญญาณหาย' : ' — รอสัญญาณ') + '</span>';
+
+/* ---------- หน้าแรก ---------- */
+function renderHome() {
+  const s = data.system, streams = data.sessions.filter(x => x.kind === 'stream' && x.encoding), inputs = data.sessions.filter(x => x.kind === 'srt-in');
+  const failing = streams.flatMap(x => x.destinations.filter(d => d.wanted && d.state !== 'live'));
+  const serious = data.problems.filter(p => p.key !== 'dest' && p.key !== 'enc');
+  const slow = data.problems.filter(p => p.key === 'enc');
+  let cls = '', title = 'ทุกอย่างปกติ', line = streams.length ? 'กำลังไลฟ์ ' + streams.length + ' รายการ' : 'ยังไม่มีใครไลฟ์ตอนนี้';
+  if (failing.length) line += ' · มี ' + failing.length + ' ปลายทางกำลังต่อใหม่เอง ไม่ต้องทำอะไร';
+  if (data.draining) { cls = 'info'; title = 'พักรับไลฟ์ใหม่อยู่'; line = (streams.length ? 'รอไลฟ์ที่เหลือ ' + streams.length + ' รายการจบ' : 'ไม่มีไลฟ์ค้างแล้ว อัปเดตได้เลย') + ' · คนที่เริ่มไลฟ์ใหม่จะเห็นข้อความว่าเซิร์ฟเวอร์กำลังอัปเดต'; }
+  else if (serious.length) { cls = 'bad'; title = 'เครื่องเซิร์ฟเวอร์มีปัญหา'; line = serious.map(p => p.text).join(' · '); }
+  else if (slow.length) { cls = 'warn'; title = 'ภาพบางไลฟ์อาจกระตุก'; line = slow.map(p => p.text).join(' · '); }
+  else if (failing.length && failing.length === streams.flatMap(x => x.destinations.filter(d => d.wanted)).length) { cls = 'warn'; title = 'ปลายทางหลุดทั้งหมด'; line = 'ระบบกำลังต่อใหม่ให้เอง ถ้าไม่กลับมาใน 1–2 นาที ตรวจ Stream key ในแอป'; }
+  const icon = cls === '' ? '<circle cx="12" cy="12" r="9"></circle><path d="M8 12.5l2.5 2.5L16 9.5"></path>' : cls === 'info' ? '<circle cx="12" cy="12" r="9"></circle><path d="M12 8v5M12 16v.01"></path>' : '<path d="M12 3l9 16H3z"></path><path d="M12 10v4M12 17v.01"></path>';
+  const color = { '': '#22c55e', info: '#7fa6ff', warn: '#f5a524', bad: '#f87171' }[cls];
+  const sum = $('#summary'); sum.className = 'summary ' + cls;
+  sum.innerHTML = '<svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="' + color + '" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + icon + '</svg><div class="grow"><h1>' + esc(title) + '</h1><p>' + esc(line) + '</p></div>';
+
+  const cpu = Math.round(s.cpu * 100), mem = Math.round(s.memUsed / s.memTotal * 100);
+  const load = Math.max(cpu, mem);
+  const mood = load < 60 ? ['', 'สบาย'] : load < 85 ? ['warn', 'ค่อนข้างหนัก'] : ['bad', 'หนักมาก'];
+  const outMbps = streams.reduce((a, x) => a + x.destinations.reduce((b, d) => b + (d.kbps || 0), 0), 0) / 1000;
+  const cards = [];
+  cards.push(data.maxStreams
+    ? '<div class="card stat"><span class="k">ไลฟ์พร้อมกันได้อีก</span><b>' + Math.max(0, data.maxStreams - streams.length) + ' รายการ</b><span class="n">ใช้อยู่ ' + streams.length + ' จาก ' + data.maxStreams + '</span></div>'
+    : '<div class="card stat"><span class="k">กำลังไลฟ์</span><b>' + streams.length + ' รายการ</b><span class="n">' + (inputs.length ? 'รับภาพเข้า ' + inputs.length + ' สัญญาณ · ' : '') + 'ไม่ได้จำกัดจำนวน (ตั้ง MAX_STREAMS)</span></div>');
+  cards.push('<div class="card stat"><span class="k">เครื่องทำงาน</span><b>' + mood[1] + '</b><div class="bar" role="img" aria-label="ใช้ไป ' + load + ' เปอร์เซ็นต์"><i class="' + mood[0] + '" style="width:' + load + '%"></i></div><span class="n">CPU ' + cpu + '% · หน่วยความจำ ' + mem + '% · เกิน 92% นานจะแจ้งเตือน</span></div>');
+  if (data.uplinkMbps) {
+    const pct = Math.min(100, Math.round(outMbps / data.uplinkMbps * 100));
+    const net = pct < 60 ? ['', 'พอเหลือ'] : pct < 85 ? ['warn', 'ใกล้เต็ม'] : ['bad', 'เต็มแล้ว'];
+    cards.push('<div class="card stat"><span class="k">อินเทอร์เน็ตขาออก</span><b>' + net[1] + '</b><div class="bar" role="img" aria-label="ใช้ไป ' + pct + ' เปอร์เซ็นต์"><i class="' + net[0] + '" style="width:' + pct + '%"></i></div><span class="n">ส่งอยู่ ' + outMbps.toFixed(1) + ' จาก ' + data.uplinkMbps + ' Mbps</span></div>');
+  } else cards.push('<div class="card stat"><span class="k">อินเทอร์เน็ตขาออก</span><b>' + outMbps.toFixed(1) + ' Mbps</b><span class="n">ตั้ง UPLINK_MBPS เพื่อดูว่าเหลือเท่าไร</span></div>');
+  $('#stats').innerHTML = cards.join('');
+
+  // ไลฟ์ของแต่ละคน — สัญญาณขาเข้าของคนเดียวกันแสดงรวมในการ์ดเดียว
+  const byUser = new Map();
+  for (const x of streams) { if (!byUser.has(x.user)) byUser.set(x.user, { streams: [], inputs: [] }); byUser.get(x.user).streams.push(x); }
+  for (const x of inputs) { if (!byUser.has(x.user)) byUser.set(x.user, { streams: [], inputs: [] }); byUser.get(x.user).inputs.push(x); }
+  const cardsLive = [];
+  for (const [name, g] of byUser) {
+    for (const x of g.streams.length ? g.streams : [null]) {
+      const dests = x ? x.destinations.filter(d => d.wanted || d.state !== 'stopped') : [];
+      const warn = dests.some(d => d.wanted && d.state !== 'live');
+      const ins = x === g.streams[0] || !x ? g.inputs : [];
+      const tech = x ? [x.format, x.encoder ? 'เข้ารหัส ' + x.encoder.speed + 'x' : 'ส่งต่อภาพจากแอปโดยตรง', ...dests.filter(d => d.kbps).map(d => d.name + ' ' + d.kbps + ' kbps'), ...ins.filter(i => i.info).map(i => i.label + ' ' + i.info.codec + ' ' + i.info.width + '×' + i.info.height), 'IP ' + x.ip].join(' · ') : ins.map(i => i.label + (i.info ? ' ' + i.info.codec + ' ' + i.info.width + '×' + i.info.height : '') + ' · IP ' + i.ip).join(' · ');
+      const id = x ? x.id : ins[0].id;
+      cardsLive.push('<article class="card live' + (warn ? ' warn' : '') + '"><div class="row">' +
+        (x ? '<span class="pill"><svg width="8" height="8" aria-hidden="true"><circle cx="4" cy="4" r="4" fill="#fff"></circle></svg>LIVE</span>' : '<span class="pill off">รับภาพเข้า</span>') +
+        '<b style="font-size:18px">' + esc(name) + '</b><span class="muted">' + (x ? 'ไลฟ์มา ' + duration(Date.now() - x.startedAt) : 'เปิดรับมา ' + duration(Date.now() - ins[0].startedAt)) + '</span>' +
+        '<button type="button" class="btn push" data-stop="' + esc(id) + '" data-name="' + esc(name) + '" data-kind="' + (x ? 'stream' : 'srt') + '">' + (x ? 'หยุดไลฟ์นี้' : 'ปิดสัญญาณนี้') + '</button></div>' +
+        '<div class="chips">' + (dests.length ? dests.map(destChip).join('') : x ? '<span class="chip idle"><span class="dot" aria-hidden="true"></span>ยังไม่ได้เลือกปลายทาง</span>' : '') + ins.map(srtChip).join('') + '</div>' +
+        '<details><summary>รายละเอียดทางเทคนิค</summary><p class="tech">' + esc(tech) + '</p></details></article>');
+    }
+  }
+  const openTech = new Set([...document.querySelectorAll('#lives details[open]')].map(d => d.closest('article').querySelector('[data-stop]').dataset.stop));
+  $('#lives').innerHTML = cardsLive.join('') || '<div class="card empty">ยังไม่มีใครไลฟ์ — เมื่อมีคนไลฟ์ผ่านเซิร์ฟเวอร์นี้จะขึ้นที่นี่</div>';
+  for (const id of openTech) { const b = $('#lives [data-stop="' + CSS.escape(id) + '"]'); if (b) b.closest('article').querySelector('details').open = true; }
+
+  $('#events').innerHTML = data.recent.slice(0, 15).map(a => '<li><time datetime="' + esc(a.at) + '">' + time(a.at) + '</time><span class="' + (a.level === 'alert' ? 'alert' : a.level === 'ok' ? 'ok' : '') + '">' + esc(a.text) + '</span></li>').join('') || '<li class="muted">ยังไม่มีเหตุการณ์ตั้งแต่เปิดเซิร์ฟเวอร์</li>';
+  $('#alert-note').textContent = (data.alerts ? 'แจ้งเรื่องสำคัญไปช่องทางที่ตั้งไว้ด้วย (Telegram / webhook)' : 'ยังไม่ได้ตั้งช่องทางแจ้งเตือน — ตั้ง TELEGRAM_BOT_TOKEN หรือ ALERT_WEBHOOK แล้วรัน install.sh ใหม่') + ' · หน้านี้ไม่แสดง Stream key ของใคร';
+  $('#drain-text').textContent = data.draining ? 'ไม่รับไลฟ์ใหม่อยู่ — ไลฟ์ที่ออกอากาศอยู่ไปต่อได้ · install.sh เปิดรับให้เองหลังอัปเดตเสร็จ' : 'install.sh พักรับไลฟ์ใหม่และรอไลฟ์ที่อยู่จบให้เองตอนอัปเดต · กดที่นี่ถ้าจะปิดเครื่อง / ย้ายเครื่องเอง';
+  $('#drain-btn').textContent = data.draining ? 'เปิดรับไลฟ์ใหม่' : 'พักรับไลฟ์ใหม่';
+}
+
+/* ---------- คนที่ใช้งาน ---------- */
+function plansHtml(name, cur, limits) {
+  const opts = Object.entries(data.plans).map(([id, p]) => '<label class="plan"><input type="radio" name="' + name + '" value="' + id + '"' + (cur === id ? ' checked' : '') + '><span><b>' + esc(p.label) + '</b><span>' + esc(describeLimits(p.limits)) + '</span></span></label>').join('') +
+    '<label class="plan"><input type="radio" name="' + name + '" value="custom"' + (cur === 'custom' ? ' checked' : '') + '><span><b>กำหนดเอง</b><span>ใส่ตัวเลขเอง</span></span></label>';
+  const l = limits || data.defaults;
+  const num = (k, label) => '<label class="field"><span style="font-size:14px">' + label + '</span><input class="input sm" type="number" inputmode="numeric" min="0" max="100" step="1" data-lim="' + k + '" value="' + l[k] + '"></label>';
+  return '<fieldset><legend>แพ็กเกจ</legend><div class="plans">' + opts + '</div><div class="nums" data-custom' + (cur === 'custom' ? '' : ' hidden') + '>' +
+    num('streams', 'ไลฟ์พร้อมกัน (รายการ)') + num('destinations', 'ปลายทางต่อรายการ') + num('srt', 'รับกล้องภาคสนาม (ตัว)') + '</div></fieldset>';
+}
+function readLimits(root, radio) {
+  const v = (root.querySelector('input[name="' + radio + '"]:checked') || {}).value;
+  if (v && v !== 'custom') return data.plans[v].limits;
+  const out = {};
+  for (const i of root.querySelectorAll('[data-lim]')) {
+    const n = Number(i.value);
+    if (!Number.isInteger(n) || n < 0 || n > 100) { i.setAttribute('aria-invalid', 'true'); i.focus(); throw new Error('ใส่จำนวนเต็ม 0–100'); }
+    out[i.dataset.lim] = n;
+  }
+  return out;
+}
+function bindPlanToggle(root, radio) {
+  root.addEventListener('change', e => { if (e.target.name === radio) root.querySelector('[data-custom]').hidden = e.target.value !== 'custom'; });
+}
+function renderUsers() {
+  if (editing && !data.users.some(u => u.name === editing)) editing = null;
+  const live = new Map();
+  for (const x of data.sessions) if (x.kind === 'stream' && x.encoding) live.set(x.user, (live.get(x.user) || 0) + 1);
+  const list = data.users.map(u => {
+    const plan = planOf(u.limits), planName = plan === 'custom' ? '' : data.plans[plan].label + ' · ';
+    const badges = (live.get(u.name) ? '<span class="pill sm">กำลังไลฟ์</span>' : '') + (u.manage ? '<span class="pill sm mgr">ผู้ดูแล</span>' : '') + (u.disabled ? '<span class="pill sm off">พักการใช้งาน</span>' : '');
+    const head = '<div class="row" style="gap:16px"><span class="avatar" aria-hidden="true">' + esc(u.name[0]) + '</span><div class="who"><div class="row" style="gap:8px"><b>' + esc(u.name) + '</b>' + badges + '</div>';
+    const used = u.lastUsed ? 'ใช้ล่าสุด ' + ago(u.lastUsed) : 'ยังไม่เคยใช้';
+    if (u.disabled) return '<li class="card user off">' + head + '<p>เข้าใช้ไม่ได้จนกว่าจะเปิดใหม่ · ' + used + '</p></div>' +
+      '<button type="button" class="btn" data-act="enable" data-user="' + esc(u.name) + '">เปิดใช้งาน</button><button type="button" class="btn danger" data-act="remove" data-user="' + esc(u.name) + '">ลบ</button></div></li>';
+    if (editing === u.name) return '<li class="card user editing" data-edit="' + esc(u.name) + '">' + head + '<p class="muted">กำลังแก้ไข</p></div></div>' + plansHtml('plan-' + u.name, plan, u.limits) +
+      '<label class="check" style="margin:0"><input type="checkbox" data-manage' + (u.manage ? ' checked' : '') + (u.name === data.me ? ' disabled' : '') + '> ให้เป็นผู้ดูแลด้วย (เปิดหน้านี้และจัดการคนอื่นได้)</label>' +
+      '<p class="err" role="alert" data-err></p><div class="actions"><button type="button" class="btn primary" data-act="save" data-user="' + esc(u.name) + '">บันทึก</button><button type="button" class="btn" data-act="cancel">ยกเลิก</button><span class="spacer"></span>' +
+      '<button type="button" class="btn ghost" data-act="token" data-user="' + esc(u.name) + '">ทำรหัสใหม่ (รหัสเดิมใช้ไม่ได้)</button>' +
+      (u.name === data.me ? '' : '<button type="button" class="btn ghost" data-act="disable" data-user="' + esc(u.name) + '">พักการใช้งาน</button>') + '</div></li>';
+    return '<li class="card user">' + head + '<p>' + esc(planName + describeLimits(u.limits)) + ' · ' + used + '</p></div><button type="button" class="btn" data-act="edit" data-user="' + esc(u.name) + '">แก้ไข</button></div></li>';
+  });
+  $('#users').innerHTML = list.join('') || '<li class="card empty">ยังไม่มีใคร — กด “เพิ่มคน” เพื่อสร้างรหัสให้คนที่จะไลฟ์ผ่านเซิร์ฟเวอร์นี้</li>';
+  if (editing) { const el = $('#users [data-edit]'); bindPlanToggle(el, 'plan-' + editing); }
+}
+
+/* ---------- เปลี่ยนหน้า / โหลดข้อมูล ---------- */
+const page = () => location.hash === '#/users' ? 'users' : 'home';
+function render() {
+  if (!data) return;
+  $('#srv').textContent = '· ' + data.server;
+  for (const a of document.querySelectorAll('#nav a')) { if (a.dataset.page === page()) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); }
+  $('#page-home').hidden = page() !== 'home'; $('#page-users').hidden = page() !== 'users';
+  if (page() === 'home') renderHome();
+  else if (!editing) renderUsers();
+}
+async function load() {
+  try { data = await api('/admin/status.json'); show(true); render(); } catch (e) { if (e.message !== 'forbidden') console.warn(e); }
+}
+function show(on) {
+  $('#login').hidden = on; $('#nav').hidden = !on; $('#logout').hidden = !on;
+  if (!on) { $('#page-home').hidden = $('#page-users').hidden = true; }
+}
+function start() { clearInterval(timer); load(); timer = setInterval(() => { if (!document.hidden) load(); }, 3000); }
+function logout(msg) {
+  clearInterval(timer); token = ''; data = null;
+  try { sessionStorage.removeItem(KEY); } catch (e) {}
+  show(false); $('#login-err').textContent = msg || ''; $('#login-token').value = ''; $('#login-token').focus();
+}
+$('#login-form').addEventListener('submit', e => {
+  e.preventDefault(); token = $('#login-token').value.trim(); if (!token) return;
+  try { sessionStorage.setItem(KEY, token); } catch (err) {}
+  $('#login-err').textContent = ''; start();
+});
+$('#logout').addEventListener('click', () => logout(''));
+addEventListener('hashchange', () => { editing = null; render(); });
+document.addEventListener('visibilitychange', () => { if (!document.hidden && token) load(); });
+
+/* ---------- แจ้งผล / ยืนยัน ---------- */
+let toastTimer = 0;
+function toast(text, undo, error) {
+  const t = $('#toast'); $('#toast-text').textContent = text; t.classList.toggle('error', !!error);
+  const u = $('#toast-undo'); u.hidden = !undo; u.onclick = undo ? () => { t.hidden = true; undo(); } : null;
+  t.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; }, undo ? 8000 : 4000);
+}
+function confirmBox(title, text, okLabel, danger) {
+  return new Promise(res => {
+    const d = $('#confirm-dlg'); $('#cf-h').textContent = title; $('#cf-p').textContent = text;
+    const ok = $('#cf-ok'); ok.textContent = okLabel; ok.style.background = danger ? '#b91c1c' : ''; ok.style.borderColor = danger ? '#b91c1c' : '';
+    const done = v => { d.removeEventListener('close', onClose); ok.onclick = null; if (d.open) d.close(); res(v); };
+    const onClose = () => done(false);
+    ok.onclick = () => done(true); d.addEventListener('close', onClose); d.showModal();
+  });
+}
+for (const d of document.querySelectorAll('dialog')) d.addEventListener('click', e => { if (e.target.closest('[data-close]')) d.close(); });
+// ลิงก์เชิญมีรหัสอยู่ — ปิดหน้าต่างแล้วลบออกจากหน้า
+$('#tok-dlg').addEventListener('close', () => { $('#tok-link').textContent = $('#tok-url').textContent = ''; $('#tok-copy').onclick = null; });
+
+/* ---------- ลิงก์เชิญ ---------- */
+function showToken(name, tok, fresh) {
+  const gw = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/?token=' + encodeURIComponent(tok);
+  const link = data.studioUrl + '#gw=' + encodeURIComponent(gw);
+  $('#tok-step').hidden = !fresh;
+  $('#tok-h').textContent = (fresh ? 'ส่งลิงก์นี้ให้ ' : 'รหัสใหม่ของ ') + name;
+  $('#tok-link').textContent = link; $('#tok-url').textContent = gw;
+  $('#tok-copy').onclick = async () => {
+    try { await navigator.clipboard.writeText(link); toast('คัดลอกลิงก์แล้ว'); }
+    catch (e) { const r = document.createRange(); r.selectNodeContents($('#tok-link')); const s = getSelection(); s.removeAllRanges(); s.addRange(r); toast('เลือกลิงก์ไว้แล้ว — กด Ctrl+C / ⌘C เพื่อคัดลอก'); }
+  };
+  $('#tok-dlg').showModal();
+}
+
+/* ---------- เพิ่มคน ---------- */
+$('#add-btn').addEventListener('click', () => {
+  const f = $('#add-form'); f.reset(); $('#add-err').textContent = ''; $('#add-name').removeAttribute('aria-invalid');
+  $('#add-plans').innerHTML = plansHtml('plan-new', 'basic', data.plans.basic.limits).replace('<legend>แพ็กเกจ</legend>', '<legend>ใช้ทำอะไร</legend>');
+  bindPlanToggle($('#add-plans'), 'plan-new');
+  $('#add-dlg').showModal(); $('#add-name').focus();
+});
+$('#add-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const f = e.target, name = f.name.value.trim(), err = $('#add-err');
+  if (!/^[a-z0-9][a-z0-9._-]{0,31}$/i.test(name)) { $('#add-name').setAttribute('aria-invalid', 'true'); err.textContent = 'ชื่อใช้ได้เฉพาะภาษาอังกฤษ ตัวเลข . _ - (ไม่เกิน 32 ตัว)'; $('#add-name').focus(); return; }
+  let limits; try { limits = readLimits($('#add-plans'), 'plan-new'); } catch (x) { err.textContent = x.message; return; }
+  const btn = f.querySelector('[type=submit]'); btn.disabled = true;
+  try {
+    const r = await api('/admin/api/users', { name, limits, manage: f.manage.checked });
+    $('#add-dlg').close(); await load(); showToken(r.user.name, r.token, true);
+  } catch (x) { if (x.message !== 'forbidden') err.textContent = x.message; }
+  finally { btn.disabled = false; }
+});
+
+/* ---------- ปุ่มในรายการคน ---------- */
+const setDisabled = async (name, on) => { await api('/admin/api/users/' + encodeURIComponent(name) + '/update', { disabled: on }); editing = null; await load(); };
+$('#users').addEventListener('click', async e => {
+  const b = e.target.closest('[data-act]'); if (!b) return;
+  const name = b.dataset.user, act = b.dataset.act;
+  try {
+    if (act === 'edit') { editing = name; renderUsers(); const el = $('#users [data-edit] input:checked'); if (el) el.focus(); return; }
+    if (act === 'cancel') { editing = null; renderUsers(); return; }
+    if (act === 'save') {
+      const el = b.closest('[data-edit]'), err = el.querySelector('[data-err]');
+      let limits; try { limits = readLimits(el, 'plan-' + name); } catch (x) { err.textContent = x.message; return; }
+      const m = el.querySelector('[data-manage]');
+      b.disabled = true;
+      try { await api('/admin/api/users/' + encodeURIComponent(name) + '/update', { limits, manage: m.disabled ? undefined : m.checked }); }
+      catch (x) { err.textContent = x.message; b.disabled = false; return; }
+      editing = null; await load(); toast('บันทึกแพ็กเกจของ ' + name + ' แล้ว' + (data.sessions.some(x => x.user === name && x.encoding) ? ' — มีผลกับไลฟ์ครั้งถัดไป' : ''));
+      return;
+    }
+    if (act === 'token') {
+      if (!await confirmBox('ทำรหัสใหม่ให้ ' + name + '?', 'ลิงก์และรหัสเดิมใช้ไม่ได้ทันที ต้องส่งลิงก์ใหม่ให้เจ้าตัว (ไลฟ์ที่ออกอากาศอยู่ไม่ถูกตัด)', 'ทำรหัสใหม่')) return;
+      const r = await api('/admin/api/users/' + encodeURIComponent(name) + '/token', {});
+      editing = null; await load(); showToken(name, r.token, false); return;
+    }
+    if (act === 'disable') { await setDisabled(name, true); toast('พักการใช้งาน ' + name + ' แล้ว', () => setDisabled(name, false).catch(x => toast(x.message, null, true))); return; }
+    if (act === 'enable') { await setDisabled(name, false); toast('เปิดใช้งาน ' + name + ' แล้ว'); return; }
+    if (act === 'remove') {
+      if (!await confirmBox('ลบ ' + name + '?', 'ลบแล้วกู้คืนไม่ได้ ถ้าจะให้กลับมาใช้ต้องเพิ่มใหม่และส่งลิงก์ใหม่', 'ลบ', true)) return;
+      await api('/admin/api/users/' + encodeURIComponent(name) + '/remove', {}); await load(); toast('ลบ ' + name + ' แล้ว');
+    }
+  } catch (x) { if (x.message !== 'forbidden') toast(x.message, null, true); }
+});
+
+/* ---------- หน้าแรก: หยุดไลฟ์ / พักรับไลฟ์ ---------- */
+$('#lives').addEventListener('click', async e => {
+  const b = e.target.closest('[data-stop]'); if (!b) return;
+  const stream = b.dataset.kind === 'stream';
+  if (!await confirmBox(stream ? 'หยุดไลฟ์ของ ' + b.dataset.name + '?' : 'ปิดสัญญาณขาเข้าของ ' + b.dataset.name + '?',
+    stream ? 'ทุกปลายทางของไลฟ์นี้จะหยุดออกอากาศทันที แอปของเจ้าตัวจะแจ้งว่าผู้ดูแลหยุดไลฟ์ และไม่ต่อใหม่เอง' : 'ภาพที่รับเข้ามาจะหายจากแอปของเจ้าตัว', stream ? 'หยุดไลฟ์' : 'ปิดสัญญาณ', true)) return;
+  try { await api('/admin/api/sessions/' + encodeURIComponent(b.dataset.stop) + '/stop', {}); toast(stream ? 'หยุดไลฟ์ของ ' + b.dataset.name + ' แล้ว' : 'ปิดสัญญาณแล้ว'); load(); }
+  catch (x) { if (x.message !== 'forbidden') toast(x.message, null, true); }
+});
+$('#drain-btn').addEventListener('click', async () => {
+  const on = !data.draining;
+  if (on && !await confirmBox('พักรับไลฟ์ใหม่?', 'คนที่กดเริ่มไลฟ์จะเห็นว่าเซิร์ฟเวอร์กำลังอัปเดต (ถ้าตั้ง Gateway สำรองไว้ แอปย้ายไปตัวสำรองเอง) · ไลฟ์ที่ออกอากาศอยู่ไปต่อได้', 'พักรับไลฟ์ใหม่')) return;
+  try { await api('/admin/api/drain', { on }); await load(); toast(on ? 'พักรับไลฟ์ใหม่แล้ว' : 'เปิดรับไลฟ์ใหม่แล้ว'); }
+  catch (x) { if (x.message !== 'forbidden') toast(x.message, null, true); }
+});
+
+if (token) start(); else { show(false); $('#login-token').focus(); }
+})();
+</script>
+</body>
+</html>

@@ -193,7 +193,8 @@ function streamDropped(name, ip) {
   }, 30000));
 }
 function streamBack(name) {
-  if (dropTimers.has(name)) { clearTimeout(dropTimers.get(name)); dropTimers.delete(name); }
+  if (dropTimers.has(name)) { clearTimeout(dropTimers.get(name)); dropTimers.delete(name); return true; }
+  return false;
 }
 
 // หน้าเช็กสถานะ: เปิด https://โดเมน/ ในเบราว์เซอร์แล้วต้องเห็นข้อความ OK
@@ -290,6 +291,7 @@ function ingestControl(ws, req, auth) {
     const label = mode === 'listener' ? `UDP ${port}` : mode === 'rtmp' ? `RTMP ${port}` : maskCreds(target).replace(/\?.*$/, '');
     sessions.set(s.id, {
       kind: 'srt-in', user: auth.user, startedAt: Date.now(),
+      stop: () => { monitor.log(`ผู้ดูแลปิดสัญญาณขาเข้า ${label} ของ ${auth.user.name}`); fail('ผู้ดูแลเซิร์ฟเวอร์ปิดสัญญาณขาเข้านี้'); },
       snapshot: () => ({ id: s.id, kind: 'srt-in', user: auth.user.name, ip: auth.ip, startedAt: sessions.get(s.id)?.startedAt, label, state: s.state, wasLive: !!s.wasLive, info: s.info })
     });
     console.log(`${tag} open ${mode} ${label}`);
@@ -478,6 +480,55 @@ function iceConfig(req) {
 }
 
 const METRICS_TOKEN = process.env.METRICS_TOKEN || '';
+
+/* ---- หน้าผู้ดูแล (/admin) ---- */
+const ADMIN_HTML = fs.readFileSync(path.join(__dirname, 'admin.html'), 'utf8');
+// UPLINK_MBPS: ความเร็วอัปโหลดของเซิร์ฟเวอร์ (Mbps) — ใช้แสดงว่าเน็ตขาออกเหลือเท่าไร · STUDIO_URL: หน้า WebMix ในลิงก์เชิญ
+const UPLINK_MBPS = Number(process.env.UPLINK_MBPS) || 0;
+const STUDIO_URL = process.env.STUDIO_URL || 'https://jugkritso-png.github.io/webswither/';
+function adminStatus(me) {
+  return {
+    ...monitor.status(sessionList()), draining: draining(), me: me.name, maxStreams: MAX_STREAMS, uplinkMbps: UPLINK_MBPS, studioUrl: STUDIO_URL,
+    users: users.list(), plans: users.PLANS, defaults: users.DEFAULT_LIMITS
+  };
+}
+function adminAction(route, msg, me) {
+  const parts = route.split('/').map(decodeURIComponent);
+  const by = me.admin ? '' : ` (โดย ${me.name})`;
+  if (parts[0] === 'users' && parts.length === 1) {
+    const r = users.create(msg.name, msg.limits, { manage: !!msg.manage });
+    monitor.log(`เพิ่มผู้ใช้ ${r.user.name}${by}`);
+    return r;
+  }
+  if (parts[0] === 'users' && parts.length === 3) {
+    const [, name, op] = parts;
+    if (op === 'token') { const r = users.rotate(name); monitor.log(`ทำรหัสใหม่ให้ ${name}${by}`); return r; }
+    if (op === 'update') {
+      if (name === me.name && (msg.disabled || msg.manage === false)) throw new Error('ปิดสิทธิ์ของตัวเองไม่ได้');
+      const r = users.update(name, msg);
+      monitor.log(msg.disabled === true ? `พักการใช้งาน ${name}${by}` : msg.disabled === false ? `เปิดใช้งาน ${name} อีกครั้ง${by}` : `แก้แพ็กเกจของ ${name}${by}`);
+      return { user: r };
+    }
+    if (op === 'remove') {
+      if (name === me.name) throw new Error('ลบตัวเองไม่ได้');
+      users.remove(name); monitor.log(`ลบผู้ใช้ ${name}${by}`);
+      return { ok: true };
+    }
+  }
+  if (parts[0] === 'sessions' && parts[2] === 'stop' && parts.length === 3) {
+    const sess = sessions.get(parts[1]);
+    if (!sess) throw new Error('ไลฟ์นี้จบไปแล้ว');
+    sess.stop();
+    return { ok: true };
+  }
+  if (route === 'drain') {
+    if (msg.on) fs.writeFileSync(DRAIN_FILE, '');
+    else try { fs.unlinkSync(DRAIN_FILE); } catch (e) {}
+    monitor.log(msg.on ? `พักรับไลฟ์ใหม่${by} — ไลฟ์ที่ออกอากาศอยู่ไปต่อได้` : `เปิดรับไลฟ์ใหม่อีกครั้ง${by}`);
+    return { draining: draining() };
+  }
+  throw new Error('ไม่รู้จักคำสั่งนี้');
+}
 const server = http.createServer((req, res) => {
   const u = new URL(req.url, 'http://localhost');
   const token = u.searchParams.get('token') || String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
@@ -488,14 +539,27 @@ const server = http.createServer((req, res) => {
     if (a.error) return json(403, { error: a.error }, cors);
     return json(200, iceConfig(req), cors);
   }
-  if (u.pathname === '/admin' || u.pathname === '/admin/status.json') {
+  if (u.pathname === '/admin' || u.pathname === '/admin/') {
+    // หน้าเว็บไม่มีข้อมูลอะไร — ใส่ token ในหน้าแล้วหน้าเรียก /admin/status.json เอง (?token= ยังใช้ได้)
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'x-frame-options': 'DENY', 'referrer-policy': 'no-referrer',
+      'content-security-policy': "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src data:; base-uri 'none'; form-action 'none'" });
+    return res.end(ADMIN_HTML);
+  }
+  if (u.pathname === '/admin/status.json' || u.pathname.startsWith('/admin/api/')) {
     const a = authorize(req, token);
-    if (a.error || !a.user.admin) return json(403, { error: 'admin token required' });
-    if (u.pathname === '/admin') {
-      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'x-frame-options': 'DENY', 'content-security-policy': "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'" });
-      return res.end(monitor.ADMIN_HTML);
-    }
-    return json(200, { ...monitor.status(sessionList()), draining: draining() });
+    if (a.error || !(a.user.admin || a.user.manage)) return json(403, { error: 'admin token required' });
+    if (u.pathname === '/admin/status.json') return json(200, adminStatus(a.user));
+    // คำสั่งแก้ไขต้องส่ง token ทาง Authorization เท่านั้น (ไม่อยู่ใน URL / log) และเป็น JSON
+    if (req.method !== 'POST' || !/^Bearer\s/i.test(String(req.headers.authorization || ''))) return json(405, { error: 'POST with Authorization: Bearer <token>' });
+    let body = '';
+    req.on('data', d => { body += d; if (body.length > 8192) req.destroy(); });
+    req.on('end', () => {
+      let msg;
+      try { msg = JSON.parse(body || '{}'); } catch (e) { return json(400, { error: 'JSON ไม่ถูกต้อง' }); }
+      try { json(200, adminAction(u.pathname.slice('/admin/api/'.length), msg || {}, a.user)); }
+      catch (e) { json(400, { error: e.message }); }
+    });
+    return;
   }
   if (u.pathname === '/metrics') {
     const ok = METRICS_TOKEN ? token === METRICS_TOKEN : (() => { const a = authorize(req, token); return !a.error && a.user.admin; })();
@@ -554,6 +618,8 @@ wss.on('connection', (ws, req) => {
   const reject = (message, reason) => { send({ type: 'error', message }); ws.close(1008, reason); };
   const session = {
     kind: 'stream', user, startedAt: Date.now(), lastSeen: Date.now(), encoding: false, ws,
+    // ผู้ดูแลกดหยุดในหน้า /admin: แอปแสดงเหตุผลและไม่ต่อใหม่เอง (1008)
+    stop: () => { session.stoppedByAdmin = true; monitor.log(`ผู้ดูแลหยุดไลฟ์ของ ${user.name}`); reject('ผู้ดูแลเซิร์ฟเวอร์หยุดไลฟ์นี้', 'stopped by admin'); },
     snapshot: () => ({
       id: sessionId, kind: 'stream', user: user.name, ip: auth.ip, startedAt: session.startedAt, encoding: session.encoding,
       format: `${height ? height + 'p' : ''}${fps} · ${kbps} kbps`, encoder: encoderStats,
@@ -588,7 +654,8 @@ wss.on('connection', (ws, req) => {
     }
     session.encoding = true;
     monitor.counters.streamsStarted++;
-    streamBack(user.name);
+    if (!streamBack(user.name) && !(Date.now() - (recentlyLive.get(user.name) || 0) < 120000)) monitor.log(`${user.name} เริ่มไลฟ์`);
+    if (!user.admin) users.touch(user.name);
     return true;
   }
 
@@ -819,8 +886,9 @@ wss.on('connection', (ws, req) => {
     clearInterval(timer);
     // หลุดระหว่างไลฟ์ (ไม่ใช่การกดหยุด) → แจ้งเตือนถ้าไม่กลับมาใน 30 วินาที
     const wasLive = [...dests.values()].some(d => d.wanted && d.state === 'live');
-    if (wasLive && code !== 1000 && session.encoding) streamDropped(user.name, auth.ip);
-    if (session.encoding) recentlyLive.set(user.name, Date.now());
+    if (wasLive && code !== 1000 && session.encoding && !session.stoppedByAdmin) streamDropped(user.name, auth.ip);
+    if (session.encoding && !session.stoppedByAdmin) recentlyLive.set(user.name, Date.now());
+    if (session.encoding && code === 1000) monitor.log(`${user.name} หยุดไลฟ์ (ไลฟ์มา ${Math.max(1, Math.round((Date.now() - session.startedAt) / 60000))} นาที)`);
     sessions.delete(sessionId);
     monitor.forget(`enc:${sessionId}`);
     monitor.forget(`dest:${sessionId}:`);

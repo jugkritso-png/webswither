@@ -12096,7 +12096,37 @@ onmessage = async e => {
     custom: 'ใส่ RTMP Server URL และ Stream Key จากผู้ให้บริการ'
   };
   const obSheet = modal => { modal.classList.add('ob'); if (isPhoneUI()) modal.classList.add('m-sheet'); };
+  // ลิงก์เชิญจากหน้าผู้ดูแลเซิร์ฟเวอร์ (/admin): …/#gw=<wss://…/?token=…> — ถามก่อนแล้วตั้ง Stream Gateway ให้
+  // อยู่หลัง # จึงไม่ถูกส่งไปที่เว็บเซิร์ฟเวอร์ · ลบออกจากแถบที่อยู่ทันที (ไม่ค้างในประวัติ)
+  let gwJoinDone = false;
+  const gwJoin = (() => {
+    const m = /[#&]gw=([^&]+)/.exec(location.hash);
+    if (!m) return null;
+    let u = '';
+    try { u = decodeURIComponent(m[1]).trim(); } catch (e) {}
+    history.replaceState(null, '', location.pathname + location.search);
+    return /^wss?:\/\/[^\s/?#]+[^\s]*$/i.test(u) ? u : '';
+  })();
+  async function joinGateway() {
+    if (gwJoin === '') { toast('ลิงก์เชิญเซิร์ฟเวอร์ไม่ถูกต้อง — ขอลิงก์ใหม่จากผู้ดูแล', 'error', 7000); return; }
+    const host = gwJoin.replace(/^wss?:\/\//i, '').replace(/[/?#].*$/, '');
+    if (settings.gateway.trim() === gwJoin) { toast(`ใช้เซิร์ฟเวอร์ ${host} อยู่แล้ว`); return; }
+    const r = await dialog({
+      title: 'ใช้เซิร์ฟเวอร์ไลฟ์นี้?',
+      body: `<p class="modal-text">ผู้ดูแลเซิร์ฟเวอร์ส่งลิงก์นี้ให้คุณ — ไลฟ์จาก WebMix จะส่งผ่าน <b>${esc(host)}</b> แทนการส่งจากเครื่องนี้ตรง ๆ</p>
+        ${settings.gateway.trim() ? `<p class="modal-text muted">แทนที่เซิร์ฟเวอร์เดิม ${esc(settings.gateway.trim().replace(/^wss?:\/\//i, '').replace(/[/?#].*$/, ''))}</p>` : ''}
+        ${usingLocalGateway() ? '<p class="modal-text muted">แอปนี้จะเลิกใช้ Gateway ในเครื่อง แล้วส่งผ่านเซิร์ฟเวอร์นี้แทน</p>' : ''}`,
+      actions: [{ label: 'ไม่ใช้' }, { label: 'ใช้เซิร์ฟเวอร์นี้', primary: true, value: true }]
+    });
+    if (!r || !r.value) return;
+    settings.gateway = gwJoin;
+    if (desktop) settings.localGateway = false;
+    saveSettings();
+    updateStatus();
+    toast(`พร้อมไลฟ์ผ่านเซิร์ฟเวอร์ ${host} แล้ว`, 'success', 6000);
+  }
   function shouldOnboard() {
+    if (gwJoin !== null && !gwJoinDone) return false;
     if (store.get('onboarded', false) || /[?&]call=/.test(location.search)) return false;
     if (/onboard/.test(location.hash)) return true;
     if (navigator.webdriver || (desktop && desktop.info && desktop.info.selftest)) return false;
@@ -13325,6 +13355,7 @@ onmessage = async e => {
     setInterval(tickClock, 1000);
     requestAnimationFrame(rafLoop);
     setTimeout(() => { if (shouldOnboard()) openOnboarding(); }, 700);
+    if (gwJoin !== null) setTimeout(() => joinGateway().finally(() => { gwJoinDone = true; if (shouldOnboard()) openOnboarding(); }), 500);
     $('#m-gfx').addEventListener('click', quickGfxTap);
     document.documentElement.dataset.cards = cardSize();
     $$('#seg-cardsize button').forEach(b => { b.classList.toggle('is-active', b.dataset.size === cardSize()); b.addEventListener('click', () => setCardSize(b.dataset.size)); });

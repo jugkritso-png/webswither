@@ -2628,6 +2628,15 @@
     "(Gateway สำรอง)": "(backup gateway)",
     "LIVE{} {} · {} kbps · {}/{} ปลายทาง{}{}{}{}": "LIVE{1} {2} · {3} kbps · {4}/{5} destinations{6}{7}{8}{9}",
     "Gateway สำรอง: ตั้งค่า → การสตรีม → ขั้นสูง → “Gateway สำรอง” — ถ้า Gateway หลักกำลังอัปเดต ต่อไม่ติดตอนเริ่ม หรือล่มระหว่างไลฟ์ ระบบย้ายไลฟ์ไปตัวสำรองให้เอง (แถบสถานะขึ้น “Gateway สำรอง”) ไลฟ์ครั้งถัดไปเริ่มที่ตัวหลักเหมือนเดิม": "Backup gateway: Settings → Streaming → Advanced → “Backup gateway” — if the primary gateway is updating, can't be reached at the start, or goes down during a live, the live moves to the backup by itself (the status bar shows “backup gateway”); the next live starts on the primary again",
+    "ลิงก์เชิญเซิร์ฟเวอร์ไม่ถูกต้อง — ขอลิงก์ใหม่จากผู้ดูแล": "This server invite link is invalid — ask the admin for a new one",
+    "ใช้เซิร์ฟเวอร์ {} อยู่แล้ว": "Already using server {1}",
+    "ใช้เซิร์ฟเวอร์ไลฟ์นี้?": "Use this live server?",
+    "แทนที่เซิร์ฟเวอร์เดิม {}": "Replaces the current server {1}",
+    "แอปนี้จะเลิกใช้ Gateway ในเครื่อง แล้วส่งผ่านเซิร์ฟเวอร์นี้แทน": "This app will stop using its built-in gateway and stream through this server instead",
+    "ผู้ดูแลเซิร์ฟเวอร์ส่งลิงก์นี้ให้คุณ — ไลฟ์จาก WebMix จะส่งผ่าน": "A server admin sent you this link — lives from WebMix will go through",
+    "แทนการส่งจากเครื่องนี้ตรง ๆ": "instead of being sent straight from this device",
+    "ใช้เซิร์ฟเวอร์นี้": "Use this server",
+    "พร้อมไลฟ์ผ่านเซิร์ฟเวอร์ {} แล้ว": "Ready to go live through server {1}",
     "ทีวี": "TV", "หน้า": "Page", "รายการ": "Item", "ความยาว": "Length", "เหลือ": "Remain", "สไลด์": "Slides"
   });
 })(window.WebMix = window.WebMix || {});
