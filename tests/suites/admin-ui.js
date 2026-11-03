@@ -93,7 +93,7 @@ const listen = (key, file) => spawn('ffmpeg', ['-loglevel', 'error', '-listen', 
   ok('gateway set from the link', await until(() => app.evaluate(u => window.webmix.settings.gateway === u, gwUrl), 4000), await app.evaluate(() => window.webmix.settings.gateway));
 
   // --- ไลฟ์ผ่านรหัสของ shop-live → ผู้ดูแลเห็นและหยุดได้
-  let rx = listen('adm', `${S}/admin-ui-1.flv`);
+  const rx = listen('adm', `${S}/admin-ui-1.flv`);
   await wait(400);
   await app.click('[data-action=stream]'); await app.click('.dest-start-all'); await app.click('.pf-desk [data-cd="0"]').catch(() => {}); await app.click('.pf-desk [data-pf=go]').catch(() => {}); await app.keyboard.press('Escape');
   ok('user goes ON AIR through the server', await until(async () => (await app.textContent('#btn-stream')).includes('ON AIR'), 20000));

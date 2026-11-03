@@ -1,5 +1,4 @@
 // สร้างโดยชุดทดสอบ WebMix — รันผ่าน tests/run.js (ตั้งค่า WORK, เซิร์ฟเวอร์ทดสอบ และ fixtures ให้อัตโนมัติ)
-const { fixture, out, listenRtmp, probe, ROOT } = require('../lib');
 const { chromium } = require('playwright');
 const S = process.env.WORK;
 const results = []; const ok = (n, c, x = '') => results.push(`${c ? 'PASS' : 'FAIL'}  ${n} ${x}`);

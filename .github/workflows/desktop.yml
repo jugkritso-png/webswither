@@ -336,7 +336,7 @@ jobs:
           การสตรีมบนคอมพิวเตอร์ต้องมี ffmpeg — Windows: `winget install ffmpeg` · macOS: `brew install ffmpeg` (การบันทึกไม่ต้องใช้) · Android มี ffmpeg ในแอปแล้ว
           Linux: กล้องมือถือและแขกรับเชิญใช้ไม่ได้ (WebKitGTK ไม่มี WebRTC) — ใช้หน้าเว็บใน Chrome ถ้าต้องการ
           ติดตั้งแล้วครั้งต่อไปไม่ต้องดาวน์โหลดเอง: แอปบน Windows / macOS / Linux (AppImage) แจ้งและอัปเดตตัวเองได้ · Android แจ้งเมื่อมีเวอร์ชันใหม่
-          รายละเอียดและข้อจำกัด: ดู README หัวข้อ “แอปเดสก์ท็อป”
+          รายละเอียดและข้อจำกัด: ดู docs/apps.md
           NOTES
           sed -i 's/^          //' notes.md
           # สิ่งใหม่ของเวอร์ชันนี้ขึ้นก่อนตารางดาวน์โหลด

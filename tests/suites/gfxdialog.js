@@ -20,7 +20,7 @@ const results = []; const ok = (n, c, x = '') => results.push(`${c ? 'PASS' : 'F
   await p.click('.dg-modal .modal-foot .btn-primary'); await p.waitForTimeout(200);
   ok('score kept after save', JSON.stringify(await sc()) === '[2,1]');
   // แท็บนาฬิกา → ยังไม่มี → สร้างใหม่
-  await p.evaluate(() => { const w = window.webmix; const s = w.inputs.find(i => i.type === 'score'); w.renderInputs(); });
+  await p.evaluate(() => { window.webmix.renderInputs(); });
   await p.hover('#inputs-grid .card:has-text("SCORE")'); await p.click('#inputs-grid .card:has-text("SCORE") [data-card=rename]'); await p.waitForSelector('.dg-modal');
   await p.click('.dg-modal [data-gfx-tab=timer]'); await p.waitForTimeout(500);
   ok('timer tab creates a timer and opens its dialog', await p.evaluate(() => window.webmix.inputs.some(i => i.type === 'timer')) && await p.isVisible('.dg-modal [data-clock]'));

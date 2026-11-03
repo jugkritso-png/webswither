@@ -52,7 +52,7 @@ const until = async (fn, ms = 15000) => { const end = Date.now() + ms; while (Da
   ok('right code pairs the switcher', await until(async () => (await conn(sw)) === 'ok' && (await sw.locator('.rmt-in').count()) > 0));
   ok('switcher sees take bar + multiview, not the mixer', await sw.isVisible('.rmt-btn.cut') && await sw.isVisible('.rmt-inputs') && !(await sw.isVisible('.rmt-audio')) && (await sw.textContent('.rmt-role')).includes('สวิตเชอร์'));
   ok('multiview thumbnails of every source arrive', await until(() => sw.evaluate(() => [...document.querySelectorAll('.rmt-in img')].every(i => i.src.startsWith('data:image/jpeg')))), '');
-  let h = await hs();
+  const h = await hs();
   const target = h.ids.find(id => id !== h.pgm && id !== h.pvw);
   await sw.locator(`.rmt-in[data-v="${target}"]`).tap();
   ok('tap = Preview', await until(async () => (await hs()).pvw === target, 4000));

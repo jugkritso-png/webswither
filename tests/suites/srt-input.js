@@ -1,5 +1,4 @@
 // สร้างโดยชุดทดสอบ WebMix — รันผ่าน tests/run.js (ตั้งค่า WORK, เซิร์ฟเวอร์ทดสอบ และ fixtures ให้อัตโนมัติ)
-const { fixture, out, listenRtmp, probe, ROOT } = require('../lib');
 const { chromium } = require('playwright');
 const { spawn } = require('child_process');
 const S = process.env.WORK;

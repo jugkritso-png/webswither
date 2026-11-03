@@ -8,6 +8,7 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 COPY stream-gateway.js users.js monitor.js admin.html ./
+COPY lib ./lib
 
 ENV PORT=8080 NODE_ENV=production USERS_FILE=/data/users.json
 # รายชื่อผู้ใช้ (users.json) — เก็บใน volume เพื่อไม่ให้หายเมื่ออัปเดต

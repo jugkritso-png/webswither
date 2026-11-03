@@ -49,7 +49,6 @@ const results = []; const ok = (n, c, x = '') => results.push(`${c ? 'PASS' : 'F
   ok('replay shows the recorded Program picture (colour bars)', Math.min(...px) > 120, JSON.stringify(px));
   await p.waitForFunction(b => window.webmix.state.programId === b, bars, { timeout: 12000 }).catch(() => {});
   ok('when the clip ends it goes back to the previous source', await p.evaluate(b => window.webmix.state.programId === b, bars));
-  r = await rp();
   ok('a new capture works after playing', await (async () => { await p.keyboard.press('i'); await p.waitForTimeout(1500); const x = await rp(); return x.paused && Math.abs(x.clipLen - 5) < 0.05; })());
 
   // กล้องเป็นแหล่งรีเพลย์

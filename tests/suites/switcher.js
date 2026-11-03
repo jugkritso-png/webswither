@@ -1,5 +1,5 @@
 // สร้างโดยชุดทดสอบ WebMix — รันผ่าน tests/run.js (ตั้งค่า WORK, เซิร์ฟเวอร์ทดสอบ และ fixtures ให้อัตโนมัติ)
-const { fixture, out, listenRtmp, probe, ROOT } = require('../lib');
+const { listenRtmp, probe } = require('../lib');
 const { chromium } = require('playwright');
 const fs = require('fs'); const S = process.env.WORK;
 const peerLib = fs.readFileSync(require.resolve('peerjs/dist/peerjs.min.js'), 'utf8') + `;(function(){const P=window.Peer;window.Peer=function(id,o){if(typeof id==='object'||id===undefined){o=id;id=undefined;}o=Object.assign({host:'127.0.0.1',port:9900,path:'/',secure:false},o||{});return id?new P(id,o):new P(o);};})();`;

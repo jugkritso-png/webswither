@@ -5,7 +5,8 @@ class LufsMeter extends AudioWorkletProcessor {
     super();
     const fs = sampleRate;
     // ขั้น 1: high-shelf +4 dB (สัมประสิทธิ์ตามขนาดอัตราสุ่มใดก็ได้ แบบ libebur128)
-    let f0 = 1681.974450955533, G = 3.999843853973347, Q = 0.7071752369554196;
+    const G = 3.999843853973347;
+    let f0 = 1681.974450955533, Q = 0.7071752369554196;
     let K = Math.tan(Math.PI * f0 / fs);
     const Vh = Math.pow(10, G / 20), Vb = Math.pow(Vh, 0.4996667741545416);
     let a0 = 1 + K / Q + K * K;

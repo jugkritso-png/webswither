@@ -24,7 +24,8 @@ const results = []; const ok = (n, c, x = '') => results.push(`${c ? 'PASS' : 'F
   // สีกลางจอ / ขอบซ้าย-ขวาเป็นภาพจริง ไม่ใช่แถบดำ
   const px = (x, y) => p.evaluate(([x, y]) => Array.from(document.querySelector('#pgm-canvas').getContext('2d').getImageData(x, y, 1, 1).data.slice(0, 3)), [x, y]);
   await p.waitForTimeout(300);
-  let c = await px(360, 640), edge = await px(10, 640), top = await px(360, 20);
+  let c = await px(360, 640);
+  const edge = await px(10, 640), top = await px(360, 20);
   ok('landscape picture fills the vertical frame (cropped, no bars)', edge[1] > 200 && top[1] > 200 || top[0] > 200, JSON.stringify({ edge, top }));
   ok('centre crop shows the middle (red box)', c[0] > 200 && c[1] < 80, JSON.stringify(c));
   ok('card shows the orange crop frame', await p.isVisible(`.card[data-id="${img}"] .card-vcrop`));

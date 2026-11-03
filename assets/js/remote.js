@@ -103,7 +103,7 @@
     keepScreenOn && keepScreenOn(true);
     const form = $('.rmt-pair', root);
 
-    let peer = null, conn = null, st = null, retry = 0, stopped = false, unread = 0, team = [], msgs = [];
+    let peer = null, conn = null, st = null, retry = 0, stopped = false, team = [], msgs = [];
     // ทอล์กแบ็ก: ต่อสายเสียงกับเครื่องหลักด้วยเสียงเงียบก่อน (ไม่ต้องขอไมค์) — กดค้างปุ่มพูดจึงขอไมค์และสลับเข้าแทน
     const talk = { call: null, ctx: null, mic: null, sender: null, el: new Audio(), pressing: false, listen: store.get('rmtListen', true) };
     talk.el.autoplay = true;
@@ -268,7 +268,7 @@
       if (m.type === 'r-msg') {
         msgs = msgs.concat(m).slice(-50);
         renderTeam();
-        if ($('.rmt-team', root).hidden) { unread++; $('.rmt-unread', root).hidden = false; toast(`💬 ${m.from}: ${m.text}`); }
+        if ($('.rmt-team', root).hidden) { $('.rmt-unread', root).hidden = false; toast(`💬 ${m.from}: ${m.text}`); }
         if (navigator.vibrate) navigator.vibrate([40, 60, 40]);
         return;
       }
@@ -452,7 +452,7 @@
       if (r === 'ptt') return;
       if (r === 'team') {
         const p = $('.rmt-team', root); p.hidden = !p.hidden;
-        if (!p.hidden) { unread = 0; $('.rmt-unread', root).hidden = true; }
+        if (!p.hidden) $('.rmt-unread', root).hidden = true;
         return;
       }
       if (r === 'send') { const el = $('.rmt-send input', root); sendMsg(el.value); el.value = ''; return; }

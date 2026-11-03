@@ -1,7 +1,7 @@
 /* WebMix — หน้ากล้องมือถือ (?call=) และหน้าแขกรับเชิญ (?call=&guest=) */
 (function (WM) {
   'use strict';
-  const { $, $$, uid, store, icon, keepScreenOn, peerOptionsFromSig, unb64url } = WM;
+  const { $, uid, store, icon, keepScreenOn, peerOptionsFromSig, unb64url } = WM;
 
   function initCaller(targetId) {
     $('#studio').hidden = true;

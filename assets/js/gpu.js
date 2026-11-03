@@ -62,7 +62,6 @@
     const textures = new Map(); // key → { tex, w, h, stamp, frame }
     let lost = false;
     canvas.addEventListener('webglcontextlost', e => { e.preventDefault(); lost = true; });
-    let vpW = 1, vpH = 1;
 
     return {
       canvas, rendererName,
@@ -71,7 +70,6 @@
       ensureSize(w, h) { if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; } },
       // เริ่มวาดลงพื้นที่ w×h มุมซ้ายบนของ canvas
       begin(w, h) {
-        vpW = w; vpH = h;
         gl.viewport(0, canvas.height - h, w, h);
         gl.uniform2f(U.res, w, h);
         gl.disable(gl.SCISSOR_TEST);

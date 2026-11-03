@@ -220,14 +220,13 @@
     // ส่วนเนื้อไฟล์: ส่งผ่านตามเดิม แต่ไล่อ่านโครงสร้างเพื่อจดตำแหน่ง Cluster/keyframe
     _body(chunk) {
       this.inPos += chunk.length;
-      let b, p;
       if (this.skip >= chunk.length && !this.carry.length) {
         this.skip -= chunk.length;
         this.carryAt += chunk.length;
         return [chunk];
       }
-      b = this.carry.length ? concat([this.carry, chunk]) : chunk;
-      p = 0;
+      const b = this.carry.length ? concat([this.carry, chunk]) : chunk;
+      let p;
       try { p = this._scan(b); } catch (e) { this.mode = 'pass'; this.carry = new Uint8Array(0); return [chunk]; }
       // เก็บส่วนที่ยังอ่านไม่จบไว้รอชิ้นถัดไป (เป็นแค่ส่วนหัวขององค์ประกอบ ไม่กี่ไบต์)
       this.carry = b.slice(p);
@@ -345,6 +344,7 @@
   }
 
   const api = { WebmSeekFix };
+  /* global module -- โหลดใน Node (ชุดทดสอบ) ได้ด้วย */
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.WebmSeek = api;
 })(typeof self !== 'undefined' ? self : this);

@@ -1,5 +1,4 @@
 // สร้างโดยชุดทดสอบ WebMix — รันผ่าน tests/run.js (ตั้งค่า WORK, เซิร์ฟเวอร์ทดสอบ และ fixtures ให้อัตโนมัติ)
-const { fixture, out, listenRtmp, probe, ROOT } = require('../lib');
 const { chromium, devices } = require('playwright');
 const fs = require('fs'); const S = process.env.WORK;
 const peerLib = fs.readFileSync(require.resolve('peerjs/dist/peerjs.min.js'), 'utf8') + `;(function(){const P=window.Peer;window.Peer=function(id,o){if(typeof id==='object'||id===undefined){o=id;id=undefined;}o=Object.assign({host:'127.0.0.1',port:9900,path:'/',secure:false},o||{});return id?new P(id,o):new P(o);};})();`;
@@ -65,7 +64,7 @@ async function setup(ctx) {
   await cam.tap('#caller-quality'); await cam.waitForTimeout(4000);
   const after = await host.evaluate(() => { const m = window.webmix.inputs.find(i => i.type === 'wireless'); return `${m.el.videoWidth}x${m.el.videoHeight}`; });
   ok('phone switched to 4K', (await cam.textContent('#caller-quality')) === '4K', `studio receives ${after}`);
-  const br = await cam.evaluate(async () => { return null; });
+  await cam.evaluate(async () => { return null; });
   ok('no page errors', errs.length === 0, JSON.stringify(errs));
   console.log(results.join('\n'));
   await b.close();

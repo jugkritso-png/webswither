@@ -57,7 +57,7 @@ function makeFixtures() {
 function staticServer(port) {
   const server = http.createServer((req, res) => {
     const p = decodeURIComponent(new URL(req.url, 'http://x').pathname);
-    let file = path.join(ROOT, p === '/' ? 'index.html' : p);
+    const file = path.join(ROOT, p === '/' ? 'index.html' : p);
     if (!file.startsWith(ROOT) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) { res.writeHead(404); return res.end(); }
     res.writeHead(200, { 'content-type': MIME[path.extname(file)] || 'application/octet-stream' });
     fs.createReadStream(file).pipe(res);

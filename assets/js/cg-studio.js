@@ -8,7 +8,9 @@
   const MAX_IMAGE_BYTES = 1024 * 1024;
   const MAX_EMBEDDED_IMAGE_CHARS = 1_500_000;
   let doc = api.defaults(), selectedId = '', connected = false, isOnAir = false, isStaged = false, currentSlot = 0, revision = 0, zoom = 1, toastTimer = 0;
-  let undoStack = [], redoStack = [], typeCheckpoint = 0, drag = null, syncTimer = 0, saveTimer = 0, rendering = false, animationRunning = false, lastAnimationFrame = 0;
+  const undoStack = [];
+  let redoStack = [];
+  let typeCheckpoint = 0, drag = null, syncTimer = 0, saveTimer = 0, rendering = false, animationRunning = false, lastAnimationFrame = 0;
   const snapshot = value => JSON.parse(JSON.stringify(value));
   const activeScene = () => doc.scenes.find(scene => scene.id === doc.activeSceneId) || doc.scenes[0];
   const elements = () => activeScene()?.elements || [];
@@ -214,10 +216,6 @@
     const base = api.createTemplate(template); const newElements = snapshot(base.scenes[0].elements);
     mutate(next => { const target = next.scenes.find(item => item.id === next.activeSceneId); target.name = template; target.elements = newElements; });
     selectedId = elements()[0]?.id || ''; renderAll(); tell('ใส่ Template แล้ว — คลิกเลือกเพื่อปรับแต่ละชิ้น');
-  }
-  function applyInspectorValue(id, mutator, { history = true } = {}) {
-    const element = selectedElement(); if (!element) return;
-    patchElement(mutator, { history });
   }
   function bindValue(id, handler, event = 'input') { $(id).addEventListener(event, e => handler(e.target.value, e.target)); }
   function renderConnectionState() {

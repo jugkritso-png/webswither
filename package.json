@@ -1,0 +1,17 @@
+{
+  "name": "webmix-pro",
+  "private": true,
+  "description": "WebMix Pro — live production switcher for the browser, desktop and Android",
+  "license": "UNLICENSED",
+  "scripts": {
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "test": "npm --prefix tests test --",
+    "serve": "npx --yes http-server -c-1 -p 8765 ."
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "eslint": "10.13.0",
+    "globals": "17.14.0"
+  }
+}

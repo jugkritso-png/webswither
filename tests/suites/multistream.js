@@ -1,5 +1,5 @@
 // สร้างโดยชุดทดสอบ WebMix — รันผ่าน tests/run.js (ตั้งค่า WORK, เซิร์ฟเวอร์ทดสอบ และ fixtures ให้อัตโนมัติ)
-const { fixture, out, listenRtmp, probe, ROOT } = require('../lib');
+const { listenRtmp, probe } = require('../lib');
 const { chromium, devices } = require('playwright');
 const fs = require('fs'); const S = process.env.WORK;
 const peerLib = fs.readFileSync(require.resolve('peerjs/dist/peerjs.min.js'), 'utf8') + `;(function(){const P=window.Peer;window.Peer=function(id,o){if(typeof id==='object'||id===undefined){o=id;id=undefined;}o=Object.assign({host:'127.0.0.1',port:9900,path:'/',secure:false},o||{});return id?new P(id,o):new P(o);};})();`;
@@ -61,7 +61,7 @@ async function setup(ctx) {
   await row(0).locator('[data-dest-toggle]').click(); await row(2).locator('[data-dest-toggle]').click(); await p.waitForTimeout(2500);
   ok('auto-disconnect after last stop', (await p.textContent('#btn-stream')).trim() === 'STREAM' && (await p.textContent('#tally-lamp')).includes('OFF AIR') && (await rowText(0)).includes('พร้อม'), (await p.textContent('#btn-stream')).trim());
   // start all (ticked #1 and #2) then stop all
-  const l1 = listen(1935, 'k1', 'o1b'), l2 = listen(1936, 'k2', 'o2b'); await p.waitForTimeout(800);
+  listen(1935, 'k1', 'o1b'); listen(1936, 'k2', 'o2b'); await p.waitForTimeout(800);
   await p.click('.dest-start-all'); await p.click('.pf-desk [data-cd="0"]'); await p.click('.pf-desk [data-pf=go]'); await p.waitForTimeout(7000);
   ok('start all → ticked ones live', (await p.textContent('#btn-stream')).includes('ON AIR 2/2') && (await rowText(2)).includes('พร้อม'), (await p.textContent('#btn-stream')).trim());
   await p.click('.dest-stop-all'); await p.waitForSelector('.modal-text:has-text("ทุกปลายทาง")');

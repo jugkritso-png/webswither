@@ -39,7 +39,7 @@ const until = async (fn, ms = 8000) => { const end = Date.now() + ms; while (Dat
   const box = await p.locator(`${pv} .tp-track`).boundingBox();
   await p.mouse.move(box.x + box.width * 0.5, box.y + box.height / 2); await p.mouse.down();
   await p.mouse.move(box.x + box.width * 0.75, box.y + box.height / 2, { steps: 4 }); await p.mouse.up();
-  let v = await vid();
+  const v = await vid();
   ok('dragging the track seeks the clip', Math.abs(v.t - 15) < 1.5, JSON.stringify(v));
   ok('elapsed / remaining follow the position', await until(async () => /^00:00:1[456]:\d\d$/.test((await p.textContent(`${pv} .tp-cur`)).trim()) && /^-00:00:0[3-6]:\d\d$/.test((await p.textContent(`${pv} .tp-rem`)).trim())), `${await p.textContent(`${pv} .tp-cur`)} ${await p.textContent(`${pv} .tp-rem`)}`);
   ok('under 5 s left the remaining time turns red', await until(() => p.evaluate(s => document.querySelector(s + ' .tp-rem').dataset.level === 'crit', pv), 4000));
@@ -58,7 +58,7 @@ const until = async (fn, ms = 8000) => { const end = Date.now() + ms; while (Dat
   await p.evaluate(id => window.webmix.inputs.find(i => i.id === id).el.pause(), id);
   await seekTo(5); await p.waitForTimeout(150); await p.click(`${pv} [data-tp=in]`);
   await seekTo(9); await p.waitForTimeout(150); await p.click(`${pv} [data-tp=out]`);
-  let m = await mark();
+  const m = await mark();
   ok('I / O buttons set Mark In 5 s and Mark Out 9 s', m && Math.abs(m.in - 5) < 0.1 && Math.abs(m.out - 9) < 0.1, JSON.stringify(m));
   ok('track shows the In–Out range and markers; length shows the marked 4 s', await until(async () => await p.isVisible(`${pv} .tp-range`) && await p.isVisible(`${pv} .tp-in`) && await p.isVisible(`${pv} .tp-out`)
     && /^00:00:0[34]:\d\d$/.test((await p.textContent(`${pv} .tp-dur`)).trim()) && await p.locator(`${pv} [data-tp=in].is-on`).count() === 1), await p.textContent(`${pv} .tp-dur`));

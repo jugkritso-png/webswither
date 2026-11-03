@@ -5,9 +5,9 @@
 (() => {
   'use strict';
 
-  const { $, $$, clamp, uid, pad2, esc, icon, fmtDuration, fmtBytes, stamp, easeInOut, easeOut, isIOS, FONT, MONO,
-    downloadBlob, store, toast, keepScreenOn, b64url, unb64url, peerOptionsFromSig, initCaller,
-    fillBlack, drawFit, fitFont, drawBars, drawSlate, drawClock, RELINK_HINT, drawNoSignal, drawTitle, TITLE_STYLES, drawTitleInput, titleAnim,
+  const { $, $$, clamp, uid, pad2, esc, icon, fmtDuration, fmtBytes, stamp, easeInOut, isIOS, FONT,
+    downloadBlob, store, toast, keepScreenOn, b64url, peerOptionsFromSig, initCaller,
+    fillBlack, drawFit, fitFont, drawBars, drawSlate, drawClock, drawNoSignal, drawTitle, TITLE_STYLES, drawTitleInput, titleAnim,
     createKeyer, createGpu, idb, canUseOpfs, mediaStore, createMultiview, SHORTCUTS, MANUAL,
     TIMER_MODES, TIMER_STYLES, timerText, drawTimer, drawScore, TICKER_BAR, drawTickerBar, drawTicker, sheetCsvUrl, parseCsv, desktop, chat: chatLib } = window.WebMix;
   // ข้อความเริ่มต้นที่เป็นเนื้อหา (วาดลงภาพ Program) — สร้างตามภาษาที่เลือกตอนสร้างแหล่งภาพ ผู้ใช้แก้ได้ภายหลัง
@@ -417,7 +417,6 @@
     }
     ctx.restore();
   }
-  const LIVE_TYPES = ['camera', 'screen', 'wireless'];
 
   /* ------------------------------------------------------------- drawing */
 
@@ -2322,7 +2321,7 @@
           const q = new Error('permission'); q.quiet = true;
           throw q;
         }
-        throw new Error('ไม่ได้รับอนุญาตให้ใช้อุปกรณ์ (' + e.message + ')');
+        throw new Error('ไม่ได้รับอนุญาตให้ใช้อุปกรณ์ (' + e.message + ')', { cause: e });
       }
       list = await navigator.mediaDevices.enumerateDevices();
     }
@@ -3095,7 +3094,7 @@
   // ใช้กับโทเคนผู้ใช้ (จากการเข้าสู่ระบบ) หรือโทเคนเพจที่วางเอง (กรณีแอปเดสก์ท็อปเปิดหน้าต่าง Facebook ไม่ได้)
   async function fbUseUserToken(token) {
     const me = await fbGraph('me', token, { fields: 'id,name' });
-    let pages = [];
+    let pages;
     try {
       const r = await fbGraph('me/accounts', token, { fields: 'id,name,access_token,tasks,followers_count', limit: 50 });
       pages = (r.data || []).map(p => ({ id: p.id, name: p.name, token: p.access_token,
@@ -4282,7 +4281,7 @@
           const { vis: v } = layoutRects(L, CW, CH), th = CW * 0.012;
           const tryAxis = (edges, targets, axis) => {
             let best = null;
-            for (const [e, off] of edges) for (const t of targets) { const d = t - e; if (Math.abs(d) <= th && (!best || Math.abs(d) < Math.abs(best.d))) best = { d, t }; }
+            for (const [e] of edges) for (const t of targets) { const d = t - e; if (Math.abs(d) <= th && (!best || Math.abs(d) < Math.abs(best.d))) best = { d, t }; }
             if (!best) return;
             if (axis === 'x') L.x += best.d / CW; else L.y += best.d / CH;
             snapLines.push([axis, best.t]);
@@ -5167,7 +5166,7 @@
   }
   function vsetBg(inp, w, h) {
     const v = inp.vset, key = `${inp.id}|${v.set}|${w}x${h}|${v.set === 'image' && inp.vsImg ? inp.vsImgStamp : ''}`;
-    let c = vsBgCache.get(inp.id);
+    const c = vsBgCache.get(inp.id);
     if (c && c.key === key) return c.canvas;
     const canvas = c?.canvas || document.createElement('canvas');
     canvas.width = w; canvas.height = h;
@@ -5937,7 +5936,7 @@
   function midiMessage(e) {
     const [st, d1 = 0, d2 = 0] = e.data;
     const kind = st & 0xf0, ch = (st & 0x0f) + 1;
-    let id, on = false, value = null;
+    let id, on, value = null;
     if (kind === 0x90 && d2 > 0) { id = `note:${ch}:${d1}`; on = true; }
     else if (kind === 0xb0) {
       id = `cc:${ch}:${d1}`; value = d2 / 127;
@@ -6180,246 +6179,11 @@
     refreshSourceSelects();
   }
 
-  /* ---------------------------------------------------- playlist */
-  // เล่นวิดีโอ/รูปต่อกันอัตโนมัติ: วิดีโอจบแล้วไปรายการถัดไป, รูปแสดงตามเวลาที่ตั้ง · ไฟล์เก็บในเบราว์เซอร์เหมือน Input วิดีโอ/รูป
-  // ใช้ <video> ตัวเดียวต่อ Playlist เสียงจึงอยู่ในช่องมิกเซอร์เดียวตลอด
-  const playlist = {
-    create(props = {}) {
-      const v = document.createElement('video');
-      v.playsInline = true; v.preload = 'auto';
-      pool.appendChild(v);
-      const inp = addInput({ type: 'playlist', status: 'nosignal', ...props, el: v,
-        list: { items: [], index: 0, loop: true, imageSec: 5, playing: true, ...(props.list || {}) }, urls: new Map() });
-      v.addEventListener('ended', () => this.next(inp));
-      v.addEventListener('error', () => { if (v.getAttribute('src')) { toast(`${inp.name}: เล่นไฟล์ “${this.current(inp)?.name || ''}” ไม่ได้ — ข้ามไปรายการถัดไป`, 'warn'); this.next(inp); } });
-      v.addEventListener('playing', () => setInputStatus(inp, 'live'));
-      audio.addElement(inp, v);
-      return inp;
-    },
-    current: inp => inp.list.items[inp.list.index] || null,
-    async url(inp, item) {
-      if (inp.urls.has(item.key)) return inp.urls.get(item.key);
-      const file = await mediaStore.get(item.key);
-      if (!file) return null;
-      const u = URL.createObjectURL(file);
-      inp.urls.set(item.key, u);
-      return u;
-    },
-    // แสดงรายการที่ index (manual = ผู้ใช้กดเอง: เล่นต่อแม้ปิดวนซ้ำ)
-    async go(inp, index, manual) {
-      const L = inp.list, n = L.items.length;
-      clearTimeout(inp.imgTimer);
-      if (!n) { inp.showImg = null; inp.el.removeAttribute('src'); inp.el.load(); setInputStatus(inp, 'nosignal'); renderInputs(); return; }
-      if (index >= n) { if (!L.loop && !manual) { this.setPlaying(inp, false); return; } index = 0; }
-      if (index < 0) index = n - 1;
-      L.index = index;
-      const item = L.items[index], token = (inp.goToken = (inp.goToken || 0) + 1);
-      const src = await this.url(inp, item);
-      if (inp.removed || token !== inp.goToken) return;
-      if (!src) {
-        // ไฟล์ไม่อยู่ในเครื่องนี้ (เช่นเปิดไฟล์โชว์บนเครื่องอื่น) — ข้าม
-        if (!item.missingWarned) { item.missingWarned = true; toast(`${inp.name}: ไม่พบไฟล์ “${item.name}” ในเครื่องนี้ — ข้ามไป (เพิ่มไฟล์ใหม่ในหน้าแก้ไข Playlist)`, 'warn', 6000); }
-        if (L.items.every(x => x.missingWarned)) { setInputStatus(inp, 'nosignal'); return; }
-        return this.go(inp, index + 1, manual);
-      }
-      if (item.kind === 'image') {
-        inp.el.pause();
-        const img = new Image();
-        img.onload = () => { if (token !== inp.goToken) return; inp.showImg = img; inp.imgStart = performance.now(); setInputStatus(inp, 'live'); this.armImage(inp); };
-        img.src = src;
-      } else {
-        inp.showImg = null;
-        inp.el.src = src;
-        inp.el.currentTime = 0;
-        if (L.playing) inp.el.play().catch(() => {});
-      }
-      const sub = $(`#inputs-grid .card[data-id="${inp.id}"] .card-sub`);
-      if (sub) sub.textContent = cardSub(inp);
-    },
-    armImage(inp) {
-      clearTimeout(inp.imgTimer);
-      if (inp.list.playing && inp.showImg) inp.imgTimer = setTimeout(() => this.next(inp), inp.list.imageSec * 1000);
-    },
-    // รายการถัดไป: สุ่มลำดับ (ไม่ซ้ำตัวเดิม) · จบรายการแล้วไม่วน + “ตัดกลับ” → AUTO ไปภาพใน Preview
-    next(inp) {
-      if (inp.removed) return;
-      const L = inp.list, n = L.items.length;
-      if (L.shuffle && n > 1) { let j; do { j = Math.floor(Math.random() * n); } while (j === L.index); return this.go(inp, j, false); }
-      if (L.index + 1 >= n && !L.loop && L.endCut && state.programId === inp.id && state.previewId && state.previewId !== inp.id) { this.setPlaying(inp, false); autoTransition(); return; }
-      this.go(inp, L.index + 1, false);
-    },
-    // ความยาวของแต่ละไฟล์ (อ่านจาก metadata ครั้งเดียว เก็บไว้กับโชว์)
-    async durations(inp, onDone) {
-      for (const it of inp.list.items) {
-        if (it.kind === 'image' || it.dur) continue;
-        const u = await this.url(inp, it);
-        if (!u) continue;
-        it.dur = await new Promise(res => { const v = document.createElement('video'); v.preload = 'metadata'; v.onloadedmetadata = () => res(isFinite(v.duration) ? v.duration : 0); v.onerror = () => res(0); v.src = u; setTimeout(() => res(0), 5000); });
-        onDone && onDone();
-      }
-    },
-    reorder(inp, from, to) {
-      const it = inp.list.items;
-      if (from === to || from < 0 || to < 0 || from >= it.length || to >= it.length) return;
-      const cur = it[inp.list.index];
-      it.splice(to, 0, it.splice(from, 1)[0]);
-      inp.list.index = Math.max(0, it.indexOf(cur));
-    },
-    setPlaying(inp, on) {
-      inp.list.playing = on;
-      if (inp.showImg) { if (on) this.armImage(inp); else clearTimeout(inp.imgTimer); }
-      else if (inp.el.getAttribute('src')) { if (on) inp.el.play().catch(() => {}); else inp.el.pause(); }
-      renderInputs();
-    },
-    async addFiles(inp, files) {
-      for (const file of files) {
-        const kind = /^image\//.test(file.type) ? 'image' : /^(video|audio)\//.test(file.type) || /\.(mp4|webm|mov|mkv|m4v|mp3|wav|m4a)$/i.test(file.name) ? 'video' : null;
-        if (!kind) { toast(`ข้ามไฟล์ “${file.name}” (ไม่ใช่วิดีโอหรือรูป)`, 'warn'); continue; }
-        const item = { key: `${inp.id}-${uid()}`, name: file.name, kind };
-        inp.urls.set(item.key, URL.createObjectURL(file));
-        inp.list.items.push(item);
-        mediaStore.put(item.key, file).then(ok => { if (!ok && !inp.removed) toast(`พื้นที่ในเบราว์เซอร์ไม่พอเก็บ “${file.name}” — เปิดหน้าใหม่แล้วต้องเพิ่มไฟล์นี้อีกครั้ง`, 'warn', 7000); });
-      }
-      if (inp.list.items.length && inp.status !== 'live') this.go(inp, inp.list.index);
-      renderInputs();
-    },
-    remove(inp, i) {
-      const [item] = inp.list.items.splice(i, 1);
-      if (!item) return;
-      mediaStore.del(item.key);
-      const u = inp.urls.get(item.key);
-      if (u) { URL.revokeObjectURL(u); inp.urls.delete(item.key); }
-      if (i < inp.list.index) inp.list.index--;
-      else if (i === inp.list.index) this.go(inp, Math.min(inp.list.index, inp.list.items.length - 1), true);
-    },
-    move(inp, i, d) {
-      const it = inp.list.items, j = i + d;
-      if (j < 0 || j >= it.length) return;
-      [it[i], it[j]] = [it[j], it[i]];
-      if (inp.list.index === i) inp.list.index = j; else if (inp.list.index === j) inp.list.index = i;
-    },
-    dispose(inp, forget) {
-      clearTimeout(inp.imgTimer);
-      for (const u of inp.urls.values()) URL.revokeObjectURL(u);
-      if (forget) for (const it of inp.list.items) mediaStore.del(it.key);
-    },
-    keys: () => inputs.filter(i => i.type === 'playlist').flatMap(i => i.list.items.map(x => x.key)),
-    // หน้าแก้ Playlist: ลากเรียง · สถานะ เล่นแล้ว / กำลังเล่น / ถัดไป · ความยาว · กำลังเล่น + ปุ่มควบคุม · ตัวเลือกการเล่น
-    async edit(inp) {
-      const L = inp.list;
-      const tc = sec => sec ? fmtDuration(sec * 1000) : '—';
-      const durOf = it => it.kind === 'image' ? L.imageSec : it.dur || 0;
-      const rows = () => L.items.length ? L.items.map((it, i) => {
-        const st = i === L.index ? (inp.status === 'live' ? 'now' : 'cur') : i < L.index && !L.shuffle ? 'done' : i === L.index + 1 || (L.loop && L.index === L.items.length - 1 && i === 0) ? 'next' : '';
-        const chip = { now: '<em class="pl-chip now">กำลังเล่น</em>', cur: '<em class="pl-chip now">รายการปัจจุบัน</em>', next: '<em class="pl-chip next">ถัดไป</em>', done: '<em class="pl-chip done">เล่นแล้ว</em>' }[st] || '';
-        return `<div class="pl-row ${i === L.index ? 'is-current' : ''} ${st === 'next' ? 'is-next' : ''}" data-i="${i}" draggable="true">
-          <span class="pl-grip" aria-hidden="true">⋮⋮</span><span class="pl-num">${i + 1}</span><span class="pl-thumb">${icon(it.kind === 'image' ? 'image' : 'film')}</span>
-          <span class="pl-name" translate="no">${esc(it.name)}</span>${chip}<span class="pl-dur mono">${tc(durOf(it))}</span>
-          <button type="button" class="mini" data-pl="up" title="เลื่อนขึ้น">▲</button><button type="button" class="mini" data-pl="down" title="เลื่อนลง">▼</button>
-          <button type="button" class="mini" data-pl="play" title="เล่นรายการนี้">${icon('play')}</button><button type="button" class="mini danger" data-pl="del" title="ลบออกจากรายการ">${icon('x')}</button>
-        </div>`;
-      }).join('') : '<p class="note">ยังไม่มีไฟล์</p>';
-      const total = () => L.items.reduce((a, it) => a + durOf(it), 0);
-      const result = await dialog({
-        title: `Playlist — ${inp.name}`,
-        wide: true,
-        body: `<div class="pl-wrap">
-          <div class="pl-left">
-            <div class="pl-list">${rows()}</div>
-            <button type="button" class="pl-drop" data-pl="add">ลากไฟล์มาวาง หรือ + เพิ่มไฟล์ (วิดีโอ / รูป / เสียง)</button>
-          </div>
-          <div class="pl-right">
-            <section class="pl-card"><div class="pl-h"><h3>กำลังเล่น</h3></div>
-              <div class="pl-now"><canvas width="640" height="360" aria-label="ภาพที่กำลังเล่น"></canvas></div>
-              <div class="pl-bar"><i></i></div>
-              <div class="pl-times mono"><span data-pl-at>00:00:00</span><span data-pl-left></span></div>
-              <div class="pl-ctl"><button type="button" class="btn" data-pl="prev">ก่อนหน้า</button><button type="button" class="btn btn-primary" data-pl="toggle">หยุดชั่วคราว</button><button type="button" class="btn" data-pl="next">ถัดไป</button></div>
-            </section>
-            <section class="pl-card"><div class="pl-h"><h3>การเล่น</h3></div>
-              <label class="field"><span>ชื่อแหล่งภาพ</span><input name="name" class="input" maxlength="40" value="${esc(inp.name)}"></label>
-              <label class="check"><input type="checkbox" name="loop" ${L.loop ? 'checked' : ''}> วนรายการ</label>
-              <label class="check"><input type="checkbox" name="shuffle" ${L.shuffle ? 'checked' : ''}> สุ่มลำดับ</label>
-              <label class="check"><input type="checkbox" name="endCut" ${L.endCut ? 'checked' : ''}> จบรายการแล้วตัดกลับไปภาพใน Preview (เมื่อไม่วน)</label>
-              <label class="field"><span>รูปแต่ละรูปแสดง (วินาที)</span><input name="imageSec" class="input mono" type="number" min="1" max="600" value="${L.imageSec}"></label>
-            </section>
-            <p class="pl-total">รวม <b data-pl-count>${L.items.length}</b> รายการ · <b class="mono" data-pl-total>${tc(total())}</b></p>
-          </div>
-        </div>`,
-        actions: [{ label: 'เสร็จ', primary: true, value: 'save' }],
-        onOpen(modal) {
-          modal.classList.add('pl-modal');
-          const list = $('.pl-list', modal);
-          const redraw = () => { list.innerHTML = rows(); $('[data-pl-total]', modal).textContent = tc(total()); $('[data-pl-count]', modal).textContent = L.items.length; };
-          playlist.durations(inp, () => modal.isConnected && redraw());
-          const after = () => { redraw(); renderInputs(); };
-          modal.addEventListener('click', e => {
-            const b = e.target.closest('[data-pl]');
-            if (!b) return;
-            const act = b.dataset.pl, i = +(b.closest('[data-i]')?.dataset.i ?? -1);
-            if (act === 'add') { pickFiles('video/*,image/*,audio/*', files => playlist.addFiles(inp, files).then(() => { playlist.durations(inp, redraw); redraw(); })); return; }
-            if (act === 'up' || act === 'down') playlist.move(inp, i, act === 'up' ? -1 : 1);
-            else if (act === 'del') playlist.remove(inp, i);
-            else if (act === 'play') { L.playing = true; playlist.go(inp, i, true); }
-            else if (act === 'prev' || act === 'next') { L.playing = true; playlist.go(inp, L.index + (act === 'next' ? 1 : -1), true); }
-            else if (act === 'toggle') playlist.setPlaying(inp, !L.playing);
-            after();
-          });
-          // ลากเรียงลำดับ / ลากไฟล์จากเครื่องมาวาง
-          let from = -1;
-          list.addEventListener('dragstart', e => { const r = e.target.closest('.pl-row'); if (r) { from = +r.dataset.i; e.dataTransfer.effectAllowed = 'move'; r.classList.add('is-drag'); } });
-          list.addEventListener('dragend', () => { from = -1; $$('.pl-row', list).forEach(r => r.classList.remove('is-drag', 'is-over')); });
-          modal.addEventListener('dragover', e => { e.preventDefault(); $$('.pl-row', list).forEach(r => r.classList.toggle('is-over', r === e.target.closest('.pl-row') && from >= 0)); });
-          modal.addEventListener('drop', e => {
-            e.preventDefault();
-            const files = [...(e.dataTransfer?.files || [])];
-            if (files.length) { playlist.addFiles(inp, files).then(() => { playlist.durations(inp, redraw); redraw(); }); return; }
-            const r = e.target.closest('.pl-row');
-            if (r && from >= 0) { playlist.reorder(inp, from, +r.dataset.i); after(); }
-          });
-          modal.addEventListener('change', e => {
-            if (e.target.name === 'shuffle') L.shuffle = e.target.checked;
-            if (e.target.name === 'loop') L.loop = e.target.checked;
-            if (e.target.name === 'endCut') L.endCut = e.target.checked;
-            if (e.target.name === 'imageSec') { L.imageSec = clamp(Math.round(+e.target.value || 5), 1, 600); redraw(); }
-            if (['shuffle', 'loop'].includes(e.target.name)) redraw();
-          });
-          const cv = $('.pl-now canvas', modal), cx = cv.getContext('2d'), bar = $('.pl-bar i', modal);
-          let lastIdx = L.index, lastStatus = inp.status;
-          const tick = () => {
-            if (!modal.isConnected) return;
-            drawSource(cx, inp, 640, 360);
-            const it = L.items[L.index], v = inp.el;
-            let at = 0, dur = 0;
-            if (it && it.kind === 'image') { dur = L.imageSec; at = inp.imgStart ? Math.min(dur, (performance.now() - inp.imgStart) / 1000) : 0; }
-            else if (v && isFinite(v.duration)) { dur = v.duration; at = v.currentTime; }
-            bar.style.width = `${dur ? at / dur * 100 : 0}%`;
-            $('[data-pl-at]', modal).textContent = fmtDuration(at * 1000);
-            $('[data-pl-left]', modal).textContent = dur ? `เหลือ ${fmtDuration((dur - at) * 1000)}` : '';
-            $('[data-pl=toggle]', modal).textContent = L.playing ? 'หยุดชั่วคราว' : 'เล่น';
-            if (lastIdx !== L.index || lastStatus !== inp.status) { lastIdx = L.index; lastStatus = inp.status; redraw(); }
-            requestAnimationFrame(tick);
-          };
-          tick();
-        }
-      });
-      if (result?.value === 'save') {
-        const f = result.form;
-        inp.name = f.name.value.trim() || inp.name;
-        L.imageSec = clamp(Math.round(+f.imageSec.value || 5), 1, 600);
-        L.loop = f.loop.checked; L.shuffle = f.shuffle.checked; L.endCut = f.endCut.checked;
-      }
-      renderInputs();
-      refreshSourceSelects();
-    }
-  };
-  function addPlaylist() {
-    audio.ensure();
-    const n = inputs.filter(i => i.type === 'playlist').length + 1;
-    const inp = playlist.create({ name: `PLAYLIST ${n}` });
-    pickFiles('video/*,image/*,audio/*', files => playlist.addFiles(inp, files));
-    return inp;
-  }
-
+  /* ---------------------------------------------------- playlist → assets/js/playlist.js */
+  const { playlist, addPlaylist } = window.WebMix.createPlaylist({
+    inputs, state, pool, audio: () => audio,
+    addInput, setInputStatus, renderInputs, refreshSourceSelects, cardSub, drawSource, autoTransition, pickFiles, dialog
+  });
   /* ---------------------------------------------------- data graphics */
   const timerControl = (inp, act) => {
     const t = clockOf(inp);
@@ -8798,7 +8562,7 @@
       st.className = `nv-st ${r.list.length ? 'is-ok' : 'is-idle'}`;
       st.textContent = `${r.list.length ? `พบ ${r.list.length} แหล่ง` : 'ยังไม่พบแหล่ง'}${r.version ? ` · ${r.version}` : ''}`;
       list.innerHTML = r.list.map(n => {
-        const m = /^(.*?)\s*\(([^)]+)\)\s*$/.exec(n) || [, '', n], u = used(proto, n);
+        const m = /^(.*?)\s*\(([^)]+)\)\s*$/.exec(n) || [null, '', n], u = used(proto, n);
         return `<div class="nv-src" role="listitem"><span class="net-thumb">${icon('monitor')}</span><span class="nv-src-t"><b>${esc(m[2])}</b><small>${esc(m[1] || 'เครื่องนี้')}</small></span>
           ${u ? `<span class="nv-used">ใช้อยู่ · ${esc(u.name)}</span>` : `<button type="button" class="btn btn-sm" data-nv-add="${esc(n)}">เพิ่มเป็นแหล่งภาพ</button>`}</div>`;
       }).join('') || '<p class="note">ยังไม่พบแหล่งในวง LAN — ตรวจว่าเครื่องส่งเปิดอยู่ อยู่วงเดียวกัน และไฟร์วอลล์ไม่บล็อก</p>';
@@ -8830,7 +8594,7 @@
       if (!add) return;
       const col = add.closest('.nv-col'), proto = col.dataset.proto, source = add.dataset.nvAdd;
       if (used(proto, source)) return;
-      const name = (/\(([^)]+)\)\s*$/.exec(source) || [, source])[1].slice(0, 32);
+      const name = (/\(([^)]+)\)\s*$/.exec(source) || [null, source])[1].slice(0, 32);
       createSrtInput({ mode: proto, source, port: 0, latency: 500 }, name);
       saveSrtInputs();
       store.set('net-proto', proto);
@@ -8874,7 +8638,7 @@
           if (my !== seq || !box.isConnected) return;
           if (error) { box.innerHTML = `<p class="note net-err">${esc(error)}</p>`; return; }
           // "เครื่อง (ชื่อ)" → แสดงชื่อแหล่งตัวใหญ่ และชื่อเครื่องตัวเล็ก
-          box.innerHTML = list.length ? list.map(n => { const m = /^(.*?)\s*\(([^)]+)\)\s*$/.exec(n) || [, '', n]; return `<button type="button" class="net-src ${n === f.source.value ? 'is-active' : ''}" data-src="${esc(n)}"><span class="net-thumb">${icon('monitor')}</span><span class="net-txt"><b>${esc(m[2])}</b><small>${esc(m[1] || 'ในวง LAN')}</small></span><em class="net-chip">${esc(NET_PROTOS[modal.dataset.proto] || '')}</em></button>`; }).join('')
+          box.innerHTML = list.length ? list.map(n => { const m = /^(.*?)\s*\(([^)]+)\)\s*$/.exec(n) || [null, '', n]; return `<button type="button" class="net-src ${n === f.source.value ? 'is-active' : ''}" data-src="${esc(n)}"><span class="net-thumb">${icon('monitor')}</span><span class="net-txt"><b>${esc(m[2])}</b><small>${esc(m[1] || 'ในวง LAN')}</small></span><em class="net-chip">${esc(NET_PROTOS[modal.dataset.proto] || '')}</em></button>`; }).join('')
             : '<p class="note">ยังไม่พบแหล่งในวง LAN — ตรวจว่าเครื่องส่งเปิดอยู่และอยู่วงเดียวกัน แล้วกด “ค้นหาใหม่”</p>';
         };
         $('.net-proto', modal).addEventListener('click', e => {
@@ -8900,7 +8664,7 @@
     if (!source) { toast('ยังไม่ได้เลือกแหล่งสัญญาณ', 'warn'); return; }
     store.set('net-proto', chosen);
     // "เครื่อง (ชื่อ)" → ใช้ชื่อในวงเล็บเป็นชื่อการ์ด
-    const auto = (/\(([^)]+)\)\s*$/.exec(source) || [, source])[1].slice(0, 32);
+    const auto = (/\(([^)]+)\)\s*$/.exec(source) || [null, source])[1].slice(0, 32);
     const name = r.form.name.value.trim() || auto;
     if (inp) {
       inp.srt = { ...inp.srt, mode: chosen, source };
@@ -8942,8 +8706,8 @@
     const gwErr = gatewayProblem();
     if (gwErr) { toast(`${gwErr} — กล้อง IP ต้องใช้ Stream Gateway (แอปเดสก์ท็อปมีในตัว)`, 'warn'); openSettings('stream'); return; }
     const cur = target ? target.srt : {};
-    let host = '', path = '', port = 554;
-    try { if (cur.url) { const u = new URL(cur.url); host = u.hostname; port = +u.port || 554; path = u.pathname + u.search; } } catch (e) {}
+    let host = '';
+    try { if (cur.url) host = new URL(cur.url).hostname; } catch (e) {}
     const n = inputs.filter(i => i.type === 'srt' && i.srt.mode === 'rtsp').length + 1;
     const r = await dialog({
       title: target ? `กล้อง IP — ${target.name}` : 'เพิ่มกล้อง IP (RTSP)',
@@ -10199,270 +9963,11 @@ onmessage = async e => {
   });
 
 
-  /* ---- คลิปไฮไลต์ 9:16: บัฟเฟอร์ภาพ Program + เสียงมาสเตอร์ย้อนหลัง — เครื่องบันทึกตัวเดียว ทุก 60 วินาทีปิดเป็นไฟล์ (ช่วงก่อนหน้า)
-     แล้วเริ่มช่วงใหม่ทันที → มีภาพย้อนหลัง 60–120 วินาทีเสมอ โดยเข้ารหัสทีละตัว (ไม่ซ้อน 2 ตัวให้เครื่องหนัก)
-     กดตัด = เก็บช่วงท้ายไว้ทันที (ไม่เข้ารหัสใหม่) · ทำคลิป = เล่นช่วงนั้น (ข้ามรอยต่อ 2 ไฟล์ได้) วาดลงแคนวาสแนวตั้งแล้วบันทึกเป็นไฟล์
-     กรอบภาพ: ครอปกลาง (เลื่อนซ้าย/ขวาได้) หรือภาพเต็มบนพื้นเบลอ · ไฟล์ลงโฟลเดอร์ REC ถ้าเลือกไว้ ไม่อย่างนั้นดาวน์โหลด */
-  const HL_LENS = [15, 30, 60];
-  // span = ความยาวต่อช่วง (ชุดทดสอบตั้งให้สั้นลงได้)
-  const hl = { on: false, span: 60000, cur: null, prev: null, timer: null, mime: '', list: [], busy: null, cfg: { len: 30, frame: 'blur', x: 0.5, title: '' } };
-  try { Object.assign(hl.cfg, store.get('hl-cfg', {})); } catch (e) {}
-  const hlSupported = () => !!window.MediaRecorder && !(window.WebMix.wcrec && window.WebMix.wcrec.preferred());
-  function hlSegment() {
-    if (!hl.on) return;
-    const old = hl.cur;
-    try {
-      const r = new MediaRecorder(output.get(), { ...(hl.mime ? { mimeType: hl.mime } : {}), videoBitsPerSecond: 4000000, audioBitsPerSecond: 128000 });
-      const seg = { r, chunks: [], t0: performance.now(), type: r.mimeType || hl.mime || 'video/webm' };
-      r.ondataavailable = e => { if (e.data.size) seg.chunks.push(e.data); };
-      r.start(500);
-      hl.cur = seg;
-    } catch (e) { console.warn('highlight buffer', e); }
-    if (old) {
-      // ปิดช่วงเดิมเป็นไฟล์ที่เลื่อนตำแหน่งได้ — แทนที่ช่วงก่อนหน้าเมื่อพร้อม
-      // (ยังไม่ซ่อมไฟล์ตรงนี้ — ซ่อมเฉพาะตอนกดตัด ไม่ให้เธรดหลักสะดุดทุกนาทีระหว่างไลฟ์)
-      old.r.onstop = () => {
-        const blob = new Blob(old.chunks, { type: old.type });
-        old.chunks = [];
-        if (hl.on) hl.prev = { blob, t0: old.t0, t1: performance.now(), type: old.type };
-      };
-      try { old.r.requestData(); old.r.stop(); } catch (e) {}
-    }
-  }
-  function hlStart() {
-    if (hl.on) return true;
-    if (!hlSupported()) return false;
-    hl.on = true;
-    hl.mime = ['video/webm;codecs=vp8,opus', 'video/webm;codecs=vp9,opus', 'video/webm'].find(t => MediaRecorder.isTypeSupported(t)) || '';
-    hlSegment();
-    hl.timer = setInterval(hlSegment, hl.span);
-    return true;
-  }
-  function hlStop() {
-    hl.on = false;
-    clearInterval(hl.timer); hl.timer = null;
-    if (hl.cur) { try { hl.cur.r.stop(); } catch (e) {} hl.cur.chunks = []; }
-    hl.cur = hl.prev = null;
-    output.reset();
-  }
-  // วินาทีที่มีในบัฟเฟอร์ตอนนี้
-  const hlBuffered = () => !hl.cur ? 0 : (performance.now() - (hl.prev ? hl.prev.t0 : hl.cur.t0)) / 1000;
-  // ตัวจับเวลาใน Worker: วาดต่อได้แม้สลับไปแท็บอื่น (setInterval ในหน้าถูกหน่วงเหลือวินาทีละครั้ง)
-  function workerTimer(ms, fn) {
-    try {
-      const w = new Worker(URL.createObjectURL(new Blob([`setInterval(()=>postMessage(0),${ms})`], { type: 'text/javascript' })));
-      w.onmessage = fn;
-      return () => w.terminate();
-    } catch (e) { const id = setInterval(fn, ms); return () => clearInterval(id); }
-  }
-  function hlDrawFrame(ctx, v, cw, ch, cfg) {
-    const vw = v.videoWidth || v.width || 16, vh = v.videoHeight || v.height || 9;
-    ctx.fillStyle = '#000'; ctx.fillRect(0, 0, cw, ch);
-    if (cfg.frame === 'crop') {
-      // เต็มจอแนวตั้ง: ตัดด้านข้างออก เลือกตำแหน่งได้ (0 = ซ้ายสุด · 1 = ขวาสุด)
-      const s = Math.max(cw / vw, ch / vh), dw = vw * s, dh = vh * s;
-      ctx.drawImage(v, (cw - dw) * cfg.x, (ch - dh) / 2, dw, dh);
-    } else {
-      // ภาพเต็มตรงกลาง + ภาพเดียวกันขยายเบลอเป็นพื้นหลัง
-      const s = Math.max(cw / vw, ch / vh), bw = vw * s, bh = vh * s;
-      ctx.save(); ctx.filter = 'blur(28px) brightness(0.55)'; ctx.drawImage(v, (cw - bw) / 2, (ch - bh) / 2, bw, bh); ctx.restore();
-      const f = cw / vw, fh = vh * f;
-      ctx.drawImage(v, 0, (ch - fh) / 2, cw, fh);
-    }
-    if (cfg.title) {
-      const size = Math.round(cw * 0.065);
-      ctx.save(); ctx.font = `800 ${size}px ${FONT}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      fitFont(ctx, cfg.title, 800, size, FONT, cw * 0.88);
-      ctx.lineWidth = Math.max(4, size * 0.16); ctx.strokeStyle = 'rgba(0,0,0,.75)'; ctx.lineJoin = 'round';
-      ctx.strokeText(cfg.title, cw / 2, ch * 0.13); ctx.fillStyle = '#fff'; ctx.fillText(cfg.title, cw / 2, ch * 0.13);
-      ctx.restore();
-    }
-  }
-  // ขั้นที่ 1 (เร็ว ไม่เข้ารหัสใหม่): เก็บไฟล์ของช่วงปัจจุบัน (+ ช่วงก่อนหน้าถ้าต้องย้อนไกลกว่า)
-  async function hlGrab(len) {
-    const cur = hl.cur;
-    if (!cur) throw new Error('ยังไม่ได้เปิดบัฟเฟอร์ไฮไลต์');
-    try { cur.r.requestData(); } catch (e) {}
-    await new Promise(r => setTimeout(r, 300));
-    const curSec = (performance.now() - cur.t0) / 1000, prevSec = hl.prev ? (hl.prev.t1 - hl.prev.t0) / 1000 : 0;
-    const have = curSec + prevSec;
-    if (!cur.chunks.length || have < 3) throw new Error('ภาพย้อนหลังยังไม่พอ — รอสักครู่แล้วลองใหม่');
-    const want = Math.min(len, have);
-    const segs = [];
-    // ช่วงก่อนหน้าใส่ไว้ด้วยเมื่อช่วงปัจจุบันอาจไม่พอ — แบ่งความยาวจริงตอนทำคลิป (เวลาในไฟล์ ไม่ใช่เวลานาฬิกา)
-    if (hl.prev && want > curSec - 3) segs.push(await seekableClip(hl.prev.blob, hl.prev.type));
-    segs.push(await seekableClip(new Blob(cur.chunks, { type: cur.type }), cur.type));
-    return { segs, have, len: want };
-  }
-  const hlLoad = blob => new Promise((res, rej) => {
-    const v = document.createElement('video');
-    v.playsInline = true; v.preload = 'auto';
-    v.onloadedmetadata = () => res(v); v.onerror = () => rej(new Error('เปิดภาพย้อนหลังไม่ได้'));
-    v.src = URL.createObjectURL(blob);
+  // คลิปไฮไลต์ 9:16 → assets/js/highlight.js
+  const { hl, openHighlightDialog } = window.WebMix.createHighlights({
+    output, audio, streamer, rec, pgmCanvas, seekableClip, dialog, confirmDialog,
+    height: () => H, recFolder: () => recFolder
   });
-  // ขั้นที่ 2 (ใช้เครื่องหนัก): เล่นช่วงนั้นต่อกัน วาดลงกรอบแนวตั้ง แล้วเข้ารหัสเป็นไฟล์
-  async function hlRender(raw, cfg, onProgress) {
-    const vids = [];
-    for (const blob of raw.segs) vids.push(await hlLoad(blob));
-    const first = vids[vids.length - 1];
-    const big = (first.videoHeight || H) >= 900, cw = big ? 1080 : 720, ch = big ? 1920 : 1280;
-    const canvas = document.createElement('canvas'); canvas.width = cw; canvas.height = ch;
-    const ctx = canvas.getContext('2d');
-    // เสียงของคลิป: ผ่าน Web Audio ไปลงไฟล์เท่านั้น ไม่ดังออกลำโพง
-    const ac = audio.ensure(), dest = ac.createMediaStreamDestination();
-    const nodes = vids.map(v => { const n = ac.createMediaElementSource(v); n.connect(dest); return n; });
-    const stream = new MediaStream([...canvas.captureStream(30).getVideoTracks(), ...dest.stream.getAudioTracks()]);
-    const mime = ['video/mp4;codecs=avc1,mp4a.40.2', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'].find(t => MediaRecorder.isTypeSupported(t)) || '';
-    const out = new MediaRecorder(stream, { ...(mime ? { mimeType: mime } : {}), videoBitsPerSecond: big ? 8000000 : 5000000, audioBitsPerSecond: 160000 });
-    const parts = [];
-    out.ondataavailable = e => { if (e.data.size) parts.push(e.data); };
-    const durOf = v => isFinite(v.duration) && v.duration > 0 ? v.duration : 0;
-    const seek = (v, t) => new Promise(res => { v.onseeked = res; v.currentTime = t; setTimeout(res, 2000); });
-    // แบ่งความยาวจากท้าย: ไฟล์ล่าสุดก่อน ที่เหลือเอาจากไฟล์ก่อนหน้า
-    const starts = [], takes = [];
-    let remain = raw.len;
-    for (let i = vids.length - 1; i >= 0; i--) { const d = durOf(vids[i]); const t = Math.max(0, Math.min(remain, d)); takes[i] = t; starts[i] = Math.max(0, d - t); remain -= t; }
-    const order = vids.map((v, i) => i).filter(i => takes[i] > 0.05);
-    const total = order.reduce((a, i) => a + takes[i], 0) || raw.len;
-    // เลื่อนทุกไฟล์ไปจุดเริ่มไว้ก่อน
-    for (const i of order) await seek(vids[i], starts[i]);
-    let k = 0, done0 = 0, cur = vids[order[0]];
-    hlDrawFrame(ctx, cur, cw, ch, cfg);
-    const stopTimer = workerTimer(1000 / 30, () => { hlDrawFrame(ctx, cur, cw, ch, cfg); onProgress?.(Math.min(1, (done0 + cur.currentTime - starts[order[k]]) / total)); });
-    const finished = new Promise(res => { out.onstop = res; });
-    out.start(1000);
-    await cur.play().catch(() => {});
-    for (; k < order.length; k++) {
-      const i = order[k], v = vids[i], next = k + 1 < order.length ? vids[order[k + 1]] : null;
-      // ใกล้จบไฟล์นี้: เริ่มเล่นไฟล์ถัดไปแบบปิดเสียงไว้ก่อน แล้วสลับเมื่อภาพเดินแล้ว — ภาพไม่ค้างตรงรอยต่อ
-      await new Promise(res => {
-        const t = setInterval(() => { if (v.ended || v.paused || v.currentTime >= starts[i] + takes[i] - (next ? 0.25 : 0.05)) { clearInterval(t); res(); } }, 20);
-      });
-      if (next) {
-        next.muted = true;
-        await next.play().catch(() => {});
-        const s0 = starts[order[k + 1]];
-        await new Promise(res => { const t0 = performance.now(), t = setInterval(() => { if (next.currentTime > s0 + 0.02 || v.ended || performance.now() - t0 > 1500) { clearInterval(t); res(); } }, 10); });
-        await new Promise(res => { const t = setInterval(() => { if (v.ended || v.paused || v.currentTime >= starts[i] + takes[i] - 0.03) { clearInterval(t); res(); } }, 10); });
-        next.muted = false; v.pause();
-        done0 += takes[i];
-        cur = next;
-      }
-    }
-    stopTimer();
-    out.stop();
-    await finished;
-    // ปิดทุกอย่างที่ใช้ทำคลิป (แทร็กแคนวาส ตัวถอดรหัสวิดีโอ) — ไม่ให้ค้างกินเครื่องระหว่างไลฟ์ต่อ
-    stream.getTracks().forEach(t => t.stop());
-    vids.forEach((v, i) => { v.pause(); nodes[i].disconnect(); URL.revokeObjectURL(v.src); v.removeAttribute('src'); v.load(); });
-    const type = out.mimeType || mime || 'video/webm';
-    const blob = new Blob(parts, { type });
-    return { blob: type.includes('webm') ? await seekableClip(blob, type) : blob, len: total, ext: type.includes('mp4') ? 'mp4' : 'webm', w: cw, h: ch };
-  }
-  async function hlSave(item) {
-    if (recFolder) {
-      try {
-        const fh = await recFolder.getFileHandle(item.name, { create: true });
-        const w = await fh.createWritable(); await w.write(item.blob); await w.close();
-        toast(`บันทึก “${item.name}” ลงโฟลเดอร์ ${recFolder.name} แล้ว`, 'success', 5000);
-        return;
-      } catch (e) { console.warn('highlight folder', e); }
-    }
-    downloadBlob(item.blob, item.name);
-    toast(`ดาวน์โหลด “${item.name}” แล้ว`, 'success', 4000);
-  }
-  const hlLive = () => !!(streamer.ws || streamer.reconnecting || rec.active);
-  // แปลงคลิปที่รออยู่ทีละคลิป · ระหว่างไลฟ์/บันทึกรอจนจบ (ไม่ให้ภาพไลฟ์สะดุด) เว้นแต่กด “แปลงตอนนี้”
-  async function hlProcess(force) {
-    if (hl.busy) return;
-    const item = hl.list.find(it => it.state === 'wait' && (force === it || !hlLive()));
-    if (!item) return;
-    hl.busy = { p: 0, item };
-    item.state = 'work';
-    try {
-      const r = await hlRender(item.raw, item.cfg, p => { hl.busy.p = p; });
-      Object.assign(item, r, { state: 'done', raw: null, name: `WebMix-Highlight-${item.stamp}.${r.ext}`, url: URL.createObjectURL(r.blob) });
-      await hlSave(item);
-    } catch (e) { item.state = 'error'; item.error = e.message; toast(`ทำคลิปไม่สำเร็จ: ${e.message}`, 'error', 6000); }
-    finally { hl.busy = null; hl.onChange?.(); }
-    hlProcess();
-  }
-  setInterval(() => hlProcess(), 2000);
-  async function hlCut(cfg) {
-    const raw = await hlGrab(cfg.len);
-    const item = { state: 'wait', raw, cfg: { ...cfg }, len: raw.len, at: Date.now(), stamp: stamp(), title: cfg.title };
-    hl.list.unshift(item);
-    for (let i = hl.list.length - 1; hl.list.length > 10 && i >= 0; i--) if (hl.list[i].state !== 'work') { const [old] = hl.list.splice(i, 1); if (old.url) URL.revokeObjectURL(old.url); }
-    if (hlLive()) toast(`เก็บช่วง ${raw.len.toFixed(0)} วินาทีแล้ว — จะทำเป็นคลิป 9:16 ให้หลังจบไลฟ์ (ไลฟ์ไม่สะดุด) · กด “แปลงตอนนี้” ในหน้าต่างไฮไลต์ถ้าต้องการทันที`, 'success', 6000);
-    hl.onChange?.();
-    hlProcess();
-    return item;
-  }
-  async function openHighlightDialog() {
-    if (!hlSupported()) { toast('เครื่องนี้ทำคลิปไฮไลต์ไม่ได้ (ต้องใช้ Chrome / Edge หรือแอป Windows / macOS / Android)', 'warn', 6000); return; }
-    hlStart();
-    const c = hl.cfg;
-    const when = it => new Date(it.at).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
-    const listHtml = () => hl.list.map((it, i) => `<div class="hl-item" data-state="${it.state}">${it.url ? `<video src="${it.url}" muted playsinline preload="metadata"></video>` : '<span class="hl-thumb"></span>'}<div><b>${esc(it.title || 'ไฮไลต์')}</b><small>${it.len.toFixed(0)} วิ · ${when(it)} · ${it.state === 'done' ? `${it.w}×${it.h} · ${fmtBytes(it.blob.size)}` : it.state === 'work' ? 'กำลังทำคลิป…' : it.state === 'error' ? `ไม่สำเร็จ: ${esc(it.error || '')}` : hlLive() ? 'รอจบไลฟ์แล้วทำให้' : 'รอคิว'}</small></div>${it.state === 'done' ? `<button type="button" class="btn btn-sm" data-hl-save="${i}">${icon('download')} บันทึกอีกครั้ง</button>` : it.state === 'wait' ? `<button type="button" class="btn btn-sm" data-hl-now="${i}">แปลงตอนนี้</button>` : ''}</div>`).join('');
-    const r = await dialog({
-      title: 'คลิปไฮไลต์ 9:16',
-      body: `
-        <div class="hl-grid">
-          <canvas class="hl-preview" width="216" height="384"></canvas>
-          <div class="hl-side">
-            <p class="note hl-buf"></p>
-            <div class="field"><span>ความยาว (วินาทีล่าสุด)</span><div class="seg hl-len">${HL_LENS.map(n => `<button type="button" data-len="${n}" class="${n === c.len ? 'is-active' : ''}">${n} วิ</button>`).join('')}</div></div>
-            <label class="field"><span>กรอบภาพ</span><select name="frame" class="select"><option value="blur" ${c.frame === 'blur' ? 'selected' : ''}>ภาพเต็มบนพื้นเบลอ</option><option value="crop" ${c.frame === 'crop' ? 'selected' : ''}>ครอปเต็มจอแนวตั้ง</option></select></label>
-            <label class="field hl-x" ${c.frame === 'crop' ? '' : 'hidden'}><span>ตำแหน่งครอป (ซ้าย ↔ ขวา)</span><input type="range" name="x" min="0" max="1" step="0.01" value="${c.x}"></label>
-            <label class="field"><span>ข้อความบนคลิป (ไม่บังคับ)</span><input name="title" class="input" maxlength="60" value="${esc(c.title)}" placeholder="เช่น ประตูชัย นาทีที่ 89"></label>
-            <button type="button" class="btn btn-primary hl-cut">${icon('scissors')} ตัดคลิป</button>
-            <div class="hl-progress" hidden><div class="hl-bar"><i></i></div><small></small></div>
-          </div>
-        </div>
-        <div class="hl-list">${listHtml()}</div>
-        <p class="note">บัฟเฟอร์ทำงานต่อหลังปิดหน้าต่างนี้ — เกิดช็อตเด็ดกด H หรือปุ่มกรรไกรแล้วกด “ตัดคลิป” · ไฟล์ลง${recFolder ? `โฟลเดอร์ ${esc(recFolder.name)}` : 'โฟลเดอร์ดาวน์โหลด'} · บัฟเฟอร์ใช้หน่วยความจำราว 60 MB</p>`,
-      actions: [{ label: 'ปิดบัฟเฟอร์', value: 'off' }, { label: 'ปิด', primary: true }],
-      onOpen(modal) {
-        const pv = $('.hl-preview', modal), pctx = pv.getContext('2d');
-        modal.addEventListener('input', () => {
-          c.frame = $('[name=frame]', modal).value; c.x = +$('[name=x]', modal).value; c.title = $('[name=title]', modal).value.trim();
-          $('.hl-x', modal).hidden = c.frame !== 'crop';
-          store.set('hl-cfg', c);
-        });
-        modal.addEventListener('click', async e => {
-          const len = e.target.closest('[data-len]');
-          if (len) { c.len = +len.dataset.len; $$('.hl-len button', modal).forEach(x => x.classList.toggle('is-active', x === len)); store.set('hl-cfg', c); return; }
-          const sv = e.target.closest('[data-hl-save]');
-          if (sv) { hlSave(hl.list[+sv.dataset.hlSave]); return; }
-          const now = e.target.closest('[data-hl-now]');
-          if (now) {
-            const it = hl.list[+now.dataset.hlNow];
-            if (hlLive() && !(await confirmDialog('แปลงคลิปตอนนี้?', 'กำลังไลฟ์ / บันทึกอยู่ — การทำคลิปใช้เครื่องหนัก ภาพที่ออกอากาศอาจกระตุกระหว่างนี้ (ราวเท่าความยาวคลิป)', 'แปลงตอนนี้'))) return;
-            hlProcess(it); return;
-          }
-          if (e.target.closest('.hl-cut')) {
-            try { await hlCut({ ...c }); } catch (err) { toast(`ตัดคลิปไม่สำเร็จ: ${err.message}`, 'error', 6000); }
-          }
-        });
-        let sig = '';
-        hl.onChange = () => { if (modal.isConnected) { $('.hl-list', modal).innerHTML = listHtml(); sig = ''; } };
-        // ภาพตัวอย่างกรอบ 9:16 จาก Program ปัจจุบัน · เวลาที่มีในบัฟเฟอร์ · ความคืบหน้า
-        const tick = setInterval(() => {
-          if (!modal.isConnected) { clearInterval(tick); return; }
-          hlDrawFrame(pctx, pgmCanvas, pv.width, pv.height, c);
-          const sec = Math.floor(hlBuffered());
-          $('.hl-buf', modal).textContent = sec < c.len ? `กำลังเก็บภาพย้อนหลัง — มีแล้ว ${sec} วินาที (ตัดตอนนี้ได้คลิปยาว ${sec} วินาที)` : `พร้อมตัด — มีภาพย้อนหลัง ${Math.min(sec, 120)} วินาที`;
-          const busy = hl.busy, pr = $('.hl-progress', modal);
-          pr.hidden = !busy;
-          $('.hl-cut', modal).disabled = sec < 3;
-          const ns = hl.list.map(it => it.state).join() + hlLive();
-          if (ns !== sig) { sig = ns; $('.hl-list', modal).innerHTML = listHtml(); }
-          if (busy) { $('.hl-bar i', modal).style.width = `${Math.round(busy.p * 100)}%`; $('small', pr).textContent = `กำลังทำคลิป ${Math.round(busy.p * 100)}% — ใช้เวลาเท่าความยาวคลิป ไลฟ์ไม่สะดุด`; }
-        }, 500);
-      }
-    });
-    if (r?.value === 'off') { hlStop(); toast('ปิดบัฟเฟอร์ไฮไลต์แล้ว', 'info'); }
-  }
   /* ------------------------------------------------------------ extras */
   function snapshot() {
     pgmCanvas.toBlob(blob => {

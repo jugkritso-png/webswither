@@ -959,7 +959,7 @@
       if (!pc) { stats = {}; paint(); return; }
       try {
         const rep = await pc.getStats();
-        let next = {};
+        const next = {};
         rep.forEach(r => {
           if (r.type === 'outbound-rtp' && r.kind === 'video') {
             const now = r.timestamp;

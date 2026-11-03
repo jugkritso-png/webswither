@@ -52,7 +52,7 @@
       }
       let page = '', first = true, viewersAt = 0;
       while (!stopped) {
-        let wait = 6000;
+        let wait;
         // จำนวนผู้ชมขณะนี้ (1 หน่วยโควตา ทุก 30 วินาที)
         if (on.viewers && Date.now() - viewersAt >= 30000) {
           viewersAt = Date.now();
@@ -160,7 +160,7 @@
           if (!id) { on.status('connecting', 'เพจยังไม่ได้ไลฟ์ — จะลองใหม่ทุก 20 วินาที'); await sleep(20000); }
         } catch (e) { on.status('error', e.message); if (e.fatal) return; await sleep(20000); }
       }
-      let first = true, wait = 3000, viewersAt = 0;
+      let first = true, wait, viewersAt = 0;
       while (!stopped) {
         if (on.viewers && Date.now() - viewersAt >= 30000) {
           viewersAt = Date.now();
@@ -261,7 +261,7 @@
     ctx.fillStyle = msg.role === 'owner' ? '#fde68a' : msg.role === 'mod' ? '#93c5fd' : '#c9cfdb';
     fitFont(ctx, msg.name || '', 700, nameSize, FONT, boxW - av - pad * 3 - 120 * s);
     ctx.fillText(msg.name || '', tx, ny);
-    let bx = tx + ctx.measureText(msg.name || '').width + 12 * s;
+    const bx = tx + ctx.measureText(msg.name || '').width + 12 * s;
     ctx.font = `600 ${nameSize * 0.62}px ${FONT}`;
     const tag = msg.amount || P.label, tw = ctx.measureText(tag).width + 14 * s;
     ctx.fillStyle = msg.amount ? '#f5a524' : P.color;

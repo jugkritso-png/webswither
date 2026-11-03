@@ -69,7 +69,7 @@ const publish = (pathName, codec) => run('ffmpeg', ['-loglevel', 'error', '-re',
   await p.fill('.modal input[name=url]', 'rtsp://viewer:secret123@127.0.0.1:8554/cam');
   await p.fill('.modal input[name=user]', ''); await p.fill('.modal input[name=name]', 'Front door');
   await p.click('.modal-foot .btn-primary');
-  let cam = await waitLive('rtsp');
+  const cam = await waitLive('rtsp');
   ok('IP camera (H.264) goes live', cam && cam.state === 'live' && cam.info.codec === 'h264' && cam.info.width === 640, JSON.stringify(cam));
   const mi = await probe(cam.id);
   ok('browser receives the camera as H.264 + AAC', mi && mi.w === 640 && /avc1/.test(mi.video) && /mp4a/.test(mi.audio), JSON.stringify(mi));

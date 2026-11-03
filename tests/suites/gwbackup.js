@@ -16,7 +16,7 @@ const listen = (key, file) => spawn('ffmpeg', ['-loglevel', 'error', '-listen', 
 const until = async (fn, ms = 15000) => { const end = Date.now() + ms; while (Date.now() < end) { if (await fn()) return true; await wait(250); } return false; };
 (async () => {
   const pDir = path.join(S, 'gwb-primary'), bDir = path.join(S, 'gwb-backup');
-  let backup = startGw(BACKUP, bDir);
+  const backup = startGw(BACKUP, bDir);
   const b = await chromium.launch({ args: ['--autoplay-policy=no-user-gesture-required'] });
   const ctx = await b.newContext({ viewport: { width: 1440, height: 900 } });
   await ctx.route(/fonts\.(googleapis|gstatic)|qrcode|peerjs/, r => r.fulfill({ body: '' }));

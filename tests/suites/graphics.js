@@ -10,7 +10,7 @@ const until = async (fn, ms = 8000) => { const end = Date.now() + ms; while (Dat
   // ชีตจำลอง: ลิงก์ Google Sheets ถูกแปลงเป็น gviz CSV แล้วดึงจากเบราว์เซอร์
   const SHEET = gid => `https://docs.google.com/spreadsheets/d/1AbCdEfGhIjKlMnOpQrStUvWxYz012345/edit#gid=${gid}`;
   const GID = { title: 77, ticker: 78, score: 79 };
-  let csv = { title: 'ชื่อ,ตำแหน่ง\nสมชาย ใจดี,ผู้ประกาศข่าว\n"สมหญิง, รักไทย",นักข่าวภาคสนาม\n', ticker: 'ข่าว\nข่าวที่หนึ่ง\nข่าวที่สอง\n', score: 'A,SA,B,SB,P\nเชียงใหม่,3,ลำพูน,1,ครึ่งหลัง\n' };
+  const csv = { title: 'ชื่อ,ตำแหน่ง\nสมชาย ใจดี,ผู้ประกาศข่าว\n"สมหญิง, รักไทย",นักข่าวภาคสนาม\n', ticker: 'ข่าว\nข่าวที่หนึ่ง\nข่าวที่สอง\n', score: 'A,SA,B,SB,P\nเชียงใหม่,3,ลำพูน,1,ครึ่งหลัง\n' };
   let sheetStatus = 200;
   await ctx.route(/docs\.google\.com\/spreadsheets\/d\/1AbCdEf[^/]*\/gviz\/tq\?tqx=out:csv&gid=(\d+)/, r => {
     const gid = +/gid=(\d+)/.exec(r.request().url())[1], which = Object.keys(GID).find(k => GID[k] === gid);

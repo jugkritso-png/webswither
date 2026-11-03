@@ -53,7 +53,7 @@ const fakeSR = () => {
   // บนจอมีสองแถว: ต้นฉบับตัวเล็กสีเทา + คำแปลตัวขาว
   const rows = () => p.evaluate(() => {
     const c = document.getElementById('pgm-canvas'), g = c.getContext('2d');
-    const y0 = Math.round(c.height * 0.6), d = g.getImageData(0, y0, c.width, Math.round(c.height * 0.36)).data, W = c.width;
+    const y0 = Math.round(c.height * 0.6), d = g.getImageData(0, y0, c.width, Math.round(c.height * 0.36)).data;
     let white = 0, grey = 0;
     for (let i = 0; i < d.length; i += 4) { const [r, gg, bb] = [d[i], d[i + 1], d[i + 2]]; if (r > 235 && gg > 235 && bb > 235) white++; else if (r > 170 && r < 225 && Math.abs(r - bb) < 30 && gg > 170) grey++; }
     return { white, grey };
