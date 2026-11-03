@@ -4,7 +4,7 @@
    โทเคนอยู่ในหน่วยความจำเท่านั้น ไม่บันทึกลงเครื่อง */
 (function (WM) {
   'use strict';
-  const { $, $$, chatLib, esc, store, toast } = WM;
+  const { $, $$, chat: chatLib, esc, store, toast } = WM;
 
   // ctx = สิ่งที่ใช้จากสตูดิโอ (app.js): destLabel, dialog, fbLogin, saveSettings, MAX_DESTINATIONS, fb, newDest, settings, show
   // ค่า (ไม่ใช่ฟังก์ชัน) อ่านผ่าน ctx.ชื่อ เสมอ — ได้ค่าล่าสุด และสร้างโมดูลได้ก่อนที่ app.js จะประกาศค่านั้น

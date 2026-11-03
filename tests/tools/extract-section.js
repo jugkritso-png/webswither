@@ -37,6 +37,7 @@ if (body.some(st => !inSec(st) && st.loc.start.line < endLine && st.loc.end.line
 
 // --- ชื่อระดับบนสุดของ app.js
 const decl = new Map(); // name -> { kind: 'function' | 'const' | 'let' | 'wm', line, inSection }
+const wmAlias = new Map(); // ชื่อใน app.js -> ชื่อใน WebMix
 const pat = (p, f) => { if (!p) return; if (p.type === 'Identifier') f(p.name); else if (p.type === 'ObjectPattern') p.properties.forEach(q => pat(q.value || q.argument, f)); else if (p.type === 'ArrayPattern') p.elements.forEach(q => pat(q, f)); else if (p.type === 'AssignmentPattern') pat(p.left, f); else if (p.type === 'RestElement') pat(p.argument, f); };
 for (const st of body) {
   const where = { line: st.loc.start.line, inSection: inSec(st) };
@@ -45,6 +46,8 @@ for (const st of body) {
   else if (st.type === 'VariableDeclaration') {
     for (const d of st.declarations) {
       const fromWM = d.init && d.init.type === 'MemberExpression' && d.init.object.name === 'window' && d.init.property.name === 'WebMix';
+      // ชื่อที่เปลี่ยนตอนดึงจาก WebMix (เช่น chat: chatLib) — โมดูลต้องดึงด้วยชื่อเดิมของ WebMix
+      if (fromWM && d.id.type === 'ObjectPattern') for (const q of d.id.properties) if (q.key && q.value && q.value.type === 'Identifier' && q.key.name !== q.value.name) wmAlias.set(q.value.name, q.key.name);
       pat(d.id, n => decl.set(n, { kind: fromWM ? 'wm' : st.kind, ...where }));
     }
   }
@@ -109,7 +112,7 @@ walk.fullAncestor({ type: 'Program', body: secStmts }, (n, anc) => {
 });
 
 console.log(`ส่วน ${startLine}–${endLine} (${endLine - startLine + 1} บรรทัด) → assets/js/${file}.js · ${factory}`);
-console.log(`  จาก WebMix: ${wm.join(', ') || '-'}`);
+console.log(`  จาก WebMix: ${wm.map(n => wmAlias.has(n) ? `${wmAlias.get(n)}: ${n}` : n).join(', ') || '-'}`);
 console.log(`  ฟังก์ชันจาก app.js: ${fns.join(', ') || '-'}`);
 console.log(`  ค่าจาก app.js (ctx.ชื่อ): ${vals.map(v => v + (setters.has(v) ? ' (อ่าน/เขียน)' : '')).join(', ') || '-'}`);
 console.log(`  คืนค่าให้ app.js: ${exported.join(', ') || '-'}`);
@@ -133,7 +136,7 @@ const rest = codeLines.slice(h + 1).map(l => (l.trim() ? '  ' + l : l)).join('\n
 const ctxDoc = [...fns, ...vals].join(', ');
 const out = `${header.join('\n')}
 (function (WM) {
-  'use strict';${wm.length ? `\n  const { ${wm.join(', ')} } = WM;` : ''}
+  'use strict';${wm.length ? `\n  const { ${wm.map(n => wmAlias.has(n) ? `${wmAlias.get(n)}: ${n}` : n).join(', ')} } = WM;` : ''}
 
   // ctx = สิ่งที่ใช้จากสตูดิโอ (app.js): ${ctxDoc || '-'}
   // ค่า (ไม่ใช่ฟังก์ชัน) อ่านผ่าน ctx.ชื่อ เสมอ — ได้ค่าล่าสุด และสร้างโมดูลได้ก่อนที่ app.js จะประกาศค่านั้น
