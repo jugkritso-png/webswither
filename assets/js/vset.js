@@ -5,10 +5,10 @@
   'use strict';
   const { $, clamp, esc, icon, mediaStore, toast } = WM;
 
-  // ctx = สิ่งที่ใช้จากสตูดิโอ (app.js): addInput, cardSub, dialog, disposeInput, drawSource, keyedCanvas, pickFiles, refreshSourceSelects, renderInputs, resetAfterRemoval, H, W, byId, frameNo, inputs, show
-  // ค่า (ไม่ใช่ฟังก์ชัน) อ่านผ่าน ctx.ชื่อ เสมอ — ได้ค่าล่าสุด และสร้างโมดูลได้ก่อนที่ app.js จะประกาศค่านั้น
-  WM.createVirtualSet = function (ctx) {
-    const { addInput, cardSub, dialog, disposeInput, drawSource, keyedCanvas, pickFiles, refreshSourceSelects, renderInputs, resetAfterRemoval } = ctx;
+  // studio = สิ่งที่ใช้จากสตูดิโอ (app.js): addInput, cardSub, dialog, disposeInput, drawSource, keyedCanvas, pickFiles, refreshSourceSelects, renderInputs, resetAfterRemoval, H, W, byId, frameNo, inputs, show
+  // ค่า (ไม่ใช่ฟังก์ชัน) อ่านผ่าน studio.ชื่อ เสมอ — ได้ค่าล่าสุด และสร้างโมดูลได้ก่อนที่ app.js จะประกาศค่านั้น
+  WM.createVirtualSet = function (studio) {
+    const { addInput, cardSub, dialog, disposeInput, drawSource, keyedCanvas, pickFiles, refreshSourceSelects, renderInputs, resetAfterRemoval } = studio;
     const VSETS = { news: 'ห้องข่าว (โต๊ะ + จอ)', talk: 'ทอล์กโชว์', stage: 'เวที / คอนเสิร์ต', image: 'รูปของฉันเอง' };
     const VSHOTS = [{ n: 'กว้าง', k: 'W', z: 1, x: 0.5, y: 0.5 }, { n: 'กลาง', k: 'M', z: 1.5, x: 0.45, y: 0.42 }, { n: 'ใกล้', k: 'C', z: 2.2, x: 0.4, y: 0.36 }];
     const VSET_TALENT = { news: [0.4, 0.6, 0.8], talk: [0.5, 0.56, 0.86], stage: [0.5, 0.56, 0.9], image: [0.5, 0.56, 0.86] };
@@ -68,25 +68,25 @@
     }
     // ฉากทั้งฉาก (ก่อนกล้องเสมือน) — วาดครั้งเดียวต่อเฟรม ใช้ร่วมกันทั้ง Program / Preview / การ์ด
     function vsetStage(inp) {
-      const w = Math.min(ctx.W, 1920), h = Math.round(w * ctx.H / ctx.W);
+      const w = Math.min(studio.W, 1920), h = Math.round(w * studio.H / studio.W);
       const st = inp._vs || (inp._vs = { c: document.createElement('canvas'), frame: -1 });
-      if (st.frame === ctx.frameNo && st.c.width === w) return st.c;
+      if (st.frame === studio.frameNo && st.c.width === w) return st.c;
       if (st.c.width !== w || st.c.height !== h) { st.c.width = w; st.c.height = h; }
       const g = st.c.getContext('2d'), v = inp.vset;
       g.drawImage(vsetBg(inp, w, h), 0, 0);
       if (v.set === 'news') {
-        const wall = ctx.byId(v.wall), r = { x: WALL.x * w, y: WALL.y * h, w: WALL.w * w, h: WALL.h * h };
+        const wall = studio.byId(v.wall), r = { x: WALL.x * w, y: WALL.y * h, w: WALL.w * w, h: WALL.h * h };
         g.save(); g.shadowColor = 'rgba(56,189,248,.8)'; g.shadowBlur = 18; g.fillStyle = '#020617'; g.fillRect(r.x - 4, r.y - 4, r.w + 8, r.h + 8); g.restore();
         if (wall && wall !== inp && wall.type !== 'vset') { g.save(); g.beginPath(); g.rect(r.x, r.y, r.w, r.h); g.clip(); g.translate(r.x, r.y); drawSource(g, wall, r.w, r.h); g.restore(); }
         else { const gr = g.createLinearGradient(r.x, r.y, r.x + r.w, r.y + r.h); gr.addColorStop(0, '#1d4ed8'); gr.addColorStop(1, '#0e7490'); g.fillStyle = gr; g.fillRect(r.x, r.y, r.w, r.h); }
       }
-      const cam = ctx.byId(v.cam);
+      const cam = studio.byId(v.cam);
       if (cam && cam !== inp && cam.type !== 'vset' && cam.status === 'live') {
         const kc = keyedCanvas(cam, { scale: 1, key: v.key, tolerance: v.tol }), tw = w * v.ts, th = tw * kc.height / kc.width;
         g.drawImage(kc, v.tx * w - tw / 2, v.ty * h - th / 2, tw, th);
       }
       drawVsetDesk(g, v.set, w, h);
-      st.frame = ctx.frameNo;
+      st.frame = studio.frameNo;
       return st.c;
     }
     // กล้องเสมือน: ไล่จากมุมเดิมไปมุมใหม่แบบ ease-in-out
@@ -111,7 +111,7 @@
       ctx.drawImage(st, sx, sy, sw, sh, 0, 0, w, h);
     }
     function addVsetInput(v) {
-      const n = ctx.inputs.filter(i => i.type === 'vset').length + 1;
+      const n = studio.inputs.filter(i => i.type === 'vset').length + 1;
       return addInput({ type: 'vset', name: `VIRTUAL SET ${n}`, status: 'live', vset: sanitizeVset(v) });
     }
     async function setVsetImage(inp, file, store) {
@@ -124,7 +124,7 @@
       } catch (e) { toast('เปิดรูปฉากไม่ได้', 'error'); }
     }
     async function openVsetDialog(inp) {
-      const cams = ctx.inputs.filter(i => !['vset', 'delay', 'mixsrc', 'transparent', 'black', 'color', 'bars'].includes(i.type));
+      const cams = studio.inputs.filter(i => !['vset', 'delay', 'mixsrc', 'transparent', 'black', 'color', 'bars'].includes(i.type));
       const isNew = !inp;
       const v = sanitizeVset(inp ? inp.vset : { cam: (cams.find(i => ['camera', 'wireless', 'guest', 'srt', 'screen', 'web', 'url'].includes(i.type)) || cams[0] || {}).id });
       const keep = inp ? { ...inp.vset } : null;
@@ -141,7 +141,7 @@
             <label class="field"><span>ฉาก</span><select name="set" class="select">${Object.entries(VSETS).map(([k, l]) => `<option value="${k}" ${k === v.set ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
           </div>
           <div class="vs-img-row"><button type="button" class="btn btn-sm" data-vs="img">${icon('image')}เลือกรูปฉาก…</button> <small class="note">${tmp.vsImg ? 'มีรูปฉากแล้ว' : 'ยังไม่มีรูป — แนะนำ 1920×1080'}</small></div>
-          <label class="field vs-wall"><span>จอหลังผู้ประกาศแสดง</span><select name="wall" class="select">${opt(ctx.inputs.filter(i => i.type !== 'vset'), v.wall, 'กราฟิกฉาก')}</select></label>
+          <label class="field vs-wall"><span>จอหลังผู้ประกาศแสดง</span><select name="wall" class="select">${opt(studio.inputs.filter(i => i.type !== 'vset'), v.wall, 'กราฟิกฉาก')}</select></label>
           <div class="grid-2">
             <label class="field"><span>สีฉากหลังกล้อง</span><select name="key" class="select"><option value="green" ${v.key === 'green' ? 'selected' : ''}>เขียว</option><option value="blue" ${v.key === 'blue' ? 'selected' : ''}>ฟ้า</option></select></label>
             ${sl('tol', 'ความแรงคีย์', 10, 150, 1, v.tol, x => Math.round(x))}
@@ -177,7 +177,7 @@
         return null;
       }
       tmp.name = r.form.name.value.trim().slice(0, 40) || tmp.name;
-      renderInputs(); refreshSourceSelects(); ctx.show.autosave();
+      renderInputs(); refreshSourceSelects(); studio.show.autosave();
       return tmp;
     }
 

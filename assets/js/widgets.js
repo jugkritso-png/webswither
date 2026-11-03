@@ -4,10 +4,10 @@
   'use strict';
   const { $, FONT, clamp, esc, fitFont } = WM;
 
-  // ctx = สิ่งที่ใช้จากสตูดิโอ (app.js): addInput, cardSub, dialog, refreshSourceSelects, renderInputs, setInputStatus, inputs, okHex, show
-  // ค่า (ไม่ใช่ฟังก์ชัน) อ่านผ่าน ctx.ชื่อ เสมอ — ได้ค่าล่าสุด และสร้างโมดูลได้ก่อนที่ app.js จะประกาศค่านั้น
-  WM.createWidgets = function (ctx) {
-    const { addInput, cardSub, dialog, refreshSourceSelects, renderInputs, setInputStatus } = ctx;
+  // studio = สิ่งที่ใช้จากสตูดิโอ (app.js): addInput, cardSub, dialog, refreshSourceSelects, renderInputs, setInputStatus, inputs, okHex, show
+  // ค่า (ไม่ใช่ฟังก์ชัน) อ่านผ่าน studio.ชื่อ เสมอ — ได้ค่าล่าสุด และสร้างโมดูลได้ก่อนที่ app.js จะประกาศค่านั้น
+  WM.createWidgets = function (studio) {
+    const { addInput, cardSub, dialog, refreshSourceSelects, renderInputs, setInputStatus } = studio;
     const WIDGET_KINDS = { weather: 'สภาพอากาศ', crypto: 'ราคาคริปโต', fx: 'อัตราแลกเปลี่ยน', json: 'ข้อมูลจาก API (JSON)' };
     const WIDGET_PLACES = { tr: 'มุมขวาบน', tl: 'มุมซ้ายบน', br: 'มุมขวาล่าง', bl: 'มุมซ้ายล่าง', center: 'กลางจอ' };
     const WMO = c => c === 0 ? ['☀️', 'แจ่มใส'] : c <= 3 ? ['⛅', 'มีเมฆบางส่วน'] : c <= 48 ? ['🌫️', 'หมอก'] : c <= 67 ? ['🌧️', 'ฝนตก'] : c <= 77 ? ['❄️', 'หิมะ'] : c <= 82 ? ['🌧️', 'ฝนตกหนัก'] : ['⛈️', 'พายุฝนฟ้าคะนอง'];
@@ -19,7 +19,7 @@
         coin: String(w.coin || 'bitcoin').replace(/[^a-z0-9-]/g, '').slice(0, 40) || 'bitcoin', vs: String(w.vs || 'thb').replace(/[^a-z]/g, '').slice(0, 6) || 'thb',
         from: String(w.from || 'USD').toUpperCase().replace(/[^A-Z]/g, '').slice(0, 3) || 'USD', to: String(w.to || 'THB').toUpperCase().replace(/[^A-Z]/g, '').slice(0, 3) || 'THB',
         url: String(w.url || '').slice(0, 500), path: String(w.path || '').slice(0, 120), label: String(w.label || '').slice(0, 40), unit: String(w.unit || '').slice(0, 12),
-        pos: WIDGET_PLACES[w.pos] ? w.pos : 'tr', every: clamp(+w.every || 0, 0, 3600), accent: ctx.okHex(w.accent) ? w.accent : '#f5a524' };
+        pos: WIDGET_PLACES[w.pos] ? w.pos : 'tr', every: clamp(+w.every || 0, 0, 3600), accent: studio.okHex(w.accent) ? w.accent : '#f5a524' };
     }
     const widgetEvery = w => w.every || { weather: 600, crypto: 60, fx: 1800, json: 30 }[w.kind];
     async function fetchWidget(inp) {
@@ -58,7 +58,7 @@
     }
     function stepWidgets() {
       const now = Date.now();
-      for (const inp of ctx.inputs) {
+      for (const inp of studio.inputs) {
         if (inp.type !== 'widget') continue;
         const st = inp.wd || (inp.wd = {});
         if (!st.busy && (!st.at || now - st.at >= (st.error ? 30 : widgetEvery(inp.widget)) * 1000)) fetchWidget(inp);
@@ -131,7 +131,7 @@
       if (!inp) inp = addInput({ type: 'widget', name: name === 'WIDGET' ? WIDGET_KINDS[nw.kind].toUpperCase() : name, status: 'nosignal', widget: nw, wd: {} });
       else { inp.name = name; inp.widget = nw; inp.wd = {}; }
       fetchWidget(inp);
-      renderInputs(); refreshSourceSelects(); ctx.show.autosave();
+      renderInputs(); refreshSourceSelects(); studio.show.autosave();
       return inp;
     }
 

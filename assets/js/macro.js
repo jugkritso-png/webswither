@@ -4,10 +4,10 @@
   'use strict';
   const { $, $$, clamp, esc, icon, pad2, toast, uid } = WM;
 
-  // ctx = สิ่งที่ใช้จากสตูดิโอ (app.js): autoTransition, captionStart, captionStop, chatHide, clipRestart, cut, dialog, padFire, renderInputs, renderMixer, replayCapture, saveSettings, setChannel, setPreview, slideStep, startDestinations, stopAllStreams, toggleFtb, toggleRecord, PAD_SLOTS, TRANSITIONS, audio, audioChanOptions, byId, chanByKey, chanKey, ftb, inputs, ovl, padChannel, playlist, rec, settings, show, state, stinger, streamer, tr
-  // ค่า (ไม่ใช่ฟังก์ชัน) อ่านผ่าน ctx.ชื่อ เสมอ — ได้ค่าล่าสุด และสร้างโมดูลได้ก่อนที่ app.js จะประกาศค่านั้น
-  WM.createMacros = function (ctx) {
-    const { autoTransition, captionStart, captionStop, chatHide, clipRestart, cut, dialog, padFire, renderInputs, renderMixer, replayCapture, saveSettings, setChannel, setPreview, slideStep, startDestinations, stopAllStreams, toggleFtb, toggleRecord } = ctx;
+  // studio = สิ่งที่ใช้จากสตูดิโอ (app.js): autoTransition, captionStart, captionStop, chatHide, clipRestart, cut, dialog, padFire, renderInputs, renderMixer, replayCapture, saveSettings, setChannel, setPreview, slideStep, startDestinations, stopAllStreams, toggleFtb, toggleRecord, PAD_SLOTS, TRANSITIONS, audio, audioChanOptions, byId, chanByKey, chanKey, ftb, inputs, ovl, padChannel, playlist, rec, settings, show, state, stinger, streamer, tr
+  // ค่า (ไม่ใช่ฟังก์ชัน) อ่านผ่าน studio.ชื่อ เสมอ — ได้ค่าล่าสุด และสร้างโมดูลได้ก่อนที่ app.js จะประกาศค่านั้น
+  WM.createMacros = function (studio) {
+    const { autoTransition, captionStart, captionStop, chatHide, clipRestart, cut, dialog, padFire, renderInputs, renderMixer, replayCapture, saveSettings, setChannel, setPreview, slideStep, startDestinations, stopAllStreams, toggleFtb, toggleRecord } = studio;
     const MACRO_ACTIONS = {
       preview: ['ใส่ใน Preview', 'input'], program: ['ตัดเข้า Program', 'input'], cut: ['CUT', ''], auto: ['AUTO (รอจนเปลี่ยนเสร็จ)', ''],
       effect: ['ตั้งเอฟเฟกต์เปลี่ยนภาพ', 'effect'], ovlOn: ['Overlay ขึ้นจอ', 'ovl'], ovlOff: ['Overlay ลงจอ', 'ovl'], ovlAllOff: ['เอา Overlay ลงทั้งหมด', ''],
@@ -34,49 +34,49 @@
       }));
     }
     const sleepCancellable = async ms => { const end = performance.now() + ms; while (!macroRun.cancel && performance.now() < end) await new Promise(r => setTimeout(r, Math.min(100, end - performance.now()))); };
-    const macroChannel = v => ctx.chanByKey(v);
+    const macroChannel = v => studio.chanByKey(v);
     async function macroStep(st) {
       const v = st.v;
       switch (st.a) {
-        case 'preview': if (ctx.byId(v) && v !== ctx.state.programId) setPreview(v); break;
-        case 'program': if (ctx.byId(v) && v !== ctx.state.programId) { ctx.state.previewId = v; cut(); } break;
+        case 'preview': if (studio.byId(v) && v !== studio.state.programId) setPreview(v); break;
+        case 'program': if (studio.byId(v) && v !== studio.state.programId) { studio.state.previewId = v; cut(); } break;
         case 'cut': cut(); break;
         case 'auto':
           autoTransition();
-          for (let t = 0; ctx.tr.auto && t < 300 && !macroRun.cancel; t++) await new Promise(r => setTimeout(r, 50));
+          for (let t = 0; studio.tr.auto && t < 300 && !macroRun.cancel; t++) await new Promise(r => setTimeout(r, 50));
           break;
         case 'effect':
-          if (ctx.TRANSITIONS.includes(v) && (v !== 'stinger' || ctx.stinger.ready)) { ctx.settings.transition = v; $$('#seg-transition button').forEach(b => b.classList.toggle('is-active', b.dataset.value === v)); saveSettings(); }
+          if (studio.TRANSITIONS.includes(v) && (v !== 'stinger' || studio.stinger.ready)) { studio.settings.transition = v; $$('#seg-transition button').forEach(b => b.classList.toggle('is-active', b.dataset.value === v)); saveSettings(); }
           break;
-        case 'ovlOn': case 'ovlOff': { const i = +v; if (ctx.ovl[i] && ctx.ovl[i].on !== (st.a === 'ovlOn') && (st.a === 'ovlOff' || ctx.byId(ctx.ovl[i].inputId))) setChannel(i, st.a === 'ovlOn'); break; }
-        case 'ovlAllOff': ctx.ovl.forEach((c, i) => { if (c.on) setChannel(i, false); }); break;
-        case 'ftbOn': case 'ftbOff': if (!!ctx.ftb.target !== (st.a === 'ftbOn')) toggleFtb(); break;
+        case 'ovlOn': case 'ovlOff': { const i = +v; if (studio.ovl[i] && studio.ovl[i].on !== (st.a === 'ovlOn') && (st.a === 'ovlOff' || studio.byId(studio.ovl[i].inputId))) setChannel(i, st.a === 'ovlOn'); break; }
+        case 'ovlAllOff': studio.ovl.forEach((c, i) => { if (c.on) setChannel(i, false); }); break;
+        case 'ftbOn': case 'ftbOff': if (!!studio.ftb.target !== (st.a === 'ftbOn')) toggleFtb(); break;
         case 'mute': case 'unmute': {
           const ch = macroChannel(v);
           if (!ch) break;
           ch.muted = st.a === 'mute';
-          ch === ctx.audio.masterStrip ? ctx.audio.applyMaster() : ctx.audio.applyGain(ch);
+          ch === studio.audio.masterStrip ? studio.audio.applyMaster() : studio.audio.applyGain(ch);
           renderMixer();
           break;
         }
         case 'play': {
-          const inp = ctx.byId(v);
-          if (inp && inp.type === 'playlist') ctx.playlist.go(inp, 0, true);
+          const inp = studio.byId(v);
+          if (inp && inp.type === 'playlist') studio.playlist.go(inp, 0, true);
           else if (inp && inp.el && inp.el.tagName === 'VIDEO' && inp.type === 'media') clipRestart(inp);
           break;
         }
-        case 'recStart': if (!ctx.rec.active && !ctx.rec.starting) await toggleRecord(); break;
-        case 'recStop': if (ctx.rec.active && ctx.rec.recorder) ctx.rec.recorder.stop(); break;
-        case 'liveStart': startDestinations(ctx.settings.destinations.filter(d => d.enabled)); break;
-        case 'liveStop': if (ctx.streamer.active || ctx.streamer.reconnecting) stopAllStreams(); break;
+        case 'recStart': if (!studio.rec.active && !studio.rec.starting) await toggleRecord(); break;
+        case 'recStop': if (studio.rec.active && studio.rec.recorder) studio.rec.recorder.stop(); break;
+        case 'liveStart': startDestinations(studio.settings.destinations.filter(d => d.enabled)); break;
+        case 'liveStop': if (studio.streamer.active || studio.streamer.reconnecting) stopAllStreams(); break;
         case 'replay': await replayCapture(); break;
         case 'slideNext': slideStep(1); break;
         case 'slidePrev': slideStep(-1); break;
         case 'chatHide': chatHide(); break;
-        case 'capOn': case 'capOff': ctx.inputs.filter(i => i.type === 'captions').forEach(i => st.a === 'capOn' ? captionStart(i) : captionStop(i)); renderInputs(); break;
-        case 'sfx': { const ch = ctx.padChannel(); if (ch && !ch.playingPad(+v)) padFire(ch, +v); break; }
+        case 'capOn': case 'capOff': studio.inputs.filter(i => i.type === 'captions').forEach(i => st.a === 'capOn' ? captionStart(i) : captionStop(i)); renderInputs(); break;
+        case 'sfx': { const ch = studio.padChannel(); if (ch && !ch.playingPad(+v)) padFire(ch, +v); break; }
         case 'musicPlay': case 'musicStop': case 'musicNext': {
-          const ch = ctx.chanByKey(v);
+          const ch = studio.chanByKey(v);
           if (!ch?.src) break;
           if (st.a === 'musicNext') ch.src.next?.();
           else if (ch.src.playing() !== (st.a === 'musicPlay')) ch.src.toggle();
@@ -91,7 +91,7 @@
         else toast('มี Macro อื่นทำงานอยู่ — รอให้จบหรือกดซ้ำที่ Macro นั้นเพื่อหยุด', 'warn');
         return;
       }
-      ctx.audio.ensure();
+      studio.audio.ensure();
       Object.assign(macroRun, { id: m.id, step: 0, cancel: false });
       renderMacros();
       try {
@@ -109,15 +109,15 @@
     function macroClock(now) {
       const hm = `${pad2(now.getHours())}:${pad2(now.getMinutes())}`, day = now.toDateString();
       for (const m of macros) {
-        if (m.at && m.at === hm && m.ranOn !== day) { m.ranOn = day; ctx.show.autosave(true); toast(`เริ่ม Macro “${m.name}” ตามเวลา ${m.at}`, 'info', 4000); runMacro(m); }
+        if (m.at && m.at === hm && m.ranOn !== day) { m.ranOn = day; studio.show.autosave(true); toast(`เริ่ม Macro “${m.name}” ตามเวลา ${m.at}`, 'info', 4000); runMacro(m); }
       }
     }
     const macroLabel = st => {
       const [label, arg] = MACRO_ACTIONS[st.a] || ['?', ''];
       const v = st.v;
-      const what = arg === 'input' || arg === 'media' ? ctx.byId(v)?.name || '—' : arg === 'ovl' ? `ช่อง ${+v + 1}` : arg === 'effect' ? String(v).toUpperCase()
-        : arg === 'audio' ? (v === 'master' ? 'Master' : macroChannel(v)?.name || ctx.byId(v)?.name || '—') : arg === 'secs' ? `${v} วินาที`
-        : arg === 'player' ? ctx.chanByKey(v)?.name || '—' : arg === 'pad' ? ctx.padChannel()?.pads[+v]?.name || `ปุ่ม ${+v + 1}` : '';
+      const what = arg === 'input' || arg === 'media' ? studio.byId(v)?.name || '—' : arg === 'ovl' ? `ช่อง ${+v + 1}` : arg === 'effect' ? String(v).toUpperCase()
+        : arg === 'audio' ? (v === 'master' ? 'Master' : macroChannel(v)?.name || studio.byId(v)?.name || '—') : arg === 'secs' ? `${v} วินาที`
+        : arg === 'player' ? studio.chanByKey(v)?.name || '—' : arg === 'pad' ? studio.padChannel()?.pads[+v]?.name || `ปุ่ม ${+v + 1}` : '';
       return what ? `${label}: ${what}` : label;
     };
     function renderMacros() {
@@ -152,13 +152,13 @@
       let switchTo = null;
       const draft = m ? { ...m, steps: m.steps.map(st => ({ ...st })) } : { id: uid(), name: `Macro ${macros.length + 1}`, key: '', at: '', steps: [{ a: 'auto', v: '' }] };
       const opts = arg => {
-        if (arg === 'input') return ctx.inputs.map((x, i) => [x.id, `${i + 1}. ${x.name}`]);
-        if (arg === 'media') return ctx.inputs.filter(x => x.type === 'media' || x.type === 'playlist').map(x => [x.id, x.name]);
-        if (arg === 'ovl') return ctx.ovl.map((c, i) => [String(i), `ช่อง ${c.n}${ctx.byId(c.inputId) ? ` (${ctx.byId(c.inputId).name})` : ''}`]);
-        if (arg === 'effect') return ctx.TRANSITIONS.map(t => [t, t.toUpperCase()]);
-        if (arg === 'audio') return [['master', 'Master'], ...ctx.audioChanOptions()];
-        if (arg === 'player') return ctx.audio.channels.filter(c => c.kind === 'player' || c.kind === 'url').map(c => [ctx.chanKey(c), c.name]);
-        if (arg === 'pad') return ctx.PAD_SLOTS.map(i => [String(i), `ปุ่ม ${i + 1}${ctx.padChannel()?.pads[i] ? ` (${ctx.padChannel().pads[i].name})` : ''}`]);
+        if (arg === 'input') return studio.inputs.map((x, i) => [x.id, `${i + 1}. ${x.name}`]);
+        if (arg === 'media') return studio.inputs.filter(x => x.type === 'media' || x.type === 'playlist').map(x => [x.id, x.name]);
+        if (arg === 'ovl') return studio.ovl.map((c, i) => [String(i), `ช่อง ${c.n}${studio.byId(c.inputId) ? ` (${studio.byId(c.inputId).name})` : ''}`]);
+        if (arg === 'effect') return studio.TRANSITIONS.map(t => [t, t.toUpperCase()]);
+        if (arg === 'audio') return [['master', 'Master'], ...studio.audioChanOptions()];
+        if (arg === 'player') return studio.audio.channels.filter(c => c.kind === 'player' || c.kind === 'url').map(c => [studio.chanKey(c), c.name]);
+        if (arg === 'pad') return studio.PAD_SLOTS.map(i => [String(i), `ปุ่ม ${i + 1}${studio.padChannel()?.pads[i] ? ` (${studio.padChannel().pads[i].name})` : ''}`]);
         return [];
       };
       const rowHtml = (st, i) => {
@@ -238,7 +238,7 @@
       const [clean] = sanitizeMacros([{ ...draft, name: f.mname.value.trim() || draft.name, key: f.mkey.value, at: f.mat.value }]);
       if (m) Object.assign(m, clean); else macros.push(clean);
       renderMacros();
-      ctx.show.autosave(true);
+      studio.show.autosave(true);
       if (r.value === 'switch') openMacroDialog(macros.find(x => x.id === switchTo) || null);
     }
 

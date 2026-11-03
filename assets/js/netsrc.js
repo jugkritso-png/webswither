@@ -3,10 +3,10 @@
   'use strict';
   const { $, $$, esc, icon, store, toast } = WM;
 
-  // ctx = สิ่งที่ใช้จากสตูดิโอ (app.js): connectSrtInput, createSrtInput, dialog, gatewayEndpoint, gatewayProblem, openRtmpInputDialog, openRtspDialog, openSettings, openSrtInputDialog, refreshSourceSelects, renderInputs, saveSrtInputs, stopSrtPlayer, inputs
-  // ค่า (ไม่ใช่ฟังก์ชัน) อ่านผ่าน ctx.ชื่อ เสมอ — ได้ค่าล่าสุด และสร้างโมดูลได้ก่อนที่ app.js จะประกาศค่านั้น
-  WM.createNetSources = function (ctx) {
-    const { connectSrtInput, createSrtInput, dialog, gatewayEndpoint, gatewayProblem, openRtmpInputDialog, openRtspDialog, openSettings, openSrtInputDialog, refreshSourceSelects, renderInputs, saveSrtInputs, stopSrtPlayer } = ctx;
+  // studio = สิ่งที่ใช้จากสตูดิโอ (app.js): connectSrtInput, createSrtInput, dialog, gatewayEndpoint, gatewayProblem, openRtmpInputDialog, openRtspDialog, openSettings, openSrtInputDialog, refreshSourceSelects, renderInputs, saveSrtInputs, stopSrtPlayer, inputs
+  // ค่า (ไม่ใช่ฟังก์ชัน) อ่านผ่าน studio.ชื่อ เสมอ — ได้ค่าล่าสุด และสร้างโมดูลได้ก่อนที่ app.js จะประกาศค่านั้น
+  WM.createNetSources = function (studio) {
+    const { connectSrtInput, createSrtInput, dialog, gatewayEndpoint, gatewayProblem, openRtmpInputDialog, openRtspDialog, openSettings, openSrtInputDialog, refreshSourceSelects, renderInputs, saveSrtInputs, stopSrtPlayer } = studio;
     const NET_PROTOS = { ndi: 'NDI®', omt: 'OMT' };
     // ถาม Gateway ว่ามีแหล่งอะไรบ้าง (ใช้ช่องควบคุมเดียวกับ SRT แค่ไม่ส่ง open)
     function listNetSources(proto) {
@@ -57,7 +57,7 @@
       if (!pane) return;
       const found = { ndi: null, omt: null };
       let busy = false, timer = 0, started = false;
-      const used = (proto, src) => ctx.inputs.find(i => i.type === 'srt' && i.srt?.mode === proto && i.srt.source === src);
+      const used = (proto, src) => studio.inputs.find(i => i.type === 'srt' && i.srt?.mode === proto && i.srt.source === src);
       const paint = (proto, r) => {
         const col = $(`.nv-col[data-proto=${proto}]`, pane), st = $('.nv-st', col), list = $('.nv-list', col);
         if (!r) { st.className = 'nv-st is-wait'; st.textContent = 'กำลังค้นหา…'; return; }

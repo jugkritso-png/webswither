@@ -3,10 +3,10 @@
   'use strict';
   const { $, $$, b64url, clamp, esc, store, toast } = WM;
 
-  // ctx = สิ่งที่ใช้จากสตูดิโอ (app.js): autoTransition, captionStart, captionStop, chatHide, clipPlayToggle, clipRemaining, clipRestart, copyText, cut, dialog, drawSource, padFire, renderInputs, renderMixer, replayCapture, runMacro, saveSettings, setChannel, setPreview, slideGo, toggleFtb, toggleInputOverlay, toggleRecord, updateMediaButtons, GRAPHIC_TYPES, TRANSITIONS, audio, byId, chanByKey, chanKey, chatFeed, dbToPos, fmtDb, ftb, inputs, isOnAir, lufs, macroRun, macros, onAirSince, ovl, pageBase, pgmCanvas, playlist, pvwCanvas, rec, settings, state, stinger, streamer, thumbs, timerControl, wireless
-  // ค่า (ไม่ใช่ฟังก์ชัน) อ่านผ่าน ctx.ชื่อ เสมอ — ได้ค่าล่าสุด และสร้างโมดูลได้ก่อนที่ app.js จะประกาศค่านั้น
-  WM.createRemoteControl = function (ctx) {
-    const { autoTransition, captionStart, captionStop, chatHide, clipPlayToggle, clipRemaining, clipRestart, copyText, cut, dialog, drawSource, padFire, renderInputs, renderMixer, replayCapture, runMacro, saveSettings, setChannel, setPreview, slideGo, toggleFtb, toggleInputOverlay, toggleRecord, updateMediaButtons } = ctx;
+  // studio = สิ่งที่ใช้จากสตูดิโอ (app.js): autoTransition, captionStart, captionStop, chatHide, clipPlayToggle, clipRemaining, clipRestart, copyText, cut, dialog, drawSource, padFire, renderInputs, renderMixer, replayCapture, runMacro, saveSettings, setChannel, setPreview, slideGo, toggleFtb, toggleInputOverlay, toggleRecord, updateMediaButtons, GRAPHIC_TYPES, TRANSITIONS, audio, byId, chanByKey, chanKey, chatFeed, dbToPos, fmtDb, ftb, inputs, isOnAir, lufs, macroRun, macros, onAirSince, ovl, pageBase, pgmCanvas, playlist, pvwCanvas, rec, settings, state, stinger, streamer, thumbs, timerControl, wireless
+  // ค่า (ไม่ใช่ฟังก์ชัน) อ่านผ่าน studio.ชื่อ เสมอ — ได้ค่าล่าสุด และสร้างโมดูลได้ก่อนที่ app.js จะประกาศค่านั้น
+  WM.createRemoteControl = function (studio) {
+    const { autoTransition, captionStart, captionStop, chatHide, clipPlayToggle, clipRemaining, clipRestart, copyText, cut, dialog, drawSource, padFire, renderInputs, renderMixer, replayCapture, runMacro, saveSettings, setChannel, setPreview, slideGo, toggleFtb, toggleInputOverlay, toggleRecord, updateMediaButtons } = studio;
     // แท็บเล็ต/มือถือสั่งงานสตูดิโอผ่าน PeerJS data channel — ต้องมีรหัสในลิงก์ (สร้างใหม่ได้ = ตัดรีโมตเดิมทั้งหมด)
     // ทีมงานหลายตำแหน่ง: แต่ละเครื่องเลือกตำแหน่งจากลิงก์/QR แล้วจับคู่ด้วยรหัส 6 หลักที่แสดงบนเครื่องหลัก
     // จับคู่แล้วได้ token เก็บในเครื่องนั้น (ต่อใหม่ไม่ต้องใส่รหัสอีก) · เครื่องหลักเปลี่ยนตำแหน่ง/ถอดเครื่องได้ · สิทธิ์ตรวจที่เครื่องหลัก
@@ -25,14 +25,14 @@
     const remoteCtl = {
       conns: new Map(), last: '', timer: 0, thumbAt: 0, fails: [], msgs: [],
       pin() {
-        if (!/^\d{6}$/.test(ctx.settings.remotePin || '')) { ctx.settings.remotePin = randCode(6, '0123456789'); saveSettings(); }
-        return ctx.settings.remotePin;
+        if (!/^\d{6}$/.test(studio.settings.remotePin || '')) { studio.settings.remotePin = randCode(6, '0123456789'); saveSettings(); }
+        return studio.settings.remotePin;
       },
-      team() { if (!Array.isArray(ctx.settings.remoteTeam)) ctx.settings.remoteTeam = []; return ctx.settings.remoteTeam; },
+      team() { if (!Array.isArray(studio.settings.remoteTeam)) studio.settings.remoteTeam = []; return studio.settings.remoteTeam; },
       link(role) {
-        const q = new URLSearchParams({ remote: ctx.wireless.peerId, role });
-        if (ctx.wireless.sig) q.set('sig', b64url(JSON.stringify(ctx.wireless.sig)));
-        return `${ctx.pageBase()}?${q}`;
+        const q = new URLSearchParams({ remote: studio.wireless.peerId, role });
+        if (studio.wireless.sig) q.set('sig', b64url(JSON.stringify(studio.wireless.sig)));
+        return `${studio.pageBase()}?${q}`;
       },
       deny(conn, code, message) {
         try { conn.send({ type: 'r-denied', code, message }); } catch (e) {}
@@ -51,7 +51,7 @@
             if (this.fails.length >= 5) { this.deny(conn, 'locked', 'ใส่รหัสผิดหลายครั้ง — รอ 1 นาทีแล้วลองใหม่'); return; }
             if (String(md.pin) !== this.pin()) { this.fails.push(now); const left = 5 - this.fails.length; this.deny(conn, 'pin', `รหัสจับคู่ไม่ถูกต้อง — ดูรหัส 6 หลักบนเครื่องหลัก (ปุ่ม “รีโมต”)${left > 0 ? ` · ผิดได้อีก ${left} ครั้ง` : ''}`); return; }
             m = { dev, token: randCode(24, 'abcdefghijkmnpqrstuvwxyz23456789'), name: name || 'ไม่ระบุชื่อ', role: REMOTE_ROLES[md.role] ? md.role : 'monitor' };
-            ctx.settings.remoteTeam = this.team().filter(t => t.dev !== dev).concat(m);
+            studio.settings.remoteTeam = this.team().filter(t => t.dev !== dev).concat(m);
             saveSettings();
             conn.send({ type: 'r-paired', token: m.token });
           } else if (name && name !== m.name) { m.name = name; saveSettings(); }
@@ -81,9 +81,9 @@
       talks: new Map(), talking: new Set(), talkMic: null, talkMicGain: null, talkMon: null, hostTalking: false,
       talkMonitor() {
         if (!this.talkMon) {
-          this.talkMon = ctx.audio.ctx.createGain();
+          this.talkMon = studio.audio.ctx.createGain();
           this.talkMon.gain.value = +store.get('talkVol', 1);
-          this.talkMon.connect(ctx.audio.ctx.destination);
+          this.talkMon.connect(studio.audio.ctx.destination);
         }
         return this.talkMon;
       },
@@ -91,8 +91,8 @@
         const md = call.metadata || {};
         const m = this.team().find(t => t.dev === md.dev && t.token && t.token === md.token);
         if (!m) { try { call.close(); } catch (e) {} return; }
-        if (!ctx.audio.ensure()) { try { call.close(); } catch (e) {} return; }
-        const ctx = ctx.audio.ctx;
+        if (!studio.audio.ensure()) { try { call.close(); } catch (e) {} return; }
+        const ctx = studio.audio.ctx;
         const old = this.talks.get(m);
         if (old) this.talkDrop(m, old);
         const e = { call, dest: ctx.createMediaStreamDestination(), gain: ctx.createGain(), src: null, el: null };
@@ -132,17 +132,17 @@
       async hostTalk(on) {
         this.hostTalking = on;
         if (on && !this.talkMic) {
-          if (!ctx.audio.ensure()) return;
+          if (!studio.audio.ensure()) return;
           try {
             this.talkMic = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
           } catch (e) { toast('ใช้ไมค์สำหรับทอล์กแบ็กไม่ได้ — อนุญาตไมค์ให้หน้านี้ก่อน', 'error'); this.hostTalking = false; return; }
-          const src = ctx.audio.ctx.createMediaStreamSource(this.talkMic);
-          this.talkMicGain = ctx.audio.ctx.createGain();
+          const src = studio.audio.ctx.createMediaStreamSource(this.talkMic);
+          this.talkMicGain = studio.audio.ctx.createGain();
           this.talkMicGain.gain.value = 0;
           src.connect(this.talkMicGain);
           for (const o of this.talks.values()) this.talkMicGain.connect(o.dest);
         }
-        if (this.talkMicGain) this.talkMicGain.gain.setTargetAtTime(this.hostTalking ? 1 : 0, ctx.audio.ctx.currentTime, 0.02);
+        if (this.talkMicGain) this.talkMicGain.gain.setTargetAtTime(this.hostTalking ? 1 : 0, studio.audio.ctx.currentTime, 0.02);
         $('#btn-talk')?.classList.toggle('is-on', this.hostTalking);
         this.talkState();
       },
@@ -162,7 +162,7 @@
         this.changed();
       },
       unpair(m) {
-        ctx.settings.remoteTeam = this.team().filter(t => t !== m); saveSettings();
+        studio.settings.remoteTeam = this.team().filter(t => t !== m); saveSettings();
         for (const [c, x] of this.conns) if (x === m) { this.conns.delete(c); this.deny(c, 'revoked', 'เครื่องหลักยกเลิกการจับคู่เครื่องนี้แล้ว — ขอรหัสใหม่เพื่อเข้าร่วมอีกครั้ง'); }
         this.changed();
       },
@@ -183,9 +183,9 @@
         }, 200);
       },
       state() {
-        const chans = [ctx.audio.masterStrip, ...ctx.audio.channels];
+        const chans = [studio.audio.masterStrip, ...studio.audio.channels];
         const inp = i => {
-          const o = { id: i.id, n: ctx.inputs.indexOf(i) + 1, name: i.name, t: i.type, live: i.status === 'live', air: ctx.isOnAir(i.id) };
+          const o = { id: i.id, n: studio.inputs.indexOf(i) + 1, name: i.name, t: i.type, live: i.status === 'live', air: studio.isOnAir(i.id) };
           if (i.type === 'title') Object.assign(o, { hl: i.title.headline, sub: i.title.subtitle });
           else if (i.type === 'ticker') o.items = i.ticker.items.join('\n');
           else if (i.type === 'score') Object.assign(o, { ta: i.score.teamA, tb: i.score.teamB, sa: +i.score.scoreA || 0, sb: +i.score.scoreB || 0 });
@@ -197,36 +197,36 @@
           return o;
         };
         return {
-          type: 'r-state', pgm: ctx.state.programId, pvw: ctx.state.previewId, ftb: !!ctx.ftb.target, live: !!(ctx.streamer.ws || ctx.streamer.reconnecting), rec: !!ctx.rec.active,
-          trans: ctx.settings.transition, transList: ctx.TRANSITIONS.filter(t => t !== 'stinger' || ctx.stinger.ready),
-          inputs: ctx.inputs.map(inp),
-          ovl: ctx.ovl.map(c => ({ on: !!c.on, id: ctx.byId(c.inputId) ? c.inputId : '', name: ctx.byId(c.inputId)?.name || '' })),
+          type: 'r-state', pgm: studio.state.programId, pvw: studio.state.previewId, ftb: !!studio.ftb.target, live: !!(studio.streamer.ws || studio.streamer.reconnecting), rec: !!studio.rec.active,
+          trans: studio.settings.transition, transList: studio.TRANSITIONS.filter(t => t !== 'stinger' || studio.stinger.ready),
+          inputs: studio.inputs.map(inp),
+          ovl: studio.ovl.map(c => ({ on: !!c.on, id: studio.byId(c.inputId) ? c.inputId : '', name: studio.byId(c.inputId)?.name || '' })),
           audio: chans.map(c => {
-            const o = { key: c === ctx.audio.masterStrip ? 'master' : ctx.chanKey(c) || c.id, name: c.name, db: c.db === -Infinity ? null : +c.db.toFixed(1), muted: !!c.muted, kind: c.kind || '' };
+            const o = { key: c === studio.audio.masterStrip ? 'master' : studio.chanKey(c) || c.id, name: c.name, db: c.db === -Infinity ? null : +c.db.toFixed(1), muted: !!c.muted, kind: c.kind || '' };
             if (c.kind === 'pad') o.pads = c.pads.map((p, i) => p ? { name: p.name, on: c.playingPad(i) } : null);
             if (c.kind === 'player' && c.src) o.play = c.src.playing();
             return o;
           }),
-          macros: ctx.macros.map(m => ({ id: m.id, name: m.name })), runMacro: ctx.macroRun.id,
-          chat: !!(ctx.chatFeed.shown && !ctx.chatFeed.hideAt)
+          macros: studio.macros.map(m => ({ id: m.id, name: m.name })), runMacro: studio.macroRun.id,
+          chat: !!(studio.chatFeed.shown && !studio.chatFeed.hideAt)
         };
       },
       send(msg, filter) { for (const [c, m] of this.conns) { if (c.open && (!filter || filter(m))) { try { c.send(msg); } catch (e) {} } } },
       push(force) {
         const st = JSON.stringify(this.state());
         if (force || st !== this.last) { this.last = st; this.send(JSON.parse(st)); }
-        this.send({ type: 'r-lv', v: [ctx.audio.masterStrip, ...ctx.audio.channels].map(c => Math.round(c.level || -90)), oa: ctx.onAirSince ? Date.now() - ctx.onAirSince : 0, rem: clipRemaining(ctx.byId(ctx.state.programId)), lu: [ctx.lufs.m, ctx.lufs.s, ctx.lufs.i].map(v => isFinite(v) && v > -60 ? Math.round(v * 10) / 10 : null), lt: ctx.lufs.target });
+        this.send({ type: 'r-lv', v: [studio.audio.masterStrip, ...studio.audio.channels].map(c => Math.round(c.level || -90)), oa: studio.onAirSince ? Date.now() - studio.onAirSince : 0, rem: clipRemaining(studio.byId(studio.state.programId)), lu: [studio.lufs.m, studio.lufs.s, studio.lufs.i].map(v => isFinite(v) && v > -60 ? Math.round(v * 10) / 10 : null), lt: studio.lufs.target });
         // ภาพย่อ Preview / Program และ Multiview (ทุกแหล่งภาพ) วินาทีละครั้ง
         if (performance.now() - this.thumbAt > 1000) {
           this.thumbAt = performance.now();
           const snap = (src, w, h, q) => { const c = document.createElement('canvas'); c.width = w; c.height = h; c.getContext('2d').drawImage(src, 0, 0, w, h); return c.toDataURL('image/jpeg', q); };
-          try { this.send({ type: 'r-thumbs', pgm: snap(ctx.pgmCanvas, 384, 216, 0.6), pvw: snap(ctx.pvwCanvas, 384, 216, 0.6) }); } catch (e) {}
+          try { this.send({ type: 'r-thumbs', pgm: snap(studio.pgmCanvas, 384, 216, 0.6), pvw: snap(studio.pvwCanvas, 384, 216, 0.6) }); } catch (e) {}
           const wantMv = m => ['director', 'switcher', 'insert', 'monitor', 'camera'].includes(m.role);
           if ([...this.conns.values()].some(wantMv)) {
             const mv = {};
-            for (const i of ctx.inputs) {
+            for (const i of studio.inputs) {
               try {
-                const ctx = ctx.thumbs.get(i.id);
+                const ctx = studio.thumbs.get(i.id);
                 if (ctx) mv[i.id] = snap(ctx.canvas, 192, 108, 0.5);
                 else { const c = document.createElement('canvas'); c.width = 192; c.height = 108; drawSource(c.getContext('2d'), i, 192, 108); mv[i.id] = c.toDataURL('image/jpeg', 0.5); }
               } catch (e) {}
@@ -242,28 +242,28 @@
         if (m.type !== 'r-cmd') return;
         const allow = REMOTE_ALLOW[mem.role];
         if (allow !== '*' && !(allow || []).includes(m.cmd)) return;
-        ctx.audio.ensure();
-        const v = m.v, inp = ctx.byId(m.id);
+        studio.audio.ensure();
+        const v = m.v, inp = studio.byId(m.id);
         switch (m.cmd) {
           case 'pvw':
             if (mem.role === 'insert' && !(inp && INSERT_TYPES.includes(inp.type))) break;
-            if (inp && m.id !== ctx.state.programId) setPreview(m.id);
+            if (inp && m.id !== studio.state.programId) setPreview(m.id);
             break;
-          case 'take': if (inp && m.id !== ctx.state.programId) { ctx.state.previewId = m.id; cut(); } break;
+          case 'take': if (inp && m.id !== studio.state.programId) { studio.state.previewId = m.id; cut(); } break;
           case 'cut': cut(); break;
           case 'auto': autoTransition(); break;
           case 'ftb': toggleFtb(); break;
           case 'trans':
-            if (ctx.TRANSITIONS.includes(v) && (v !== 'stinger' || ctx.stinger.ready)) { ctx.settings.transition = v; $$('#seg-transition button').forEach(b => b.classList.toggle('is-active', b.dataset.value === v)); saveSettings(); }
+            if (studio.TRANSITIONS.includes(v) && (v !== 'stinger' || studio.stinger.ready)) { studio.settings.transition = v; $$('#seg-transition button').forEach(b => b.classList.toggle('is-active', b.dataset.value === v)); saveSettings(); }
             break;
-          case 'ovl': { const i = +v; if (ctx.ovl[i] && (ctx.ovl[i].on || ctx.byId(ctx.ovl[i].inputId))) setChannel(i, !ctx.ovl[i].on); break; }
+          case 'ovl': { const i = +v; if (studio.ovl[i] && (studio.ovl[i].on || studio.byId(studio.ovl[i].inputId))) setChannel(i, !studio.ovl[i].on); break; }
           // ขึ้น/ลงกราฟิกหนึ่งชิ้น: ใช้ช่อง Overlay ที่ผูกไว้ ถ้ายังไม่มีใช้ช่องว่างช่องแรก
           case 'gfx': {
-            if (!inp || !ctx.GRAPHIC_TYPES.includes(inp.type)) break;
-            const at = ctx.ovl.findIndex(c => c.inputId === m.id);
-            if (at >= 0) { setChannel(at, !ctx.ovl[at].on); break; }
-            const free = ctx.ovl.findIndex(c => !ctx.byId(c.inputId));
-            const idx = free >= 0 ? free : ctx.ovl.findIndex(c => !c.on);
+            if (!inp || !studio.GRAPHIC_TYPES.includes(inp.type)) break;
+            const at = studio.ovl.findIndex(c => c.inputId === m.id);
+            if (at >= 0) { setChannel(at, !studio.ovl[at].on); break; }
+            const free = studio.ovl.findIndex(c => !studio.byId(c.inputId));
+            const idx = free >= 0 ? free : studio.ovl.findIndex(c => !c.on);
             if (idx >= 0) toggleInputOverlay(m.id, idx);
             break;
           }
@@ -273,7 +273,7 @@
           case 'ticker':
             if (inp && inp.type === 'ticker') { inp.ticker.items = String(m.items || '').split('\n').map(s => s.trim()).filter(Boolean).slice(0, 100); renderInputs(); }
             break;
-          case 'timer': if (inp && inp.type === 'timer' && (v === 'toggle' || v === 'reset')) ctx.timerControl(inp, v); break;
+          case 'timer': if (inp && inp.type === 'timer' && (v === 'toggle' || v === 'reset')) studio.timerControl(inp, v); break;
           case 'score':
             if (inp && inp.type === 'score' && (v === 'a' || v === 'b')) { const k = v === 'a' ? 'scoreA' : 'scoreB'; inp.score[k] = Math.max(0, (+inp.score[k] || 0) + (m.d > 0 ? 1 : -1)); }
             break;
@@ -284,30 +284,30 @@
             if (v === 'play' && vid) clipPlayToggle(inp);
             else if (v === 'restart' && vid) clipRestart(inp);
             else if (v === 'loop' && vid) inp.el.loop = !inp.el.loop;
-            else if ((v === 'prev' || v === 'next') && inp.type === 'playlist') ctx.playlist.go(inp, inp.list.index + (v === 'next' ? 1 : -1), true);
-            else if (v === 'play' && inp.type === 'playlist') ctx.playlist.setPlaying(inp, !inp.list.playing);
+            else if ((v === 'prev' || v === 'next') && inp.type === 'playlist') studio.playlist.go(inp, inp.list.index + (v === 'next' ? 1 : -1), true);
+            else if (v === 'play' && inp.type === 'playlist') studio.playlist.setPlaying(inp, !inp.list.playing);
             else if ((v === 'prev' || v === 'next') && inp.type === 'slides' && inp.slides.count) slideGo(inp, inp.slides.page + (v === 'next' ? 1 : -1));
             else if (v === 'capture' && inp.type === 'replay') replayCapture(inp);
             if (vid) updateMediaButtons(inp);
             break;
           }
           case 'mute': case 'vol': {
-            const ch = ctx.chanByKey(v) || ctx.audio.channels.find(c => c.id === v);
+            const ch = studio.chanByKey(v) || studio.audio.channels.find(c => c.id === v);
             if (!ch) break;
             if (m.cmd === 'mute') ch.muted = !ch.muted;
-            else { ch.db = clamp(+m.db, -60, 10); if (ch.db <= -59.9) ch.db = -Infinity; ch.ui?.fader?.set(ctx.dbToPos(ch.db) * 100); if (ch.ui?.db) ch.ui.db.textContent = `${ctx.fmtDb(ch.db)} dB`; }
-            ch === ctx.audio.masterStrip ? ctx.audio.applyMaster() : ctx.audio.applyGain(ch);
+            else { ch.db = clamp(+m.db, -60, 10); if (ch.db <= -59.9) ch.db = -Infinity; ch.ui?.fader?.set(studio.dbToPos(ch.db) * 100); if (ch.ui?.db) ch.ui.db.textContent = `${studio.fmtDb(ch.db)} dB`; }
+            ch === studio.audio.masterStrip ? studio.audio.applyMaster() : studio.audio.applyGain(ch);
             if (m.cmd === 'mute') renderMixer();
             break;
           }
-          case 'sfx': { const ch = ctx.chanByKey(v); if (ch && ch.kind === 'pad' && ch.pads[+m.i]) padFire(ch, +m.i); break; }
+          case 'sfx': { const ch = studio.chanByKey(v); if (ch && ch.kind === 'pad' && ch.pads[+m.i]) padFire(ch, +m.i); break; }
           case 'music': {
-            const ch = ctx.chanByKey(v);
+            const ch = studio.chanByKey(v);
             if (!ch || ch.kind !== 'player' || !ch.src) break;
             if (m.a === 'next') ch.src.next(); else if (m.a === 'prev') ch.src.prev(); else ch.src.toggle();
             break;
           }
-          case 'macro': { const mm = ctx.macros.find(x => x.id === v); if (mm) runMacro(mm); break; }
+          case 'macro': { const mm = studio.macros.find(x => x.id === v); if (mm) runMacro(mm); break; }
           case 'rec': toggleRecord(); break;
           case 'cap': { if (inp && inp.type === 'captions') { inp.capRun?.on ? captionStop(inp) : captionStart(inp); renderInputs(); } break; }
         }
@@ -315,11 +315,11 @@
       },
       async openDialog() {
         // ระบบเชื่อมต่อยังไม่พร้อม: ต่อใหม่ให้เองแล้วรอสักครู่ แทนที่จะให้ผู้ใช้กดซ้ำ
-        if (ctx.wireless.status !== 'ready') {
-          if (ctx.wireless.status !== 'connecting') ctx.wireless.restart();
+        if (studio.wireless.status !== 'ready') {
+          if (studio.wireless.status !== 'connecting') studio.wireless.restart();
           toast('กำลังเปิดระบบเชื่อมต่อรีโมต…', 'info', 2500);
-          for (let t = 0; t < 40 && ctx.wireless.status !== 'ready'; t++) await new Promise(r => setTimeout(r, 250));
-          if (ctx.wireless.status !== 'ready') { toast('เปิดระบบเชื่อมต่อไม่สำเร็จ — ตรวจอินเทอร์เน็ตของเครื่องนี้แล้วลองใหม่', 'error'); return; }
+          for (let t = 0; t < 40 && studio.wireless.status !== 'ready'; t++) await new Promise(r => setTimeout(r, 250));
+          if (studio.wireless.status !== 'ready') { toast('เปิดระบบเชื่อมต่อไม่สำเร็จ — ตรวจอินเทอร์เน็ตของเครื่องนี้แล้วลองใหม่', 'error'); return; }
         }
         let role = store.get('remoteRole', 'switcher');
         if (!REMOTE_ROLES[role]) role = 'switcher';
@@ -377,7 +377,7 @@
         this.renderList = null;
         if (r?.value === 'copy') copyText(this.link(role));
         if (r?.value === 'repin') {
-          ctx.settings.remotePin = '';
+          studio.settings.remotePin = '';
           this.pin();
           toast('เปลี่ยนรหัสจับคู่แล้ว — เครื่องที่จับคู่ไว้ยังใช้ได้ (ถอดออกได้ในรายชื่อทีม)', 'success');
           this.openDialog();

@@ -3,10 +3,10 @@
   'use strict';
   const { $, $$, FONT, chat: chatLib, clamp, downloadBlob, esc, fmtDuration, pad2, toast } = WM;
 
-  // ctx = สิ่งที่ใช้จากสตูดิโอ (app.js): addInput, dialog, refreshSourceSelects, renderInputs, setChannel, toggleInputOverlay, audio, audioChanOptions, chanByKey, inputs, onOverlay, ovl, state
-  // ค่า (ไม่ใช่ฟังก์ชัน) อ่านผ่าน ctx.ชื่อ เสมอ — ได้ค่าล่าสุด และสร้างโมดูลได้ก่อนที่ app.js จะประกาศค่านั้น
-  WM.createCaptions = function (ctx) {
-    const { addInput, dialog, refreshSourceSelects, renderInputs, setChannel, toggleInputOverlay } = ctx;
+  // studio = สิ่งที่ใช้จากสตูดิโอ (app.js): addInput, dialog, refreshSourceSelects, renderInputs, setChannel, toggleInputOverlay, audio, audioChanOptions, chanByKey, inputs, onOverlay, ovl, state
+  // ค่า (ไม่ใช่ฟังก์ชัน) อ่านผ่าน studio.ชื่อ เสมอ — ได้ค่าล่าสุด และสร้างโมดูลได้ก่อนที่ app.js จะประกาศค่านั้น
+  WM.createCaptions = function (studio) {
+    const { addInput, dialog, refreshSourceSelects, renderInputs, setChannel, toggleInputOverlay } = studio;
     // คำบรรยายสด: ระบบรู้จำเสียงของเบราว์เซอร์ (Web Speech API — Chrome / Edge / Safari ส่งเสียงไปประมวลผลบนเซิร์ฟเวอร์ของผู้ผลิตเบราว์เซอร์)
     // ฟังจากไมค์หลักของเครื่อง หรือช่องเสียงในมิกเซอร์ (เบราว์เซอร์รุ่นใหม่รับ MediaStreamTrack ได้ — รุ่นเก่าใช้ไมค์หลักแทน)
     const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -61,7 +61,7 @@
       }).catch(() => {});
     }
     function addCaptionsInput() {
-      const n = ctx.inputs.filter(i => i.type === 'captions').length + 1;
+      const n = studio.inputs.filter(i => i.type === 'captions').length + 1;
       const inp = addInput({ type: 'captions', name: n > 1 ? `CAPTIONS ${n}` : 'CAPTIONS', cap: sanitizeCap({}) });
       openCaptionsDialog(inp, true);
       return inp;
@@ -69,10 +69,10 @@
     // เสียงจากมิกเซอร์ → MediaStreamTrack ให้ตัวรู้จำเสียง (Master = เสียงรวมที่ออกอากาศ)
     function captionTrack(inp) {
       const src = inp.cap.source;
-      if (src === 'mic' || !ctx.audio.ensure()) return null;
+      if (src === 'mic' || !studio.audio.ensure()) return null;
       const r = inp.capRun;
-      if (!r.dest) r.dest = ctx.audio.ctx.createMediaStreamDestination();
-      const node = src === 'master' ? ctx.audio.post : ctx.chanByKey(src)?.afvGain;
+      if (!r.dest) r.dest = studio.audio.ctx.createMediaStreamDestination();
+      const node = src === 'master' ? studio.audio.post : studio.chanByKey(src)?.afvGain;
       if (!node) return null;
       try { node.connect(r.dest); } catch (e) { return null; }
       r.tapped = node;
@@ -186,18 +186,18 @@
       }).join('\n');
     }
     // ปุ่ม “แสดงบน Program / ซ่อนจาก Program” ในหน้าต่างแก้ไข — ใช้ช่อง Overlay ว่าง ไม่ปิดหน้าต่าง
-    const onAirLabel = inp => ctx.ovl.some(c => c.inputId === inp.id && c.on) ? 'ซ่อนจาก Program' : 'แสดงบน Program';
+    const onAirLabel = inp => studio.ovl.some(c => c.inputId === inp.id && c.on) ? 'ซ่อนจาก Program' : 'แสดงบน Program';
     function bindOnAirButton(modal, inp) {
       const btn = [...$$('.modal-foot .btn', modal)].find(b => b.dataset.label === 'แสดงบน Program' || b.dataset.label === 'ซ่อนจาก Program');
       if (!btn) return;
       const clone = btn.cloneNode(true);
       btn.replaceWith(clone);
       clone.addEventListener('click', () => {
-        const on = ctx.ovl.findIndex(c => c.inputId === inp.id && c.on);
+        const on = studio.ovl.findIndex(c => c.inputId === inp.id && c.on);
         if (on >= 0) setChannel(on, false);
         else {
-          const free = ctx.ovl.findIndex(o => !o.on && (!o.inputId || o.inputId === inp.id));
-          ctx.audio.ensure();
+          const free = studio.ovl.findIndex(o => !o.on && (!o.inputId || o.inputId === inp.id));
+          studio.audio.ensure();
           toggleInputOverlay(inp.id, free >= 0 ? free : 0);
         }
         clone.textContent = onAirLabel(inp);
@@ -207,7 +207,7 @@
     // คำบรรยายสด: ตัวอย่างบนภาพ Program · ข้อความล่าสุดพร้อมเวลา · ฟังจาก · การแสดงผล · ไฟล์ .srt / .txt
     async function openCaptionsDialog(inp, fresh) {
       const before = { ...inp.cap }, c = inp.cap;
-      const chans = ctx.audioChanOptions();
+      const chans = studio.audioChanOptions();
       const log = () => inp.capRun?.log || [];
       const t0 = () => log()[0]?.at || Date.now();
       const stamp = () => new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
@@ -284,7 +284,7 @@
             if (!modal.isConnected) return;
             pc.fillStyle = '#23324a'; pc.fillRect(0, 0, 960, 540);
             try { const src = $('#pgm-canvas'); if (src) pc.drawImage(src, 0, 0, 960, 540); } catch (e) {}
-            if (!ctx.onOverlay(inp.id) && inp.id !== ctx.state.programId) {
+            if (!studio.onOverlay(inp.id) && inp.id !== studio.state.programId) {
               const demo = !inp.capRun?.lines?.length && !inp.capRun?.interim;
               drawCaptions(pc, 960, 540, demo ? { ...inp, capRun: { lines: ['ตัวอย่างคำบรรยายสดบนจอ', 'แสดงตามขนาดและตำแหน่งที่เลือก'], trLines: inp.cap.tr ? ['Sample live captions on screen, in the size and position you chose'] : [], interim: '', lastAt: performance.now() } } : inp);
             }

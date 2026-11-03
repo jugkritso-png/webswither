@@ -7,7 +7,8 @@
 // กติกา (ให้ผลเหมือนเดิมทุกอย่าง):
 //   - ชื่อจาก window.WebMix → โมดูลดึงจาก WebMix เอง
 //   - function ของ app.js (hoisted) → ส่งตรงใน ctx
-//   - const / let ของ app.js → ส่งเป็น getter (setter ด้วยถ้าส่วนนี้กำหนดค่าใหม่) และโมดูลอ่านผ่าน ctx.ชื่อ
+//   - const / let ของ app.js → ส่งเป็น getter (setter ด้วยถ้าส่วนนี้กำหนดค่าใหม่) และโมดูลอ่านผ่าน studio.ชื่อ
+//     (ชื่อ studio ไม่ใช่ ctx — ctx ของแคนวาสในฟังก์ชันย่อยจะบังพารามิเตอร์)
 //     จึงไม่อ่านก่อนประกาศ (TDZ) และได้ค่าล่าสุดเสมอ
 //   - ชื่อที่ส่วนอื่นใช้ → โมดูลคืนค่าออกมา แล้ว app.js รับไว้ด้วยชื่อเดิม
 // ไม่ปลอดภัยแล้วหยุด (ไม่เขียนไฟล์): ส่วนอื่นเรียกชื่อที่คืนค่าทันทีตอนโหลดก่อนถึงส่วนนี้ ·
@@ -103,6 +104,7 @@ const exported = [...new Set(outRefs.map(r => r.name))].sort();
 
 // --- ตรวจความปลอดภัย
 const problems = [];
+walk.full({ type: 'Program', body: secStmts }, n => { if (n.type === 'Identifier' && n.name === 'studio') problems.push(`บรรทัด ${n.loc.start.line}: ใช้ชื่อ studio อยู่แล้ว (ชนกับพารามิเตอร์ของโมดูล)`); });
 for (const r of outRefs) if (r.line < startLine && !r.inFn) problems.push(`บรรทัด ${r.line}: ใช้ "${r.name}" ทันทีตอนโหลด ก่อนถึงส่วนนี้`);
 for (const n of exported) if (decl.get(n).kind === 'let' && refs.some(r => r.name === n && r.assigned)) problems.push(`"${n}" เป็น let ที่ถูกกำหนดค่าใหม่ แต่ส่วนอื่นใช้ด้วย — ต้องแยกเอง`);
 for (const n of exported) if (refs.some(r => r.name === n && r.assigned && !r.inSection)) problems.push(`ส่วนอื่นกำหนดค่าใหม่ให้ "${n}"`);
@@ -125,7 +127,7 @@ const secEnd = lines.slice(0, endLine).join('\n').length;
 let code = src.slice(secStart, secEnd);
 const edits = secRefs.filter(r => vals.includes(r.name)).map(r => {
   const shorthand = r.parent && r.parent.type === 'Property' && r.parent.shorthand;
-  return { at: r.node.start - secStart, len: r.node.end - r.node.start, text: shorthand ? `${r.name}: ctx.${r.name}` : `ctx.${r.name}` };
+  return { at: r.node.start - secStart, len: r.node.end - r.node.start, text: shorthand ? `${r.name}: studio.${r.name}` : `studio.${r.name}` };
 }).sort((a, b) => b.at - a.at);
 for (const e of edits) code = code.slice(0, e.at) + e.text + code.slice(e.at + e.len);
 // หัวข้อของส่วน → หัวไฟล์
@@ -138,9 +140,9 @@ const out = `${header.join('\n')}
 (function (WM) {
   'use strict';${wm.length ? `\n  const { ${wm.map(n => wmAlias.has(n) ? `${wmAlias.get(n)}: ${n}` : n).join(', ')} } = WM;` : ''}
 
-  // ctx = สิ่งที่ใช้จากสตูดิโอ (app.js): ${ctxDoc || '-'}
-  // ค่า (ไม่ใช่ฟังก์ชัน) อ่านผ่าน ctx.ชื่อ เสมอ — ได้ค่าล่าสุด และสร้างโมดูลได้ก่อนที่ app.js จะประกาศค่านั้น
-  WM.${factory} = function (ctx) {${fns.length ? `\n    const { ${fns.join(', ')} } = ctx;` : ''}
+  // studio = สิ่งที่ใช้จากสตูดิโอ (app.js): ${ctxDoc || '-'}
+  // ค่า (ไม่ใช่ฟังก์ชัน) อ่านผ่าน studio.ชื่อ เสมอ — ได้ค่าล่าสุด และสร้างโมดูลได้ก่อนที่ app.js จะประกาศค่านั้น
+  WM.${factory} = function (studio) {${fns.length ? `\n    const { ${fns.join(', ')} } = studio;` : ''}
 ${rest}
 
     return { ${exported.join(', ')} };

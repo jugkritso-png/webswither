@@ -6,13 +6,13 @@
   'use strict';
   const { $, $$, esc, icon, fmtBytes, stamp, store, toast, downloadBlob, FONT, fitFont } = WM;
 
-  // ctx = สิ่งที่ต้องใช้จากสตูดิโอ (app.js)
+  // studio = สิ่งที่ต้องใช้จากสตูดิโอ (app.js)
   //   output        ภาพ Program + เสียงมาสเตอร์ (MediaStream) · audio  ระบบเสียง (AudioContext)
   //   streamer, rec สถานะไลฟ์ / บันทึก · pgmCanvas  แคนวาส Program (ภาพตัวอย่าง)
   //   height()      ความสูงของ Program ตอนนี้ · recFolder()  โฟลเดอร์ REC ที่เลือกไว้ (หรือ null)
   //   seekableClip, dialog, confirmDialog
-  WM.createHighlights = function (ctx) {
-    const { output, audio, streamer, rec, pgmCanvas, seekableClip, dialog, confirmDialog } = ctx;
+  WM.createHighlights = function (studio) {
+    const { output, audio, streamer, rec, pgmCanvas, seekableClip, dialog, confirmDialog } = studio;
     const HL_LENS = [15, 30, 60];
     // span = ความยาวต่อช่วง (ชุดทดสอบตั้งให้สั้นลงได้)
     const hl = { on: false, span: 60000, cur: null, prev: null, timer: null, mime: '', list: [], busy: null, cfg: { len: 30, frame: 'blur', x: 0.5, title: '' } };
@@ -115,7 +115,7 @@
       const vids = [];
       for (const blob of raw.segs) vids.push(await hlLoad(blob));
       const first = vids[vids.length - 1];
-      const big = (first.videoHeight || ctx.height()) >= 900, cw = big ? 1080 : 720, ch = big ? 1920 : 1280;
+      const big = (first.videoHeight || studio.height()) >= 900, cw = big ? 1080 : 720, ch = big ? 1920 : 1280;
       const canvas = document.createElement('canvas'); canvas.width = cw; canvas.height = ch;
       const ctx = canvas.getContext('2d');
       // เสียงของคลิป: ผ่าน Web Audio ไปลงไฟล์เท่านั้น ไม่ดังออกลำโพง
@@ -170,7 +170,7 @@
       return { blob: type.includes('webm') ? await seekableClip(blob, type) : blob, len: total, ext: type.includes('mp4') ? 'mp4' : 'webm', w: cw, h: ch };
     }
     async function hlSave(item) {
-      const recFolder = ctx.recFolder();
+      const recFolder = studio.recFolder();
       if (recFolder) {
         try {
           const fh = await recFolder.getFileHandle(item.name, { create: true });
@@ -210,7 +210,7 @@
       return item;
     }
     async function openHighlightDialog() {
-      const recFolder = ctx.recFolder();
+      const recFolder = studio.recFolder();
       if (!hlSupported()) { toast('เครื่องนี้ทำคลิปไฮไลต์ไม่ได้ (ต้องใช้ Chrome / Edge หรือแอป Windows / macOS / Android)', 'warn', 6000); return; }
       hlStart();
       const c = hl.cfg;

@@ -6,10 +6,10 @@
   'use strict';
   const { $, $$, chat: chatLib, esc, store, toast } = WM;
 
-  // ctx = สิ่งที่ใช้จากสตูดิโอ (app.js): destLabel, dialog, fbLogin, saveSettings, MAX_DESTINATIONS, fb, newDest, settings, show
-  // ค่า (ไม่ใช่ฟังก์ชัน) อ่านผ่าน ctx.ชื่อ เสมอ — ได้ค่าล่าสุด และสร้างโมดูลได้ก่อนที่ app.js จะประกาศค่านั้น
-  WM.createSchedule = function (ctx) {
-    const { destLabel, dialog, fbLogin, saveSettings } = ctx;
+  // studio = สิ่งที่ใช้จากสตูดิโอ (app.js): destLabel, dialog, fbLogin, saveSettings, MAX_DESTINATIONS, fb, newDest, settings, show
+  // ค่า (ไม่ใช่ฟังก์ชัน) อ่านผ่าน studio.ชื่อ เสมอ — ได้ค่าล่าสุด และสร้างโมดูลได้ก่อนที่ app.js จะประกาศค่านั้น
+  WM.createSchedule = function (studio) {
+    const { destLabel, dialog, fbLogin, saveSettings } = studio;
     const YT_API = 'https://www.googleapis.com/youtube/v3/';
     const yt = { token: '', exp: 0, gis: null };
     function ytLoadGis() {
@@ -61,7 +61,7 @@
       return { platform: 'youtube', server: ing.ingestionAddress, key: ing.streamName, url: `https://www.youtube.com/watch?v=${b.id}`, id: b.id };
     }
     async function fbSchedule({ title, description, start, pageId }) {
-      const pg = ctx.fb.pages.find(p => p.id === pageId);
+      const pg = studio.fb.pages.find(p => p.id === pageId);
       if (!pg) throw new Error('เลือกเพจก่อน');
       const q = { title, description, status: start ? 'SCHEDULED_UNPUBLISHED' : 'UNPUBLISHED', ...(start ? { planned_start_time: String(Math.floor(start / 1000)) } : {}) };
       const r = await fetch(`${chatLib.FB_GRAPH}${pg.id}/live_videos`, { method: 'POST', body: new URLSearchParams({ ...q, access_token: pg.token }) });
@@ -74,10 +74,10 @@
     }
     // ใส่ปลายทาง: ใช้ช่องของแพลตฟอร์มเดียวกันที่ยังไม่มีคีย์ ไม่มีก็เพิ่มช่องใหม่ (ไม่ทับช่องที่มีคีย์อยู่แล้ว)
     function applyScheduled(res) {
-      let d = ctx.settings.destinations.find(x => x.platform === res.platform && !x.key.trim());
+      let d = studio.settings.destinations.find(x => x.platform === res.platform && !x.key.trim());
       if (!d) {
-        if (ctx.settings.destinations.length >= ctx.MAX_DESTINATIONS) throw new Error(`ปลายทางเต็ม ${ctx.MAX_DESTINATIONS} ช่องแล้ว — ลบช่องที่ไม่ใช้ก่อน`);
-        d = ctx.newDest(res.platform); ctx.settings.destinations.push(d);
+        if (studio.settings.destinations.length >= studio.MAX_DESTINATIONS) throw new Error(`ปลายทางเต็ม ${studio.MAX_DESTINATIONS} ช่องแล้ว — ลบช่องที่ไม่ใช้ก่อน`);
+        d = studio.newDest(res.platform); studio.settings.destinations.push(d);
       }
       d.server = res.server; d.key = res.key; d.enabled = true;
       saveSettings();
@@ -92,7 +92,7 @@
         body: `
           <div class="seg sch-plat"><button type="button" data-plat="youtube" class="is-active">YouTube</button><button type="button" data-plat="facebook">Facebook (เพจ)</button></div>
           <div class="sch-auth"></div>
-          <label class="field"><span>ชื่อไลฟ์</span><input name="title" class="input" maxlength="100" value="${esc(ctx.show.name || '')}" placeholder="เช่น ถ่ายทอดสดงานบวช 12 พ.ย."></label>
+          <label class="field"><span>ชื่อไลฟ์</span><input name="title" class="input" maxlength="100" value="${esc(studio.show.name || '')}" placeholder="เช่น ถ่ายทอดสดงานบวช 12 พ.ย."></label>
           <label class="field"><span>คำอธิบาย</span><textarea name="desc" class="input" rows="3" maxlength="4000"></textarea></label>
           <div class="grid-2">
             <label class="field"><span>เริ่ม</span><select name="when" class="select"><option value="now">ทันทีที่กดเริ่มสตรีม</option><option value="at">ตั้งเวลา</option></select></label>
@@ -108,12 +108,12 @@
           const foot = $('.modal-foot', modal);
           foot.insertAdjacentHTML('afterbegin', `<button type="button" class="btn btn-primary sch-go">สร้างไลฟ์และใส่ปลายทาง</button><span class="ml-auto"></span>`);
           const err = t => { const e = $('.sch-err', modal); e.hidden = !t; e.textContent = t || ''; };
-          const authed = () => plat === 'youtube' ? !!yt.token && Date.now() < yt.exp - 30000 : ctx.fb.pages.length > 0 && ctx.fb.publish;
+          const authed = () => plat === 'youtube' ? !!yt.token && Date.now() < yt.exp - 30000 : studio.fb.pages.length > 0 && studio.fb.publish;
           const paint = () => {
             $$('.sch-plat button', modal).forEach(b => b.classList.toggle('is-active', b.dataset.plat === plat));
             $('.sch-yt', modal).hidden = plat !== 'youtube';
             $('.sch-at', modal).hidden = f.when.value !== 'at';
-            const box = $('.sch-auth', modal), sig = `${plat}|${authed()}|${ctx.fb.pages.length}`;
+            const box = $('.sch-auth', modal), sig = `${plat}|${authed()}|${studio.fb.pages.length}`;
             if (box.dataset.sig === sig) { $('.sch-go', modal).disabled = busy || !authed(); return; }
             box.dataset.sig = sig;
             if (plat === 'youtube') {
@@ -124,7 +124,7 @@
                   <div class="link-row"><input name="yttoken" class="input mono" placeholder="หรือวาง Access token (จาก OAuth Playground)"><button type="button" class="btn" data-sch="yttoken">ใช้โทเคน</button></div>
                 </details>`;
             } else {
-              box.innerHTML = ctx.fb.pages.length && ctx.fb.publish ? `<label class="field"><span>เพจ</span><select name="page" class="select">${ctx.fb.pages.map(p => `<option value="${p.id}" ${p.id === ctx.fb.pageId ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select></label>` : `
+              box.innerHTML = studio.fb.pages.length && studio.fb.publish ? `<label class="field"><span>เพจ</span><select name="page" class="select">${studio.fb.pages.map(p => `<option value="${p.id}" ${p.id === studio.fb.pageId ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select></label>` : `
                 <div class="link-row"><input name="fbapp" class="input mono" placeholder="Facebook App ID" value="${esc(store.get('fb-appid', ''))}"><button type="button" class="btn" data-sch="fblogin">เข้าสู่ระบบ Facebook</button></div>
                 <p class="note">ใช้ App ID เดียวกับคอมเมนต์ Facebook · ต้องอนุญาตสิทธิ์ “publish_video” ของเพจ (แอปที่ยังไม่ผ่านการตรวจของ Meta ใช้ได้กับแอดมินของแอปเท่านั้น)</p>`;
             }
@@ -145,7 +145,7 @@
             } else if (a === 'fblogin') {
               const id = f.fbapp.value.trim();
               if (!/^\d{5,20}$/.test(id)) { err('ใส่ Facebook App ID (ตัวเลข)'); return; }
-              store.set('fb-appid', id); run(async () => { await fbLogin(id, ',publish_video'); ctx.fb.publish = true; });
+              store.set('fb-appid', id); run(async () => { await fbLogin(id, ',publish_video'); studio.fb.publish = true; });
             }
             if (e.target.closest('.sch-go')) {
               const title = f.title.value.trim();

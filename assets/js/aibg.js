@@ -5,10 +5,10 @@
   'use strict';
   const { $, $$, FONT, clamp, drawFit, esc, toast } = WM;
 
-  // ctx = สิ่งที่ใช้จากสตูดิโอ (app.js): dialog, renderInputs, byId, fps, inputs, settings
-  // ค่า (ไม่ใช่ฟังก์ชัน) อ่านผ่าน ctx.ชื่อ เสมอ — ได้ค่าล่าสุด และสร้างโมดูลได้ก่อนที่ app.js จะประกาศค่านั้น
-  WM.createAiBackground = function (ctx) {
-    const { dialog, renderInputs } = ctx;
+  // studio = สิ่งที่ใช้จากสตูดิโอ (app.js): dialog, renderInputs, byId, fps, inputs, settings
+  // ค่า (ไม่ใช่ฟังก์ชัน) อ่านผ่าน studio.ชื่อ เสมอ — ได้ค่าล่าสุด และสร้างโมดูลได้ก่อนที่ app.js จะประกาศค่านั้น
+  WM.createAiBackground = function (studio) {
+    const { dialog, renderInputs } = studio;
     const BG_MODES = { none: 'ไม่ใช้', blur: 'เบลอพื้นหลัง', image: 'เปลี่ยนเป็นภาพ / วิดีโออื่น', green: 'สีเขียว (ส่งต่อไปคีย์ในโปรแกรมอื่น)', remove: 'ลบพื้นหลัง (โปร่งใส — ใช้ซ้อนบนสไลด์หรือภาพอื่น)' };
     const BG_QUALITY = { fast: ['เร็ว', 160, 90], bal: ['สมดุล', 256, 144], sharp: ['คมสุด', 384, 216] };
     const BG_TYPES = ['camera', 'wireless', 'guest', 'srt', 'media'];
@@ -42,7 +42,7 @@
       if (st.seg) { try { st.seg.close(); } catch (e) {} }
     }
     function stepBackgrounds(now) {
-      for (const inp of ctx.inputs) {
+      for (const inp of studio.inputs) {
         if (!bgActive(inp)) { if (inp.bgState && !inp.bgState.loading) bgStop(inp); continue; }
         const v = inp.el;
         if (inp.status !== 'live' || !v || v.readyState < 2 || !v.videoWidth) continue;
@@ -62,7 +62,7 @@
           continue;
         }
         // ไม่เกินเฟรมเรตของเอาต์พุต และไม่กินเวลาวาดภาพเกิน ~1/3 (เครื่องช้า = อัปเดตมาสก์ห่างขึ้น แต่ภาพหลักยังลื่น)
-        if (now - st.last < Math.max(1000 / Math.min(30, ctx.settings.fps) - 2, (st.cost || 0) * 3)) continue;
+        if (now - st.last < Math.max(1000 / Math.min(30, studio.settings.fps) - 2, (st.cost || 0) * 3)) continue;
         st.last = now;
         const t0 = performance.now();
         try { bgProcess(inp, st, v, now); } catch (e) { console.warn('background', e); }
@@ -117,7 +117,7 @@
       } else if (inp.bg.mode === 'green') {
         c.fillStyle = '#00b140'; c.fillRect(0, 0, ow, oh);
       } else if (inp.bg.mode === 'image') {
-        const src = ctx.byId(inp.bg.imageId);
+        const src = studio.byId(inp.bg.imageId);
         const el = src && src.status === 'live' && src.el;
         const sw = el && (el.videoWidth || el.naturalWidth), sh = el && (el.videoHeight || el.naturalHeight);
         if (sw && sh) {
@@ -134,8 +134,8 @@
     // หน้าต่างลบพื้นหลังด้วย AI: ภาพก่อน / หลัง · พื้นหลังใหม่ · ใช้กับกล้องไหน · ขอบ · ความไว · ประสิทธิภาพ
     async function openBgDialog(inp) {
       const before = inp.bg ? { ...inp.bg } : null;
-      const cams = ctx.inputs.filter(x => BG_TYPES.includes(x.type));
-      const imgs = ctx.inputs.filter(x => x.id !== inp.id && (x.type === 'image' || x.type === 'media'));
+      const cams = studio.inputs.filter(x => BG_TYPES.includes(x.type));
+      const imgs = studio.inputs.filter(x => x.id !== inp.id && (x.type === 'image' || x.type === 'media'));
       const b0 = sanitizeBg(inp.bg);
       const TILES = [['blur', 'เบลอพื้นหลัง'], ['image', 'ภาพของฉัน'], ['green', 'สีเขียว (ส่งต่อคีย์)'], ['remove', 'โปร่งใส'], ['none', 'ไม่ใช้']];
       const r = await dialog({
@@ -176,7 +176,7 @@
           };
           modal.addEventListener('input', apply);
           modal.addEventListener('change', e => {
-            if (e.target.name === 'cam' && e.target.value !== inp.id) { close(); const o = ctx.byId(e.target.value); if (o) setTimeout(() => openBgDialog(o), 0); }
+            if (e.target.name === 'cam' && e.target.value !== inp.id) { close(); const o = studio.byId(e.target.value); if (o) setTimeout(() => openBgDialog(o), 0); }
             else apply();
           });
           const bc = $('.ab-before', modal).getContext('2d'), ac = $('.ab-after', modal).getContext('2d');
@@ -189,7 +189,7 @@
             if (out) { if (inp.bg?.mode === 'remove') { ac.fillStyle = '#2a313d'; for (let y = 0; y < 360; y += 20) for (let x = (y / 20 % 2) * 20; x < 640; x += 40) ac.fillRect(x, y, 20, 20); } drawFit(ac, out, out.width, out.height, 640, 360); }
             else { ac.fillStyle = '#0b0d12'; ac.fillRect(0, 0, 640, 360); ac.fillStyle = '#9aa4b2'; ac.font = `16px ${FONT}`; ac.textAlign = 'center'; ac.fillText(inp.bg ? (inp.bgState?.error || 'กำลังโหลด AI…') : 'ยังไม่ได้เปิดลบพื้นหลัง', 320, 185); }
             const st = inp.bgState;
-            $('.ab-stat', modal).textContent = st && st.ready ? `${(st.cost || 0).toFixed(1)} ms ต่อมาสก์ · ภาพ ${Math.round(ctx.fps)} fps` : '';
+            $('.ab-stat', modal).textContent = st && st.ready ? `${(st.cost || 0).toFixed(1)} ms ต่อมาสก์ · ภาพ ${Math.round(studio.fps)} fps` : '';
             setTimeout(tick, 66);
           };
           tick();

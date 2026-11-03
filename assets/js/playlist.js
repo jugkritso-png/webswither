@@ -4,12 +4,12 @@
   'use strict';
   const { $, $$, clamp, uid, esc, icon, fmtDuration, toast, mediaStore } = WM;
 
-  // ctx = สิ่งที่ต้องใช้จากสตูดิโอ (app.js)
+  // studio = สิ่งที่ต้องใช้จากสตูดิโอ (app.js)
   //   inputs, state, pool   รายการแหล่งภาพ · ภาพบน Program/Preview · ที่เก็บ <video> ที่ซ่อนไว้
   //   audio()               ระบบเสียง (ประกาศทีหลังใน app.js จึงส่งมาเป็นฟังก์ชัน)
   //   addInput, setInputStatus, renderInputs, refreshSourceSelects, cardSub, drawSource, autoTransition, pickFiles, dialog
-  WM.createPlaylist = function (ctx) {
-    const { inputs, state, pool, audio, addInput, setInputStatus, renderInputs, refreshSourceSelects, cardSub, drawSource, autoTransition, pickFiles, dialog } = ctx;
+  WM.createPlaylist = function (studio) {
+    const { inputs, state, pool, audio, addInput, setInputStatus, renderInputs, refreshSourceSelects, cardSub, drawSource, autoTransition, pickFiles, dialog } = studio;
     const playlist = {
       create(props = {}) {
         const v = document.createElement('video');
