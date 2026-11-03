@@ -119,7 +119,8 @@ for prog in ffmpeg $([ "${BUILD_FFPROBE:-}" = 1 ] && echo ffprobe); do
   lipo -create "$WORK/build-arm64/ffmpeg/$prog" "$WORK/build-x86_64/ffmpeg/$prog" -output "$OUT/$prog"
   strip "$OUT/$prog"
   # ต้องพึ่งเฉพาะของ macOS (/usr/lib, /System/Library) — ไม่อย่างนั้นเครื่องผู้ใช้ที่ไม่มี Homebrew เปิดไม่ได้
-  BAD=$(otool -L "$OUT/$prog" | tail -n +2 | awk '{print $1}' | grep -vE '^(/usr/lib/|/System/Library/)' || true)
+  # (ไฟล์ universal: otool พิมพ์หัวข้อของแต่ละสถาปัตยกรรม ซึ่งมีชื่อไฟล์เอง — อ่านเฉพาะบรรทัดที่ขึ้นต้นด้วยช่องว่าง = ไลบรารีที่ใช้)
+  BAD=$(otool -L "$OUT/$prog" | grep -E '^[[:space:]]' | awk '{print $1}' | sort -u | grep -vE '^(/usr/lib/|/System/Library/)' || true)
   [ -z "$BAD" ] || { echo "$prog ต้องใช้ไลบรารีที่ไม่มีใน macOS: $BAD" >&2; exit 1; }
   echo "$prog: $(lipo -archs "$OUT/$prog") · $(du -h "$OUT/$prog" | cut -f1)"
 done
