@@ -8577,6 +8577,10 @@ onmessage = async e => {
     }).then(r => r?.value === 'hold');
   }
 
+  // ตั้งเซิร์ฟเวอร์ของฉัน (ไม่ต้องพิมพ์คำสั่ง) → assets/js/serversetup.js
+  const { openServerSetup } = window.WebMix.createServerSetup({
+    dialog, saveSettings, updateStatus, get settings() { return settings; }
+  });
   async function confirmDialog(title, text, okLabel = 'ยืนยัน') {
     const r = await dialog({
       title,
@@ -8937,12 +8941,14 @@ onmessage = async e => {
             <input name="gateway" class="input mono" placeholder="wss://gateway.example.com:8080/?token=..." value="${esc(settings.gateway)}"></label>
           <label class="field gateway-backup"><span>Gateway สำรอง (ไม่บังคับ) — ตัวหลักล่มหรือกำลังอัปเดต ไลฟ์ย้ายมาที่นี่เอง</span>
             <input name="gatewayBackup" class="input mono" placeholder="wss://gateway2.example.com/?token=..." value="${esc(settings.gatewayBackup || '')}"></label>
+          <button type="button" class="btn btn-sm gateway-setup" data-srv-setup>ยังไม่มีเซิร์ฟเวอร์? ตั้งเซิร์ฟเวอร์ของฉัน (ไม่ต้องพิมพ์คำสั่ง)</button>
           <p class="note" ${desktop ? 'hidden' : ''}>เบราว์เซอร์ส่ง RTMP เองไม่ได้ ต้องมี Gateway (โฟลเดอร์ <code>server/</code> ในโปรเจกต์) คอยแปลงสัญญาณ — หน้า HTTPS ต้องใช้ <code>wss://</code> · ภาพถูกส่งขึ้น Gateway ครั้งเดียวแล้วกระจายไปทุกปลายทาง จึงใช้อินเทอร์เน็ตขาขึ้นเท่ากับสตรีมช่องเดียว</p>
           </details>
         </div>`,
       actions: [{ label: 'ยกเลิก' }, { label: 'บันทึก', primary: true, value: 'save' }],
       onOpen(modal) {
         $('.modal-body', modal).insertAdjacentHTML('beforeend', `<div class="modal-pane" data-mpane="control">${midiPaneHtml()}</div>${settingsExtraHtml()}${netScanPaneHtml()}`);
+        $('[data-srv-setup]', modal)?.addEventListener('click', () => openServerSetup({ onDone: url => { const g = $('[name=gateway]', modal); if (g) g.value = url; } }));
         bindMidiPane(modal);
         bindNetScanPane(modal, tab === 'netvideo');
         bindSettingsExtra(modal);
@@ -8986,7 +8992,7 @@ onmessage = async e => {
         });
         fo.fps.addEventListener('change', suggest);
         if (fo.localGateway) {
-          const syncGw = () => { $$('.gateway-remote, .gateway-backup', modal).forEach(el => { el.hidden = fo.localGateway.checked; }); };
+          const syncGw = () => { $$('.gateway-remote, .gateway-backup, .gateway-setup', modal).forEach(el => { el.hidden = fo.localGateway.checked; }); };
           fo.localGateway.addEventListener('change', syncGw);
           syncGw();
         }

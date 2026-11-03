@@ -3125,3 +3125,18 @@ html.is-card-drag, html.is-card-drag * { cursor: grabbing !important; }
 /* ออกอากาศอยู่: ไม่เบลอพื้นหลังหน้าต่าง (ประหยัดเครื่อง ภาพไลฟ์ไม่ตก) */
 .on-air .modal-backdrop, .on-air .menu { -webkit-backdrop-filter: none; backdrop-filter: none; }
 .ml-enc { margin: 8px 0 0; font-size: 12px; opacity: .75; }
+
+/* ตั้งเซิร์ฟเวอร์ของฉัน (assets/js/serversetup.js) */
+.ss { display: flex; flex-direction: column; gap: 18px; }
+.ss-step { padding: 14px 16px; border-radius: 12px; background: #171B22; border: 1px solid #222935; }
+.ss-step h3 { display: flex; align-items: center; gap: 10px; margin: 0 0 10px; font-size: 15px; }
+.ss-step h3 b { width: 26px; height: 26px; flex: none; border-radius: 50%; display: grid; place-items: center; background: #2F6FE8; color: #fff; font-size: 13px; }
+.ss-provs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+.ss-prov { min-height: 44px; padding: 0 16px; border-radius: 10px; border: 2px solid #2A313D; background: #11141A; color: inherit; font: inherit; font-weight: 600; cursor: pointer; }
+.ss-prov[aria-pressed=true] { border-color: #4F86F0; background: rgba(47,111,232,.12); }
+.ss-spec, .ss-open { margin: 6px 0 0; font-size: 13px; }
+.ss-data { width: 100%; min-height: 92px; font-size: 12px; resize: vertical; margin: 8px 0; }
+.ss-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.ss-row .input { flex: 1; min-width: 180px; }
+.ss-fw { margin: 10px 0 0; padding: 10px 12px; border-radius: 10px; background: #2A2010; color: #F5A524; font-size: 13px; }
+.ss-status { margin: 10px 0 0; font-size: 14px; min-height: 20px; }

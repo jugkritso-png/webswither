@@ -19,6 +19,7 @@
 
 - **เว็บ (ไม่ต้องติดตั้ง):** https://jugkritso-png.github.io/webswither/
 - **แอป Windows / macOS / Linux / Android:** [Releases](https://github.com/jugkritso-png/webswither/releases/latest)
+- **เซิร์ฟเวอร์ของตัวเอง (ส่งไลฟ์หลายปลายทาง, กล้องมือถือผ่าน 4G):** ในแอป → ตั้งค่า → การสตรีม → “ตั้งเซิร์ฟเวอร์ของฉัน” — ไม่ต้องพิมพ์คำสั่ง ([รายละเอียด](docs/streaming-and-server.md))
 
 ## เอกสาร
 

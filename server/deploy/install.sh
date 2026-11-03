@@ -17,6 +17,12 @@
 #    BRANCH=...                branch ของโค้ด (ค่าเริ่มต้น = branch หลักของ repo)
 #    UPLINK_MBPS=1000          ความเร็วอัปโหลดของเซิร์ฟเวอร์ (Mbps) — หน้า /admin แสดงว่าเน็ตขาออกเหลือเท่าไร
 #
+#    STREAM_TOKEN=...          รหัสผู้ดูแลที่สร้างไว้เอง (ตัวช่วยตั้งเซิร์ฟเวอร์ในแอป WebMix ใส่ให้) — ไม่ใส่ = สุ่มให้
+#    AUTO_UPDATE=0             ปิดการอัปเดตอัตโนมัติ (ค่าเริ่มต้น: เปิด — ตรวจเวอร์ชันใหม่ทุกคืนตี 4 ไม่ตัดไลฟ์)
+#
+#  ไม่อยากพิมพ์คำสั่งเลย: ในแอป WebMix → ตั้งค่า → การสตรีม → “ตั้งเซิร์ฟเวอร์ของฉัน”
+#  ได้ข้อความไปวางในช่อง User data ตอนสร้างเซิร์ฟเวอร์ (DigitalOcean / Vultr / Linode / AWS Lightsail) — ติดตั้งเองตอนเปิดเครื่อง
+#
 #    WAIT_MINUTES=120          ตอนอัปเดต: รอให้ไลฟ์ที่ออกอากาศอยู่จบได้นานสุดกี่นาที (ระหว่างรอไม่รับไลฟ์ใหม่)
 #    FORCE=1                   อัปเดตทันทีโดยไม่รอ (ไลฟ์ที่ออกอากาศอยู่จะหลุดแล้วต่อใหม่เอง)
 #
@@ -38,6 +44,10 @@ REQ_WEBHOOK="${ALERT_WEBHOOK:-}"
 REQ_TG_TOKEN="${TELEGRAM_BOT_TOKEN:-}"
 REQ_TG_CHAT="${TELEGRAM_CHAT_ID:-}"
 REQ_UPLINK="${UPLINK_MBPS:-}"
+REQ_TOKEN="${STREAM_TOKEN:-}"
+REQ_AUTO="${AUTO_UPDATE:-}"
+# AUTO_RUN=1 = เรียกจากตัวอัปเดตอัตโนมัติ (systemd) — ไม่มีเวอร์ชันใหม่ก็จบเลย
+AUTO_RUN="${AUTO_RUN:-}"
 WAIT_MINUTES="${WAIT_MINUTES:-120}"
 FORCE="${FORCE:-}"
 
@@ -45,6 +55,9 @@ say()  { printf '\033[1;33m==>\033[0m %s\n' "$*"; }
 ok()   { printf '\033[1;32m ✓\033[0m %s\n' "$*"; }
 fail() { printf '\033[1;31m ✗ %s\033[0m\n' "$*" >&2; exit 1; }
 
+if [ -n "$REQ_TOKEN" ] && ! printf '%s' "$REQ_TOKEN" | grep -Eq '^[A-Za-z0-9_-]{24,128}$'; then
+  echo "STREAM_TOKEN ต้องเป็นตัวอักษรอังกฤษ ตัวเลข _ หรือ - ยาว 24–128 ตัว" >&2; exit 1
+fi
 [ "$(id -u)" -eq 0 ] || fail "กรุณารันด้วยสิทธิ์ root เช่น: curl -fsSL ... | sudo bash"
 command -v apt-get >/dev/null || fail "สคริปต์นี้รองรับ Ubuntu / Debian เท่านั้น"
 
@@ -69,6 +82,10 @@ ok "Docker $(docker --version | awk '{print $3}' | tr -d ,)"
 if [ -d "$INSTALL_DIR/.git" ]; then
   say "อัปเดตโค้ดใน $INSTALL_DIR"
   git -C "$INSTALL_DIR" fetch -q --depth 1 origin "${BRANCH:-HEAD}"
+  if [ -n "$AUTO_RUN" ] && [ "$(git -C "$INSTALL_DIR" rev-parse HEAD)" = "$(git -C "$INSTALL_DIR" rev-parse FETCH_HEAD)" ] \
+     && [ -n "$(cd "$INSTALL_DIR/server/deploy" && docker compose ps -q gateway 2>/dev/null)" ]; then
+    ok "ไม่มีเวอร์ชันใหม่ — ไม่ต้องอัปเดต"; exit 0
+  fi
   git -C "$INSTALL_DIR" reset -q --hard FETCH_HEAD
 else
   say "ดาวน์โหลดโค้ดไปที่ $INSTALL_DIR"
@@ -78,7 +95,7 @@ cd "$INSTALL_DIR/server/deploy"
 
 # ---------------------------------------------------------------- 3. Config
 DOMAIN="" STREAM_TOKEN="" MAX_DESTINATIONS="" VIDEO_ENCODER="" X264_PRESET="" SRT_PORTS="" TURN_SECRET="" PUBLIC_IP=""
-MAX_STREAMS="" ALERT_WEBHOOK="" TELEGRAM_BOT_TOKEN="" TELEGRAM_CHAT_ID="" UPLINK_MBPS=""
+MAX_STREAMS="" ALERT_WEBHOOK="" TELEGRAM_BOT_TOKEN="" TELEGRAM_CHAT_ID="" UPLINK_MBPS="" AUTO_UPDATE=""
 # shellcheck disable=SC1091
 [ -f .env ] && . ./.env
 DOMAIN="${REQ_DOMAIN:-$DOMAIN}"
@@ -92,6 +109,7 @@ ALERT_WEBHOOK="${REQ_WEBHOOK:-$ALERT_WEBHOOK}"
 TELEGRAM_BOT_TOKEN="${REQ_TG_TOKEN:-$TELEGRAM_BOT_TOKEN}"
 TELEGRAM_CHAT_ID="${REQ_TG_CHAT:-$TELEGRAM_CHAT_ID}"
 UPLINK_MBPS="${REQ_UPLINK:-$UPLINK_MBPS}"
+AUTO_UPDATE="${REQ_AUTO:-${AUTO_UPDATE:-1}}"
 case "$UPLINK_MBPS" in ""|*[!0-9]*) UPLINK_MBPS=0 ;; esac
 
 PUBLIC_IP="$(curl -fsS4 --max-time 10 https://api.ipify.org || curl -fsS4 --max-time 10 https://ifconfig.me || true)"
@@ -99,7 +117,7 @@ if [ -z "$DOMAIN" ]; then
   [ -n "$PUBLIC_IP" ] || fail "หา IP สาธารณะของเซิร์ฟเวอร์ไม่ได้ — ระบุโดเมนเองด้วย DOMAIN=โดเมน"
   DOMAIN="${PUBLIC_IP//./-}.sslip.io"
 fi
-STREAM_TOKEN="${STREAM_TOKEN:-$(openssl rand -hex 16)}"
+STREAM_TOKEN="${REQ_TOKEN:-${STREAM_TOKEN:-$(openssl rand -hex 16)}}"
 TURN_SECRET="${TURN_SECRET:-$(openssl rand -hex 24)}"
 
 # ไลฟ์ส่งข้อมูลต่อเนื่องเป็นชั่วโมง: BBR ส่ง RTMP ไป YouTube / Facebook ได้เต็มเส้นแม้มีแพ็กเก็ตหาย
@@ -141,6 +159,7 @@ TELEGRAM_BOT_TOKEN='$TELEGRAM_BOT_TOKEN'
 TELEGRAM_CHAT_ID='$TELEGRAM_CHAT_ID'
 TCP_CC=$TCP_CC
 UPLINK_MBPS=$UPLINK_MBPS
+AUTO_UPDATE=$AUTO_UPDATE
 EOF
 ok "โดเมน: $DOMAIN"
 
@@ -149,6 +168,41 @@ if command -v ufw >/dev/null && ufw status 2>/dev/null | grep -q "Status: active
   ufw allow 80/tcp >/dev/null && ufw allow 443/tcp >/dev/null && ufw allow "${SRT_PORTS/-/:}/udp" >/dev/null
   ufw allow 3478 >/dev/null && ufw allow 49160:49250/udp >/dev/null
   ok "เปิดพอร์ต 80, 443 (TCP), $SRT_PORTS (UDP รับ SRT), 3478 และ 49160–49250/UDP (TURN) ใน ufw แล้ว"
+fi
+
+# ------------------------------------------------------- 4b. Auto-update
+# ทุกคืนตี 4 (สุ่มเวลาภายใน 40 นาที): ดึงโค้ดล่าสุด ไม่มีอะไรใหม่ก็จบ · มีใหม่ = ขั้นตอนเดียวกับการรันเอง (รอไลฟ์จบก่อนสลับ)
+if [ "$AUTO_UPDATE" = 1 ] && command -v systemctl >/dev/null; then
+  cat > /etc/systemd/system/webmix-update.service <<UNIT
+[Unit]
+Description=WebMix Stream Gateway — อัปเดตอัตโนมัติ (ไม่ตัดไลฟ์)
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+Environment=AUTO_RUN=1 WAIT_MINUTES=360 INSTALL_DIR=$INSTALL_DIR REPO_URL=$REPO_URL${BRANCH:+ BRANCH=$BRANCH}
+ExecStart=/bin/bash $INSTALL_DIR/server/deploy/install.sh
+UNIT
+  cat > /etc/systemd/system/webmix-update.timer <<UNIT
+[Unit]
+Description=WebMix Stream Gateway — ตรวจเวอร์ชันใหม่ทุกคืน
+
+[Timer]
+OnCalendar=*-*-* 04:00
+RandomizedDelaySec=40min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+UNIT
+  systemctl daemon-reload && systemctl enable --now webmix-update.timer >/dev/null 2>&1 \
+    && ok "อัปเดตอัตโนมัติทุกคืน (ตี 4) — ปิดได้ด้วย AUTO_UPDATE=0" || true
+elif [ "$AUTO_UPDATE" != 1 ] && [ -f /etc/systemd/system/webmix-update.timer ]; then
+  systemctl disable --now webmix-update.timer >/dev/null 2>&1 || true
+  rm -f /etc/systemd/system/webmix-update.service /etc/systemd/system/webmix-update.timer
+  systemctl daemon-reload || true
+  ok "ปิดการอัปเดตอัตโนมัติแล้ว"
 fi
 
 # ---------------------------------------------------------------- 5. Start
@@ -207,8 +261,9 @@ echo "พอร์ตที่ต้องเปิดในไฟร์วอ�
 echo "รับสัญญาณ SRT:          srt://$DOMAIN:<พอร์ต $SRT_PORTS> (เปิด UDP $SRT_PORTS ในไฟร์วอลล์ของผู้ให้บริการด้วย)"
 echo "ตรวจสถานะในเบราว์เซอร์:  https://$DOMAIN/"
 echo "ดูค่านี้อีกครั้ง:         cat $INSTALL_DIR/server/deploy/gateway-url.txt"
-echo "หน้าผู้ดูแล:             https://$DOMAIN/admin  (เข้าด้วย STREAM_TOKEN ในไฟล์ $INSTALL_DIR/server/deploy/.env)"
+echo "หน้าผู้ดูแล:             https://$DOMAIN/admin#token=$STREAM_TOKEN"
+echo "                         (เปิดลิงก์นี้แล้วเข้าได้เลย · รหัสอยู่หลัง # จึงไม่ถูกส่งไปที่เซิร์ฟเวอร์ · ดูรหัสอีกครั้ง: grep STREAM_TOKEN $INSTALL_DIR/server/deploy/.env)"
 echo "                         ดูไลฟ์ทุกคน · เพิ่มคนพร้อมลิงก์เชิญ · แก้แพ็กเกจ · หยุดไลฟ์ · พักรับไลฟ์ใหม่"
 [ -n "$ALERT_WEBHOOK$TELEGRAM_BOT_TOKEN" ] && echo "แจ้งเตือน:                เปิดแล้ว" || echo "แจ้งเตือน:                ยังไม่ได้ตั้ง (รันซ้ำพร้อม ALERT_WEBHOOK=... หรือ TELEGRAM_BOT_TOKEN=... TELEGRAM_CHAT_ID=...)"
 echo "ดู log:                  cd $INSTALL_DIR/server/deploy && docker compose logs -f gateway"
-echo "อัปเดตเวอร์ชัน:           รันคำสั่งติดตั้งเดิมซ้ำ"
+[ "$AUTO_UPDATE" = 1 ] && echo "อัปเดตเวอร์ชัน:           อัตโนมัติทุกคืน (หรือรันคำสั่งติดตั้งเดิมซ้ำเพื่ออัปเดตทันที)" || echo "อัปเดตเวอร์ชัน:           รันคำสั่งติดตั้งเดิมซ้ำ"

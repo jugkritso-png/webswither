@@ -36,6 +36,7 @@ npm test -- switcher admin-ui   # เฉพาะบางชุด
 | `assets/js/captions.js` · `assets/js/comments.js` | คำบรรยายสด · คอมเมนต์ผู้ชม (เชื่อม Facebook, แหล่งภาพคอมเมนต์, แผงคอมเมนต์) |
 | `assets/js/vset.js` · `assets/js/macro.js` | ฉากเสมือน (Virtual Set) · Macro (กดปุ่มเดียวทำหลายขั้นตอน) |
 | `assets/js/remotectl.js` · `assets/js/netsrc.js` | รีโมตคอนโทรลจากแท็บเล็ต/มือถือ · แหล่งภาพ NDI / OMT ในวง LAN |
+| `assets/js/serversetup.js` | ตัวช่วยตั้งเซิร์ฟเวอร์: ข้อความ cloud-init สำหรับช่อง User data · รอจนเซิร์ฟเวอร์พร้อมแล้วตั้ง Gateway ให้ |
 | `assets/js/wcrec.js` | บันทึก/สตรีมด้วย WebCodecs + ตัวเขียน WebM (ใช้แทน MediaRecorder ที่เสียใน WebKitGTK/Linux) |
 | `assets/js/desktop.js` | เชื่อมกับแอปเดสก์ท็อป (Gateway ในแอป, บันทึกลงโฟลเดอร์, ทดสอบตัวเอง) — ในเบราว์เซอร์ไม่ทำอะไร |
 | `server/stream-gateway.js` | Stream Gateway: จุดเริ่ม — เส้นทาง HTTP (`/`, `/ice`, `/admin`, `/metrics`) และ WebSocket |

@@ -57,7 +57,7 @@ function namesFrom(file) {
   const missing = await p.evaluate(names => names.filter(n => window.WebMix[n] === undefined), [...wanted.keys()]);
   ok('every name a module takes from window.WebMix exists', missing.length === 0, missing.map(n => `${n} (${[...wanted.get(n)].join(', ')})`).join(' · '));
   // โมดูลที่แยกจาก app.js สร้างได้และคืนของที่ app.js ใช้
-  const made = await p.evaluate(() => ['createPlaylist', 'createHighlights', 'createWidgets', 'createAiBackground', 'createSchedule', 'createWireless', 'createCaptions', 'createComments', 'createVirtualSet', 'createMacros', 'createRemoteControl', 'createNetSources'].filter(f => typeof window.WebMix[f] !== 'function'));
+  const made = await p.evaluate(() => ['createPlaylist', 'createHighlights', 'createWidgets', 'createAiBackground', 'createSchedule', 'createWireless', 'createCaptions', 'createComments', 'createVirtualSet', 'createMacros', 'createRemoteControl', 'createNetSources', 'createServerSetup'].filter(f => typeof window.WebMix[f] !== 'function'));
   ok('feature modules split from app.js are loaded', made.length === 0, made.join(', '));
   ok('no page errors', errs.length === 0, JSON.stringify(errs.slice(0, 3)));
   await b.close();

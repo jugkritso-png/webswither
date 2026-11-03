@@ -47,6 +47,10 @@ const listen = (key, file) => spawn('ffmpeg', ['-loglevel', 'error', '-listen', 
   const a2 = await ctx.newPage(); await a2.goto(`http://127.0.0.1:${PORT}/admin?token=boss-token#/users`);
   ok('old ?token= link still works and is stripped', await until(() => a2.isVisible('#page-users')) && !/token=/.test(a2.url()), a2.url());
   await a2.close();
+  // ลิงก์จากตัวติดตั้ง: /admin#token=… (รหัสหลัง # ไม่ถูกส่งไปเซิร์ฟเวอร์) → เข้าได้เลย และรหัสหายจากแถบที่อยู่
+  const a3 = await ctx.newPage(); await a3.goto(`http://127.0.0.1:${PORT}/admin#token=boss-token`);
+  ok('installer link /admin#token= signs in and is stripped', await until(() => a3.isVisible('#page-home')) && !/token/.test(a3.url()), a3.url());
+  await a3.close();
 
   // --- เพิ่มคน
   await a.click('#nav a[data-page=users]');

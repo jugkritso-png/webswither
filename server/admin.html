@@ -226,6 +226,9 @@ try { token = sessionStorage.getItem(KEY) || ''; } catch (e) {}
 // ?token= ในลิงก์เดิมยังใช้ได้ — ย้ายไปเก็บในแท็บแล้วลบออกจากแถบที่อยู่ (ไม่ค้างในประวัติ/ภาพหน้าจอ)
 const q = new URLSearchParams(location.search);
 if (q.get('token')) { token = q.get('token'); try { sessionStorage.setItem(KEY, token); } catch (e) {} history.replaceState(null, '', location.pathname + location.hash); }
+// ลิงก์จากตัวติดตั้ง / ตัวช่วยตั้งเซิร์ฟเวอร์: /admin#token=… — อยู่หลัง # จึงไม่ถูกส่งไปที่เซิร์ฟเวอร์ (ไม่อยู่ใน log)
+const hm = /^#token=([A-Za-z0-9_-]{8,128})$/.exec(location.hash);
+if (hm) { token = hm[1]; try { sessionStorage.setItem(KEY, token); } catch (e) {} history.replaceState(null, '', location.pathname + '#/'); }
 
 let data = null, editing = null, timer = 0;
 
