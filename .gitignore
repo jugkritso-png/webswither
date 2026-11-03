@@ -7,3 +7,6 @@ desktop/src-tauri/omt/
 # Tooling
 .eslintcache
 .DS_Store
+desktop/src-tauri/ffmpeg/
+desktop/macos/ffmpeg-out/
+.ffmpeg-build-macos/

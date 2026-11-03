@@ -19,15 +19,16 @@ Windows (.msi / -setup.exe) · macOS (.dmg) · Linux (.deb / .rpm / .AppImage) �
 เช่น `git tag v1.0.1 && git push origin v1.0.1` — หรือกด **Actions → Desktop app → Run workflow** แล้วติ๊ก *release*
 workflow จะ build ทุกระบบ ทดสอบ แล้วสร้าง Release (และ tag) ให้อัตโนมัติ
 
-**ต้องติดตั้ง ffmpeg** (ตัวเข้ารหัสวิดีโอสำหรับการสตรีม — การบันทึกไม่ต้องใช้):
+ffmpeg (ตัวเข้ารหัสวิดีโอสำหรับการสตรีม — การบันทึกไม่ต้องใช้):
 
 | ระบบ | คำสั่ง |
 |---|---|
 | Windows | `winget install ffmpeg` |
-| macOS | `brew install ffmpeg` |
+| macOS | **มีในแอปแล้ว** — ไม่ต้องติดตั้ง Homebrew / ffmpeg (คอมไพล์จากซอร์สด้วย `desktop/macos/build-ffmpeg.sh` ใช้ได้ทั้งชิป Apple และ Intel · ใช้ตัวเข้ารหัสของเครื่อง VideoToolbox ได้) |
 | Ubuntu / Debian | ติดตั้งให้อัตโนมัติพร้อมไฟล์ .deb (`ffmpeg` และปลั๊กอิน GStreamer) |
 
-แอปหา ffmpeg จาก PATH และตำแหน่งที่ติดตั้งบ่อย (Homebrew, WinGet, `C:\ffmpeg\bin`) หรือกำหนดเองด้วยตัวแปร `WEBMIX_FFMPEG`
+แอปใช้ ffmpeg ในตัวก่อน (macOS) แล้วจึงหาจาก PATH และตำแหน่งที่ติดตั้งบ่อย (Homebrew, WinGet, `C:\ffmpeg\bin`) หรือกำหนดเองด้วยตัวแปร `WEBMIX_FFMPEG`
+ไลเซนส์ของ ffmpeg ในตัว (GPL) และที่มาของซอร์สอยู่ใน `WebMix Pro.app/Contents/Resources/ffmpeg/`
 ใช้การ์ดจอเข้ารหัสได้ด้วย `WEBMIX_VIDEO_ENCODER` (`h264_nvenc`, `h264_qsv`, `h264_videotoolbox`, `h264_amf`)
 
 ข้อจำกัดที่ควรรู้:

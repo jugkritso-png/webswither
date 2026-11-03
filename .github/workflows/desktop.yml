@@ -80,6 +80,8 @@ jobs:
             # ไฟล์เดียวใช้ได้ทั้ง Mac ชิป Apple และ Intel
             target: universal-apple-darwin
             exe: desktop/target/universal-apple-darwin/release/webmix-desktop
+            # macOS: ffmpeg ฝังในแอป — สตรีมจริงด้วย ffmpeg ตัวที่ฝัง (ตรวจว่าผู้ใช้ไม่ต้องติดตั้งเอง)
+            stream: rtmp://127.0.0.1:1935/live/selftest
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -119,6 +121,27 @@ jobs:
           else
             echo "::warning::ไม่พบ libomt/libvmx ใน release — แอปรอบนี้จะไม่มี OMT"; find "$D" -type f | head -40
           fi
+      # ffmpeg ในตัวแอป macOS (ผู้ใช้ไม่ต้องติดตั้ง Homebrew / ffmpeg) — คอมไพล์เองจากซอร์ส เก็บแคชตามสคริปต์
+      - name: Cache ffmpeg for macOS
+        if: runner.os == 'macOS'
+        uses: actions/cache@v4
+        with:
+          path: desktop/macos/ffmpeg-out
+          key: macos-ffmpeg-${{ hashFiles('desktop/macos/build-ffmpeg.sh') }}
+      - name: Build ffmpeg for macOS (bundled in the app)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          if [ ! -x desktop/macos/ffmpeg-out/ffmpeg ] || [ ! -x desktop/macos/ffmpeg-out/ffprobe ]; then
+            brew install nasm pkg-config >/dev/null
+            BUILD_FFPROBE=1 WORK="$RUNNER_TEMP/ffbuild" desktop/macos/build-ffmpeg.sh desktop/macos/ffmpeg-out
+          fi
+          mkdir -p desktop/src-tauri/ffmpeg
+          cp desktop/macos/ffmpeg-out/ffmpeg desktop/macos/ffmpeg-out/LICENSE-GPLv2.txt desktop/macos/ffmpeg-out/SOURCES.txt desktop/src-tauri/ffmpeg/
+          codesign --force -s - desktop/src-tauri/ffmpeg/ffmpeg
+          lipo -archs desktop/src-tauri/ffmpeg/ffmpeg
+          desktop/src-tauri/ffmpeg/ffmpeg -hide_banner -version | head -1
+          echo "FFMPEG_BUNDLED=1" >> "$GITHUB_ENV"
       - name: Build installers
         working-directory: desktop
         shell: bash
@@ -130,7 +153,11 @@ jobs:
           EXTRA=()
           if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then EXTRA=(--config '{"bundle":{"createUpdaterArtifacts":true}}'); else echo "::notice::ไม่มี TAURI_SIGNING_PRIVATE_KEY — ข้ามไฟล์อัปเดตอัตโนมัติ"; fi
           # ไลบรารี OMT ไปอยู่ในโฟลเดอร์ omt/ ข้างโปรแกรม (Windows) หรือใน Contents/Resources/omt (macOS)
-          if [ "$OMT_BUNDLED" = 1 ]; then EXTRA+=(--config '{"bundle":{"resources":{"omt/":"omt/"}}}'); fi
+          # ffmpeg ในตัว (macOS) ไปอยู่ใน Contents/Resources/ffmpeg — แอปหาที่นี่ก่อน (find_ffmpeg)
+          RES=()
+          [ "$OMT_BUNDLED" = 1 ] && RES+=('"omt/":"omt/"')
+          [ "$FFMPEG_BUNDLED" = 1 ] && RES+=('"ffmpeg/":"ffmpeg/"')
+          if [ ${#RES[@]} -gt 0 ]; then EXTRA+=(--config "{\"bundle\":{\"resources\":{$(IFS=,; echo "${RES[*]}")}}}"); fi
           npx --yes @tauri-apps/cli@2 build ${{ matrix.target && format('--target {0}', matrix.target) || '' }} "${EXTRA[@]}"
       - name: Self-test (open the real app)
         shell: bash
@@ -138,13 +165,22 @@ jobs:
           WEBMIX_SELFTEST: ${{ matrix.stream || '1' }}
           WEBMIX_SELFTEST_OUT: ${{ runner.temp }}/selftest.json
         run: |
+          # เครื่องรับ RTMP: macOS ใช้ ffmpeg ที่คอมไพล์ไว้ (เครื่อง CI ไม่มี ffmpeg) · ที่อื่นใช้ของระบบ
+          FF=ffmpeg FP=ffprobe
+          [ "$RUNNER_OS" = macOS ] && FF=desktop/macos/ffmpeg-out/ffmpeg FP=desktop/macos/ffmpeg-out/ffprobe
           if [ -n "${{ matrix.stream }}" ]; then
-            ffmpeg -hide_banner -loglevel error -listen 1 -i "${{ matrix.stream }}" -c copy -y "$RUNNER_TEMP/selftest.flv" &
+            "$FF" -hide_banner -loglevel error -listen 1 -i "${{ matrix.stream }}" -c copy -y "$RUNNER_TEMP/selftest.flv" &
             sleep 1
           fi
           EXE="${{ matrix.exe }}"
           # macOS: เปิดจากตัวแอป (.app) ที่แพ็กแล้ว — ไลบรารี OMT อยู่ใน Contents/Resources/omt
           if [ "$RUNNER_OS" = macOS ]; then EXE=$(find desktop/target/universal-apple-darwin/release/bundle/macos -path '*.app/Contents/MacOS/*' -type f | head -1); echo "app: $EXE"; fi
+          # ffmpeg ต้องอยู่ในตัวแอปจริง และรันได้
+          if [ "$FFMPEG_BUNDLED" = 1 ]; then
+            BF=$(dirname "$EXE")/../Resources/ffmpeg/ffmpeg
+            [ -x "$BF" ] || { echo "ไม่พบ ffmpeg ในตัวแอป: $BF"; ls -la "$(dirname "$EXE")/../Resources" || true; exit 1; }
+            "$BF" -hide_banner -version | head -1
+          fi
           if [ "$RUNNER_OS" = Linux ]; then xvfb-run -a "$EXE" & else "$EXE" & fi
           for i in $(seq 1 120); do [ -s "$WEBMIX_SELFTEST_OUT" ] && break; sleep 1; done
           sleep 2
@@ -157,15 +193,18 @@ jobs:
             // แนบ OMT มาแล้ว → แอปที่สร้างเสร็จต้องโหลดได้จริง
             const omt = (r.checks || []).find(c => c.name === "omt");
             if (process.env.OMT_BUNDLED === "1" && !(omt && omt.ok)) { console.log("OMT ที่แนบมากับแอปโหลดไม่ได้"); process.exit(1); }
+            // ffmpeg ในตัวแอป: แอปต้องใช้ตัวที่ฝังไว้ (คอมไพล์จาก n7.1.1) ไม่ใช่ของเครื่อง
+            const ff = (r.checks || []).find(c => c.name === "ffmpeg");
+            if (process.env.FFMPEG_BUNDLED === "1" && !(ff && ff.ok && /version n7\.1\.1/.test(ff.detail))) { console.log("แอปไม่ได้ใช้ ffmpeg ที่ฝังไว้"); process.exit(1); }
             process.exit(r.ok ? 0 : 1);
           ' "$WEBMIX_SELFTEST_OUT"
           if [ -n "${{ matrix.stream }}" ]; then
             sleep 3
-            PROBE=$(ffprobe -v error -show_entries stream=codec_name,width -of compact=p=0 "$RUNNER_TEMP/selftest.flv" || true)
+            PROBE=$("$FP" -v error -show_entries stream=codec_name,width -of compact=p=0 "$RUNNER_TEMP/selftest.flv" || true)
             echo "RTMP ที่ได้รับ: $PROBE"
             echo "$PROBE" | grep -q 'codec_name=h264|width=1280' && echo "$PROBE" | grep -q 'codec_name=aac' || { echo "ไม่ได้สตรีม H.264 + AAC"; exit 1; }
             # ส่วนท้ายไฟล์อาจขาดตอนเครื่องรับหยุด จึงนับเฟรมที่ถอดรหัสได้แทนการห้ามมี error
-            FRAMES=$(ffprobe -v error -count_frames -select_streams v -show_entries stream=nb_read_frames -of csv=p=0 "$RUNNER_TEMP/selftest.flv")
+            FRAMES=$("$FP" -v error -count_frames -select_streams v -show_entries stream=nb_read_frames -of csv=p=0 "$RUNNER_TEMP/selftest.flv")
             echo "ถอดรหัสได้ $FRAMES เฟรม"
             [ "${FRAMES:-0}" -ge 150 ] || { echo "สตรีมที่ได้สั้นหรือถอดรหัสไม่ได้"; exit 1; }
           fi
@@ -333,7 +372,7 @@ jobs:
           | Android 7+ (มือถือ/แท็บเล็ต ARM64) | `_android-arm64.apk` — มี Gateway และ ffmpeg ในตัว สตรีมได้โดยไม่ต้องมีเซิร์ฟเวอร์ |
           | Android x86_64 (Chromebook / emulator) | `_android-x86_64.apk` |
 
-          การสตรีมบนคอมพิวเตอร์ต้องมี ffmpeg — Windows: `winget install ffmpeg` · macOS: `brew install ffmpeg` (การบันทึกไม่ต้องใช้) · Android มี ffmpeg ในแอปแล้ว
+          macOS และ Android มี ffmpeg ในแอปแล้ว สตรีมได้ทันทีไม่ต้องติดตั้งอะไรเพิ่ม · Windows ต้องติดตั้ง ffmpeg เพื่อสตรีม: `winget install ffmpeg` (การบันทึกไม่ต้องใช้)
           Linux: กล้องมือถือและแขกรับเชิญใช้ไม่ได้ (WebKitGTK ไม่มี WebRTC) — ใช้หน้าเว็บใน Chrome ถ้าต้องการ
           ติดตั้งแล้วครั้งต่อไปไม่ต้องดาวน์โหลดเอง: แอปบน Windows / macOS / Linux (AppImage) แจ้งและอัปเดตตัวเองได้ · Android แจ้งเมื่อมีเวอร์ชันใหม่
           รายละเอียดและข้อจำกัด: ดู docs/apps.md
