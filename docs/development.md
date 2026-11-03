@@ -30,7 +30,9 @@ npm test -- switcher admin-ui   # เฉพาะบางชุด
 | `assets/js/i18n.js` · `assets/js/i18n-en.js` | สลับภาษาไทย / English · พจนานุกรมภาษาอังกฤษ |
 | `assets/webm-seek.js` | ทำให้ไฟล์ WebM ที่บันทึกมีความยาวและเลื่อนหาตำแหน่งได้ |
 | `assets/app.js` | สตูดิโอ: Input, การสลับภาพ, Overlay, เสียง, บันทึก, สตรีม, โชว์ |
-| `assets/js/playlist.js` · `assets/js/highlight.js` | Playlist (เล่นวิดีโอ/รูปต่อกัน) · คลิปไฮไลต์ 9:16 — รับสิ่งที่ต้องใช้จาก app.js ผ่าน `ctx` (แบบเดียวกันกับโมดูลที่จะแยกต่อไป) |
+| `assets/js/playlist.js` · `assets/js/highlight.js` | Playlist (เล่นวิดีโอ/รูปต่อกัน) · คลิปไฮไลต์ 9:16 |
+| `assets/js/widgets.js` · `assets/js/aibg.js` | วิดเจ็ตข้อมูลสด (อากาศ / คริปโต / อัตราแลกเปลี่ยน / JSON) · ลบพื้นหลังด้วย AI |
+| `assets/js/schedule.js` · `assets/js/wireless.js` | สร้างไลฟ์ล่วงหน้าบน YouTube / Facebook · กล้องมือถือไร้สาย (QR) |
 | `assets/js/wcrec.js` | บันทึก/สตรีมด้วย WebCodecs + ตัวเขียน WebM (ใช้แทน MediaRecorder ที่เสียใน WebKitGTK/Linux) |
 | `assets/js/desktop.js` | เชื่อมกับแอปเดสก์ท็อป (Gateway ในแอป, บันทึกลงโฟลเดอร์, ทดสอบตัวเอง) — ในเบราว์เซอร์ไม่ทำอะไร |
 | `server/stream-gateway.js` | Stream Gateway: จุดเริ่ม — เส้นทาง HTTP (`/`, `/ice`, `/admin`, `/metrics`) และ WebSocket |
@@ -52,3 +54,18 @@ cd server && npm ci && cd ../tests && npm ci && npx playwright install chromium
 npm test                     # ทุกชุด
 npm test -- switcher srt-input   # เฉพาะบางชุด
 ```
+
+## แยกส่วนออกจาก app.js
+
+โมดูลที่แยกออกมาเป็นแบบ factory: `WebMix.createX(ctx)` — `ctx` คือสิ่งที่โมดูลใช้จาก `app.js`
+(ฟังก์ชันส่งตรง · ค่าอื่นส่งเป็น getter แล้วโมดูลอ่านผ่าน `ctx.ชื่อ` จึงได้ค่าล่าสุดเสมอ) และคืนค่าที่ส่วนอื่นของ `app.js` ใช้
+
+ใช้เครื่องมือแยกให้อัตโนมัติ — คำนวณ `ctx` และค่าที่คืนจากโค้ดจริง และหยุดเองถ้าแยกแล้วการทำงานจะเปลี่ยน:
+
+```bash
+node tests/tools/extract-section.js <บรรทัดหัวข้อของส่วน> <ชื่อไฟล์> <ชื่อ factory>           # ดูผลก่อน
+node tests/tools/extract-section.js <บรรทัดหัวข้อของส่วน> <ชื่อไฟล์> <ชื่อ factory> --write   # แยกจริง
+```
+
+จากนั้นเพิ่ม `<script src="assets/js/<ชื่อไฟล์>.js" defer>` ใน `index.html` ก่อน `assets/app.js` แล้วรัน `npm run lint` และชุดทดสอบของฟีเจอร์นั้น
+
