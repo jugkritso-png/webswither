@@ -33,6 +33,9 @@ npm test -- switcher admin-ui   # เฉพาะบางชุด
 | `assets/js/playlist.js` · `assets/js/highlight.js` | Playlist (เล่นวิดีโอ/รูปต่อกัน) · คลิปไฮไลต์ 9:16 |
 | `assets/js/widgets.js` · `assets/js/aibg.js` | วิดเจ็ตข้อมูลสด (อากาศ / คริปโต / อัตราแลกเปลี่ยน / JSON) · ลบพื้นหลังด้วย AI |
 | `assets/js/schedule.js` · `assets/js/wireless.js` | สร้างไลฟ์ล่วงหน้าบน YouTube / Facebook · กล้องมือถือไร้สาย (QR) |
+| `assets/js/captions.js` · `assets/js/comments.js` | คำบรรยายสด · คอมเมนต์ผู้ชม (เชื่อม Facebook, แหล่งภาพคอมเมนต์, แผงคอมเมนต์) |
+| `assets/js/vset.js` · `assets/js/macro.js` | ฉากเสมือน (Virtual Set) · Macro (กดปุ่มเดียวทำหลายขั้นตอน) |
+| `assets/js/remotectl.js` · `assets/js/netsrc.js` | รีโมตคอนโทรลจากแท็บเล็ต/มือถือ · แหล่งภาพ NDI / OMT ในวง LAN |
 | `assets/js/wcrec.js` | บันทึก/สตรีมด้วย WebCodecs + ตัวเขียน WebM (ใช้แทน MediaRecorder ที่เสียใน WebKitGTK/Linux) |
 | `assets/js/desktop.js` | เชื่อมกับแอปเดสก์ท็อป (Gateway ในแอป, บันทึกลงโฟลเดอร์, ทดสอบตัวเอง) — ในเบราว์เซอร์ไม่ทำอะไร |
 | `server/stream-gateway.js` | Stream Gateway: จุดเริ่ม — เส้นทาง HTTP (`/`, `/ice`, `/admin`, `/metrics`) และ WebSocket |
