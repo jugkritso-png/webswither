@@ -23,12 +23,12 @@ ffmpeg (ตัวเข้ารหัสวิดีโอสำหรับก
 
 | ระบบ | คำสั่ง |
 |---|---|
-| Windows | `winget install ffmpeg` |
+| Windows | **มีในแอปแล้ว** — ไม่ต้องติดตั้ง ffmpeg (คอมไพล์จากซอร์สด้วย `desktop/windows/build-ffmpeg.sh` · ใช้การ์ดจอ NVIDIA (NVENC) / AMD (AMF) เข้ารหัสได้) |
 | macOS | **มีในแอปแล้ว** — ไม่ต้องติดตั้ง Homebrew / ffmpeg (คอมไพล์จากซอร์สด้วย `desktop/macos/build-ffmpeg.sh` ใช้ได้ทั้งชิป Apple และ Intel · ใช้ตัวเข้ารหัสของเครื่อง VideoToolbox ได้) |
 | Ubuntu / Debian | ติดตั้งให้อัตโนมัติพร้อมไฟล์ .deb (`ffmpeg` และปลั๊กอิน GStreamer) |
 
-แอปใช้ ffmpeg ในตัวก่อน (macOS) แล้วจึงหาจาก PATH และตำแหน่งที่ติดตั้งบ่อย (Homebrew, WinGet, `C:\ffmpeg\bin`) หรือกำหนดเองด้วยตัวแปร `WEBMIX_FFMPEG`
-ไลเซนส์ของ ffmpeg ในตัว (GPL) และที่มาของซอร์สอยู่ใน `WebMix Pro.app/Contents/Resources/ffmpeg/`
+แอปใช้ ffmpeg ในตัวก่อน (Windows / macOS) แล้วจึงหาจาก PATH และตำแหน่งที่ติดตั้งบ่อย (Homebrew, WinGet, `C:\ffmpeg\bin`) หรือกำหนดเองด้วยตัวแปร `WEBMIX_FFMPEG`
+ไลเซนส์ของ ffmpeg ในตัว (GPL) และที่มาของซอร์สอยู่ในโฟลเดอร์ `ffmpeg/` ข้างโปรแกรม (Windows) หรือ `WebMix Pro.app/Contents/Resources/ffmpeg/` (macOS)
 ใช้การ์ดจอเข้ารหัสได้ด้วย `WEBMIX_VIDEO_ENCODER` (`h264_nvenc`, `h264_qsv`, `h264_videotoolbox`, `h264_amf`)
 
 ข้อจำกัดที่ควรรู้:

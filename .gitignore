@@ -10,3 +10,5 @@ desktop/src-tauri/omt/
 desktop/src-tauri/ffmpeg/
 desktop/macos/ffmpeg-out/
 .ffmpeg-build-macos/
+desktop/windows/ffmpeg-out/
+.ffmpeg-build-windows/

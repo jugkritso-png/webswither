@@ -59,8 +59,34 @@ jobs:
         run: |
           for p in ndi omt; do WEBMIX_NDI_LIB=$PWD/.work/libnetvideo-mock.so WEBMIX_OMT_LIB=$PWD/.work/libnetvideo-mock.so ../desktop/target/release/webmix-gateway --netvideo-selftest $p; done
 
+  # ffmpeg.exe ในตัวแอป Windows (ผู้ใช้ไม่ต้อง winget install ffmpeg) — คอมไพล์ข้ามแพลตฟอร์มบน Linux ด้วย mingw-w64
+  ffmpeg-windows:
+    name: ffmpeg for Windows (bundled in the app)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - name: Cache ffmpeg for Windows
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: desktop/windows/ffmpeg-out
+          key: windows-ffmpeg-${{ hashFiles('desktop/windows/build-ffmpeg.sh') }}
+      - name: Build ffmpeg.exe (x264 + OpenSSL + SRT + NVENC/AMF)
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq mingw-w64 nasm cmake pkg-config >/dev/null
+          BUILD_FFPROBE=1 WORK="$RUNNER_TEMP/ffbuild" desktop/windows/build-ffmpeg.sh desktop/windows/ffmpeg-out
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ffmpeg-windows
+          path: desktop/windows/ffmpeg-out
+          retention-days: 7
+
   app:
     name: App · ${{ matrix.name }}
+    needs: ffmpeg-windows
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     strategy:
@@ -75,6 +101,8 @@ jobs:
           - name: Windows
             os: windows-latest
             exe: desktop/target/release/webmix-desktop.exe
+            # Windows: ffmpeg.exe ฝังในแอป — สตรีมจริงด้วยตัวที่ฝัง
+            stream: rtmp://127.0.0.1:1935/live/selftest
           - name: macOS
             os: macos-latest
             # ไฟล์เดียวใช้ได้ทั้ง Mac ชิป Apple และ Intel
@@ -142,6 +170,21 @@ jobs:
           lipo -archs desktop/src-tauri/ffmpeg/ffmpeg
           desktop/src-tauri/ffmpeg/ffmpeg -hide_banner -version | head -1
           echo "FFMPEG_BUNDLED=1" >> "$GITHUB_ENV"
+      - name: Get ffmpeg for Windows
+        if: runner.os == 'Windows'
+        uses: actions/download-artifact@v7
+        with:
+          name: ffmpeg-windows
+          path: desktop/windows/ffmpeg-out
+      - name: Bundle ffmpeg for Windows
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          mkdir -p desktop/src-tauri/ffmpeg
+          cp desktop/windows/ffmpeg-out/ffmpeg.exe desktop/windows/ffmpeg-out/LICENSE-GPLv2.txt desktop/windows/ffmpeg-out/SOURCES.txt desktop/src-tauri/ffmpeg/
+          desktop/src-tauri/ffmpeg/ffmpeg.exe -hide_banner -version | head -1
+          desktop/src-tauri/ffmpeg/ffmpeg.exe -hide_banner -encoders 2>/dev/null | grep -E 'libx264|nvenc|amf' || true
+          echo "FFMPEG_BUNDLED=1" >> "$GITHUB_ENV"
       - name: Build installers
         working-directory: desktop
         shell: bash
@@ -168,6 +211,7 @@ jobs:
           # เครื่องรับ RTMP: macOS ใช้ ffmpeg ที่คอมไพล์ไว้ (เครื่อง CI ไม่มี ffmpeg) · ที่อื่นใช้ของระบบ
           FF=ffmpeg FP=ffprobe
           [ "$RUNNER_OS" = macOS ] && FF=desktop/macos/ffmpeg-out/ffmpeg FP=desktop/macos/ffmpeg-out/ffprobe
+          [ "$RUNNER_OS" = Windows ] && FF=desktop/windows/ffmpeg-out/ffmpeg.exe FP=desktop/windows/ffmpeg-out/ffprobe.exe
           if [ -n "${{ matrix.stream }}" ]; then
             "$FF" -hide_banner -loglevel error -listen 1 -i "${{ matrix.stream }}" -c copy -y "$RUNNER_TEMP/selftest.flv" &
             sleep 1
@@ -178,6 +222,7 @@ jobs:
           # ffmpeg ต้องอยู่ในตัวแอปจริง และรันได้
           if [ "$FFMPEG_BUNDLED" = 1 ]; then
             BF=$(dirname "$EXE")/../Resources/ffmpeg/ffmpeg
+            [ "$RUNNER_OS" = Windows ] && BF=$(dirname "$EXE")/ffmpeg/ffmpeg.exe
             [ -x "$BF" ] || { echo "ไม่พบ ffmpeg ในตัวแอป: $BF"; ls -la "$(dirname "$EXE")/../Resources" || true; exit 1; }
             "$BF" -hide_banner -version | head -1
           fi
@@ -372,7 +417,7 @@ jobs:
           | Android 7+ (มือถือ/แท็บเล็ต ARM64) | `_android-arm64.apk` — มี Gateway และ ffmpeg ในตัว สตรีมได้โดยไม่ต้องมีเซิร์ฟเวอร์ |
           | Android x86_64 (Chromebook / emulator) | `_android-x86_64.apk` |
 
-          macOS และ Android มี ffmpeg ในแอปแล้ว สตรีมได้ทันทีไม่ต้องติดตั้งอะไรเพิ่ม · Windows ต้องติดตั้ง ffmpeg เพื่อสตรีม: `winget install ffmpeg` (การบันทึกไม่ต้องใช้)
+          Windows, macOS และ Android มี ffmpeg ในแอปแล้ว สตรีมได้ทันทีไม่ต้องติดตั้งอะไรเพิ่ม · Linux ติดตั้ง ffmpeg ให้พร้อมไฟล์ .deb / .rpm
           Linux: กล้องมือถือและแขกรับเชิญใช้ไม่ได้ (WebKitGTK ไม่มี WebRTC) — ใช้หน้าเว็บใน Chrome ถ้าต้องการ
           ติดตั้งแล้วครั้งต่อไปไม่ต้องดาวน์โหลดเอง: แอปบน Windows / macOS / Linux (AppImage) แจ้งและอัปเดตตัวเองได้ · Android แจ้งเมื่อมีเวอร์ชันใหม่
           รายละเอียดและข้อจำกัด: ดู docs/apps.md
