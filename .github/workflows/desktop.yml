@@ -77,7 +77,7 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq mingw-w64 nasm cmake pkg-config >/dev/null
-          BUILD_FFPROBE=1 WORK="$RUNNER_TEMP/ffbuild" desktop/windows/build-ffmpeg.sh desktop/windows/ffmpeg-out
+          BUILD_FFPROBE=1 WORK="$RUNNER_TEMP/ffbuild" bash desktop/windows/build-ffmpeg.sh desktop/windows/ffmpeg-out
       - uses: actions/upload-artifact@v7
         with:
           name: ffmpeg-windows
