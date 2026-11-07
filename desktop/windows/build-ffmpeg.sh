@@ -114,7 +114,8 @@ PROGS=(--disable-ffprobe); [ "${BUILD_FFPROBE:-}" = 1 ] && PROGS=(--enable-ffpro
   --enable-filter=color,testsrc,scale,format,aformat,aresample,fps,null,anull,setpts,asetpts,anullsrc,trim,atrim,split,crop,boxblur,overlay,setsar,pad \
   >"$BUILD/ffmpeg-configure.log" 2>&1) || { tail -40 "$BUILD/ffmpeg-configure.log"; tail -60 "$BUILD/ffmpeg/ffbuild/config.log" 2>/dev/null; exit 1; }
 TARGETS=(ffmpeg); [ "${BUILD_FFPROBE:-}" = 1 ] && TARGETS+=(ffprobe)
-make -C "$BUILD/ffmpeg" -j "$JOBS" "${TARGETS[@]}" >"$BUILD/ffmpeg-make.log" 2>&1 || { tail -40 "$BUILD/ffmpeg-make.log"; exit 1; }
+# เป้าหมายของ make บน Windows มี .exe ต่อท้าย
+make -C "$BUILD/ffmpeg" -j "$JOBS" "${TARGETS[@]/%/.exe}" >"$BUILD/ffmpeg-make.log" 2>&1 || { tail -40 "$BUILD/ffmpeg-make.log"; exit 1; }
 
 # ต้องพึ่งเฉพาะ DLL ที่มากับ Windows — ไม่อย่างนั้นเครื่องผู้ใช้เปิดไม่ได้ (เช่น libwinpthread-1.dll, libstdc++-6.dll)
 SYSTEM_DLLS='^(kernel32|msvcrt|ws2_32|advapi32|user32|bcrypt|crypt32|ole32|oleaut32|shell32|shlwapi|gdi32|secur32|iphlpapi|userenv|ntdll|psapi|dbghelp|mfplat|mfuuid|strmiids|api-ms-win-.*)\.dll$'
