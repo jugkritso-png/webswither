@@ -84,6 +84,10 @@ cmake --build "$BUILD/srt" -j "$JOBS" >"$BUILD/srt.log" 2>&1 || { tail -30 "$BUI
 cmake --install "$BUILD/srt" >/dev/null
 # srt.pc ของ static build ต้องลิงก์ mbedtls และไลบรารีเครือข่ายของ Windows ด้วย
 sed -i "s#^Libs.private:.*#& -L$PREFIX/lib -lmbedtls -lmbedx509 -lmbedcrypto -lws2_32 -lbcrypt#" "$PREFIX/lib/pkgconfig/srt.pc"
+# srt.pc ใส่ไลบรารีของคอมไพเลอร์ C++ มาด้วย รวม -lgcc_s (ตัว DLL: libgcc_s_seh-1.dll ซึ่งไม่มีใน Windows)
+# ตัดออก — ffmpeg ลิงก์ด้วย -static-libgcc / -static-libstdc++ อยู่แล้ว (ใช้ libgcc / libgcc_eh แบบ static แทน)
+sed -i -E 's/ -lgcc_s\b//g' "$PREFIX/lib/pkgconfig/srt.pc"
+grep '^Libs' "$PREFIX/lib/pkgconfig/srt.pc"
 
 echo "== x264"
 rm -rf "$BUILD/x264" && cp -r "$SRC/x264" "$BUILD/x264"
