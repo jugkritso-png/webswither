@@ -33,7 +33,12 @@ ffmpeg (ตัวเข้ารหัสวิดีโอสำหรับก
 
 ข้อจำกัดที่ควรรู้:
 
-- **macOS:** ตัวติดตั้งยังไม่ได้ลงนาม (unsigned) — ครั้งแรกให้คลิกขวาที่แอป → Open แล้วกด Open อีกครั้ง
+- **macOS:** แอปยังไม่ได้รับรองจาก Apple (notarize) — ครั้งแรกจะขึ้น “Apple could not verify… Not Opened”
+  1. กด **Done** (ไม่ใช่ Move to Trash)
+  2. ตั้งค่าระบบ (System Settings) → ความเป็นส่วนตัวและความปลอดภัย (Privacy & Security) → เลื่อนลงที่หัวข้อความปลอดภัย → **Open Anyway** → ใส่รหัสผ่านเครื่อง → **Open Anyway**
+  3. หรือรันใน Terminal ครั้งเดียว: `xattr -cr "/Applications/WebMix Pro.app"`
+
+  (macOS 15 Sequoia ขึ้นไป คลิกขวา → Open ใช้ไม่ได้แล้ว) · ถ้ามีบัญชี Apple Developer ตั้งค่าให้ CI ลงนาม + notarize ได้ — แอปจะเปิดได้ทันทีไม่มีข้อความนี้
 - **Linux:** MediaRecorder ของ WebKitGTK สร้างไฟล์ MP4 ที่เสีย แอปจึงเข้ารหัสด้วย WebCodecs และเขียนไฟล์ WebM เอง
   (`assets/js/wcrec.js` — ต้องมี WebKitGTK 2.44 ขึ้นไป) บันทึกและสตรีมได้ตามปกติ · WebKitGTK ไม่มี WebRTC
   จึง**ใช้กล้องมือถือไร้สายและแขกรับเชิญไม่ได้** — ถ้าต้องใช้ ให้เปิดหน้าเว็บใน Chrome แทน

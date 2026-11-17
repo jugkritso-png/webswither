@@ -410,7 +410,7 @@ jobs:
           | ระบบ | ไฟล์ |
           |---|---|
           | Windows 10/11 | `.msi` หรือ `-setup.exe` |
-          | macOS 11+ (ชิป Apple และ Intel) | `.dmg` — ลากแอปไป Applications แล้วครั้งแรกให้คลิกขวาที่แอป → Open · ถ้าขึ้นว่า "เสียหาย" รันใน Terminal: `xattr -cr "/Applications/WebMix Pro.app"` (แอปยังไม่ได้รับรองจาก Apple) |
+          | macOS 11+ (ชิป Apple และ Intel) | `.dmg` — ลากแอปไป Applications · ครั้งแรกถ้าขึ้น "Not Opened" ให้กด Done → ตั้งค่าระบบ → ความเป็นส่วนตัวและความปลอดภัย → เลื่อนลงกด **เปิดต่อไป (Open Anyway)** หรือรันใน Terminal: `xattr -cr "/Applications/WebMix Pro.app"` (แอปยังไม่ได้รับรองจาก Apple) |
           | Ubuntu / Debian | `.deb` (ติดตั้ง ffmpeg และ GStreamer ให้อัตโนมัติ) |
           | Fedora / openSUSE | `.rpm` |
           | Linux อื่น ๆ | `.AppImage` |
