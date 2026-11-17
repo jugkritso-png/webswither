@@ -962,8 +962,18 @@
         const v = inp.el;
         if (!(inp.status === 'live' && v && v.readyState >= 2 && v.videoWidth)) return noSignal();
         const e = gpu.entry('v:' + inp.id), bg = bgFrame(inp);
-        if (bg) { if (e.stamp !== inp.bgState.version) { gpu.upload(e, bg, bg.width, bg.height); e.stamp = inp.bgState.version; e.frame = -1; } return { e }; }
-        if (e.frame !== frameNo) { if (!gpu.upload(e, v, v.videoWidth, v.videoHeight)) return noSignal(); e.frame = frameNo; e.stamp = null; }
+        if (bg) { if (e.stamp !== inp.bgState.version) { gpu.upload(e, bg, bg.width, bg.height); e.stamp = inp.bgState.version; e.frame = -1; e.vf = undefined; } return { e }; }
+        if (e.frame !== frameNo) {
+          e.frame = frameNo;
+          // ส่งขึ้น GPU เฉพาะเมื่อวิดีโอมีเฟรมใหม่ — หยุดอยู่ / เฟรมเรตต่ำกว่าเอาต์พุต ไม่ต้องส่งภาพเดิมซ้ำ (4K ครั้งละ ~33 MB)
+          const vf = videoFrameId(v);
+          if (vf !== e.vf || e.stamp !== null) {
+            const t = performance.now();
+            if (!gpu.upload(e, v, v.videoWidth, v.videoHeight)) { e.frame = -1; return noSignal(); }
+            noteCost(inp, performance.now() - t);
+            e.vf = vf; e.stamp = null;
+          }
+        }
         return { e };
       }
     }
@@ -1088,10 +1098,26 @@
     }
   }
 
+  // รหัสของเฟรมที่วิดีโอแสดงอยู่: เปลี่ยน = มีภาพใหม่ · NaN = ไม่รู้ (ส่งทุกครั้ง)
+  // ใช้ requestVideoFrameCallback ถ้ามีและยังทำงาน (บางเบราว์เซอร์ไม่เรียกให้วิดีโอที่ไม่ได้อยู่บนจอ) ไม่อย่างนั้นใช้เวลาเล่น
+  function videoFrameId(v) {
+    if (v.requestVideoFrameCallback && !v._wmVfc) {
+      v._wmVfc = true; v._wmFrames = 0; v._wmVfcAt = 0;
+      const tick = (t, m) => { v._wmFrames = m && m.presentedFrames ? m.presentedFrames : v._wmFrames + 1; v._wmVfcAt = performance.now(); v.requestVideoFrameCallback(tick); };
+      try { v.requestVideoFrameCallback(tick); } catch (e) { v._wmVfc = 'off'; }
+    }
+    if (v.paused || v.ended || v.seeking) return `t${v.currentTime}`;
+    if (v._wmVfc === true && performance.now() - v._wmVfcAt < 500) return `f${v._wmFrames}`;
+    return NaN;
+  }
+  // เวลาที่แต่ละแหล่งใช้ (ส่งภาพขึ้น GPU) — ใช้บอกว่าแหล่งไหนทำให้เครื่องหนัก
+  function noteCost(inp, ms) { inp._costMs = (inp._costMs || ms) * 0.85 + ms * 0.15; inp._costAt = performance.now(); }
+
   function gpuFrame() {
     gpu.ensureSize(W, H);
     // Preview ก่อน (พื้นที่เล็ก) แล้วคัดลอกออก จากนั้นวาด Program เต็มขนาด
-    if (previewNeeded(performance.now())) {
+    // เครื่องทำงานไม่ทัน: วาด Preview ห่างขึ้น (ผู้ชมไม่เห็น Preview) ให้ Program ได้เฟรมเรตเต็ม
+    if (previewNeeded(performance.now()) && previewTurn()) {
       gpu.begin(PW, PH);
       const pfull = { x: 0, y: 0, w: PW, h: PH };
       glDrawInput(byId(state.previewId), pfull, pfull);
@@ -1169,7 +1195,7 @@
       if (ftb.level > 0) { pgmCtx.fillStyle = `rgba(0,0,0,${ftb.level})`; pgmCtx.fillRect(0, 0, W, H); }
       feedReplay();
 
-      if (previewNeeded(now)) {
+      if (previewNeeded(now) && previewTurn()) {
         drawSource(pvwCtx, byId(state.previewId), PW, PH);
         drawOverlayChannels(pvwCtx, PW, PH, true);
         drawOverlays(pvwCtx, PW, PH);
@@ -1177,7 +1203,7 @@
     }
 
     enforceMarks();
-    if (now - lastThumbs > 100) {
+    if (now - lastThumbs > THUMB_MS[load.level]) {
       lastThumbs = now;
       transport.update();
       lufs.render();
@@ -1191,9 +1217,66 @@
     }
     audio.tick(now);
 
+    if (load.extraMs) { const until = performance.now() + load.extraMs; while (performance.now() < until) { /* ชุดทดสอบ: จำลองเครื่องช้า */ } }
     renderMs = renderMs * 0.9 + (performance.now() - t0) * 0.1;
     frameCount++;
     if (now - fpsSince >= 1000) { fps = frameCount * 1000 / (now - fpsSince); frameCount = 0; fpsSince = now; }
+    updateLoad(now);
+  }
+
+  /* ---- ปรับงานตามกำลังเครื่อง: วาดไม่ทันเฟรมเรตเอาต์พุต → ลดงานที่ผู้ชมไม่เห็นก่อน (จอ Preview, ภาพย่อบนการ์ด)
+     ระดับ 0 ปกติ · 1 Preview ทุก 2 เฟรม, ภาพย่อ 4 ครั้ง/วินาที · 2 Preview ทุก 3 เฟรม, ภาพย่อ 2 ครั้ง/วินาที
+     ยังไม่ทันอีก → แจ้งว่าแหล่งไหนหนักที่สุด (เช่นวิดีโอ 4K) พร้อมวิธีแก้ · เบาลงแล้วกลับเป็นปกติเอง */
+  const THUMB_MS = [100, 250, 500];
+  const load = { level: 0, hiSince: 0, loSince: 0, slowSince: 0, toldAt: -Infinity, extraMs: 0 };
+  const previewTurn = () => load.level === 0 || frameNo % (load.level + 1) === 0;
+  function updateLoad(now) {
+    const budget = 1000 / Math.min(60, settings.fps), r = renderMs / budget;
+    if (r > 0.85) {
+      load.loSince = 0;
+      if (!load.hiSince) load.hiSince = now;
+      if (load.level < 2 && now - load.hiSince > 1500) { load.level++; load.hiSince = now; updateStatus(); }
+    } else if (r < 0.5) {
+      load.hiSince = 0;
+      if (!load.loSince) load.loSince = now;
+      if (load.level > 0 && now - load.loSince > 5000) { load.level--; load.loSince = now; updateStatus(); }
+    } else { load.hiSince = 0; load.loSince = 0; }
+    // ลดงานจนสุดแล้วยังวาดไม่ทัน (ต่ำกว่า 80% ของเฟรมเรตเอาต์พุต) นาน 5 วินาที → บอกผู้ใช้ (ไม่เกิน 5 นาทีครั้ง)
+    const slow = load.level === 2 && fps && fps < settings.fps * 0.8;
+    if (!slow) { load.slowSince = 0; return; }
+    if (!load.slowSince) load.slowSince = now;
+    if (now - load.slowSince < 5000 || now - load.toldAt < 300000) return;
+    load.toldAt = now;
+    toast(loadAdvice(), 'warn', 15000, { label: 'ดูวิธีแก้', run: openLoadHelp });
+  }
+  // แหล่งที่ใช้เวลามากที่สุดตอนนี้ + ความละเอียดของวิดีโอ (ใหญ่กว่าเอาต์พุต = ควรแปลงไฟล์)
+  function heaviestSource() {
+    const now = performance.now();
+    return inputs.filter(i => i._costMs && now - (i._costAt || 0) < 3000).sort((a, b) => b._costMs - a._costMs)[0] || null;
+  }
+  function loadAdvice() {
+    const h = heaviestSource(), v = h && h.el && h.el.videoWidth ? h.el : null;
+    const big = v && Math.min(v.videoWidth, v.videoHeight) > Math.min(W, H);
+    const who = h ? ` — หนักที่สุด: “${h.name}”${v ? ` (${v.videoWidth}×${v.videoHeight})` : ''}` : '';
+    return `เครื่องวาดภาพได้ ${fps.toFixed(0)} จาก ${settings.fps} เฟรม/วินาที ภาพไลฟ์อาจกระตุก${who}` +
+      (big ? ' · วิดีโอใหญ่กว่าเอาต์พุต: แปลงไฟล์เป็น 1080p จะเบาลงมาก' : ' · ลดคุณภาพเอาต์พุตเป็น 720p หรือปิดแหล่งภาพที่ไม่ได้ใช้');
+  }
+  function openLoadHelp() {
+    const h = heaviestSource(), v = h && h.el && h.el.videoWidth ? h.el : null;
+    const rows = inputs.filter(i => i._costMs && performance.now() - (i._costAt || 0) < 3000).sort((a, b) => b._costMs - a._costMs).slice(0, 5)
+      .map(i => `<li><b>${esc(i.name)}</b> · ${i.el && i.el.videoWidth ? `${i.el.videoWidth}×${i.el.videoHeight} · ` : ''}${i._costMs.toFixed(1)} ms/เฟรม</li>`).join('');
+    dialog({
+      title: 'เครื่องทำงานไม่ทัน',
+      body: `<p class="modal-text">วาดภาพได้ <b>${fps.toFixed(0)}</b> จาก <b>${settings.fps}</b> เฟรม/วินาที (ใช้ ${renderMs.toFixed(1)} ms ต่อเฟรม จากที่มี ${(1000 / settings.fps).toFixed(1)} ms) — ระบบลดการวาดจอ Preview และภาพย่อให้แล้ว</p>
+        ${rows ? `<p class="modal-text">แหล่งภาพที่ใช้เวลามากที่สุด:</p><ul class="modal-text">${rows}</ul>` : ''}
+        <p class="modal-text"><b>วิธีแก้ (ได้ผลมากไปน้อย)</b></p>
+        <ol class="modal-text">
+          ${v && Math.min(v.videoWidth, v.videoHeight) > Math.min(W, H) ? `<li>แปลงวิดีโอ “${esc(h.name)}” เป็น 1080p ก่อนใช้ (เช่นโปรแกรม HandBrake แบบ “Fast 1080p30”) — วิดีโอ 4K หนักกว่า 1080p ราว 4 เท่า</li>` : ''}
+          <li>ลดคุณภาพเอาต์พุตเป็น 720p30 (แผงไลฟ์ → คุณภาพ → เปลี่ยน)</li>
+          <li>ปิด / ลบแหล่งภาพวิดีโอที่ไม่ได้ใช้ และเลือกการ์ดแหล่งภาพขนาด “เล็ก”</li>
+          <li>ปิดโปรแกรมอื่นที่เปิดค้าง โดยเฉพาะเบราว์เซอร์หลายแท็บ</li>
+        </ol>`
+    });
   }
 
   // จอ Preview มองไม่เห็น (มือถือแสดงแค่ Program / หน้าอื่นบังอยู่) และไม่มีใครใช้ภาพ Preview → ข้ามการวาด ลดงานเกือบครึ่ง
@@ -9821,7 +9904,7 @@ onmessage = async e => {
   }
 
   function updateStatus() {
-    setStat('#st-engine', `${renderer.label()} · ${fps ? fps.toFixed(0) : '--'} fps · ${renderMs.toFixed(1)} ms`, fps && fps < settings.fps * 0.8 ? 'warn' : 'ok');
+    setStat('#st-engine', `${renderer.label()} · ${fps ? fps.toFixed(0) : '--'} fps · ${renderMs.toFixed(1)} ms${load.level ? ' · ลดงาน Preview' : ''}`, fps && fps < settings.fps * 0.8 ? 'warn' : 'ok');
     setStat('#st-output', `${W}×${H} ${formatTag(Math.min(W, H), settings.fps)} · ${settings.videoKbps} kbps`, 'ok');
     if (streamer.state === 'live') {
       const slow = streamer.ws && streamer.ws.bufferedAmount > 2e6;
@@ -10691,7 +10774,7 @@ onmessage = async e => {
     $$('#seg-cardsize button').forEach(b => { b.classList.toggle('is-active', b.dataset.size === cardSize()); b.addEventListener('click', () => setCardSize(b.dataset.size)); });
 
     // สำหรับดีบัก/ทดสอบอัตโนมัติ
-    window.webmix = { gwState: () => ({ backup: gwOnBackup, url: streamGatewayUrl() }), yt, openScheduleDialog, hl, failover, chatViewers: (p, n) => chatViewers(p, n), viewersNow: () => viewersNow(), perf: () => ({ fps, renderMs, frameNo, thumbs: thumbs.size, inputs: inputs.length }), chatFeed, chatAdd, chatShow, chatHide, playlist, dataSources, timerControl, multiview, renderer, gpu, setRenderer: v => { settings.renderer = v; renderer.resolve(); updateStatus(); }, show, ovl, setChannel, toggleInputOverlay, useRecFolder: dir => { recFolder = dir; }, inputs, state, settings, overlays, audio, rec, iso, stinger, replayCapture, slideGo, midi, checkAppUpdate, checkWebUpdate, appUpdate, macros, runMacro, openCamControl, abr: { state: abr, decide: abrDecide, apply: abrApply, tick: abrTick }, openDeskSummary, openDeskPreflight, liveStats, openDryRun, openFacebookDialog, fb, setDryRunSeconds: n => { DRY_RUN_SEC = n; }, disk, diskTick, setDiskFree: b => { disk.fake = b; return diskTick(); }, streamer, wireless, cut, autoTransition, setPreview, tr, ftb, padFire, chanKey, remote: remoteCtl, lufs, layoutSize, renderInputs, renderAlerts, openOutputWindow, setOrient };
+    window.webmix = { gwState: () => ({ backup: gwOnBackup, url: streamGatewayUrl() }), yt, openScheduleDialog, hl, failover, chatViewers: (p, n) => chatViewers(p, n), viewersNow: () => viewersNow(), perf: () => ({ fps, renderMs, frameNo, thumbs: thumbs.size, inputs: inputs.length, level: load.level }), load, loadAdvice, heaviestSource, chatFeed, chatAdd, chatShow, chatHide, playlist, dataSources, timerControl, multiview, renderer, gpu, setRenderer: v => { settings.renderer = v; renderer.resolve(); updateStatus(); }, show, ovl, setChannel, toggleInputOverlay, useRecFolder: dir => { recFolder = dir; }, inputs, state, settings, overlays, audio, rec, iso, stinger, replayCapture, slideGo, midi, checkAppUpdate, checkWebUpdate, appUpdate, macros, runMacro, openCamControl, abr: { state: abr, decide: abrDecide, apply: abrApply, tick: abrTick }, openDeskSummary, openDeskPreflight, liveStats, openDryRun, openFacebookDialog, fb, setDryRunSeconds: n => { DRY_RUN_SEC = n; }, disk, diskTick, setDiskFree: b => { disk.fake = b; return diskTick(); }, streamer, wireless, cut, autoTransition, setPreview, tr, ftb, padFire, chanKey, remote: remoteCtl, lufs, layoutSize, renderInputs, renderAlerts, openOutputWindow, setOrient };
   }
 
   boot();

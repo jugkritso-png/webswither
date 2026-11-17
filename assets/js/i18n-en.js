@@ -2673,6 +2673,22 @@
     "เปิดหน้าจัดการเซิร์ฟเวอร์ ↗": "Open the server admin page ↗",
     "(เพิ่มคน · ดูไลฟ์ · อัปเดตเองทุกคืน)": "(add people · see lives · updates itself every night)",
     "ตั้งเซิร์ฟเวอร์ {} เรียบร้อย": "Server {1} is set up",
+    "ดูวิธีแก้": "How to fix",
+    "— หนักที่สุด: “{}”{}": "— heaviest: “{1}”{2}",
+    "เครื่องวาดภาพได้ {} จาก {} เฟรม/วินาที ภาพไลฟ์อาจกระตุก{}": "This computer draws {1} of {2} frames per second, so the live picture may stutter{3}",
+    "· วิดีโอใหญ่กว่าเอาต์พุต: แปลงไฟล์เป็น 1080p จะเบาลงมาก": "· the video is larger than the output: converting the file to 1080p makes it much lighter",
+    "· ลดคุณภาพเอาต์พุตเป็น 720p หรือปิดแหล่งภาพที่ไม่ได้ใช้": "· lower the output quality to 720p or close sources you are not using",
+    "· {}{} ms/เฟรม": "· {1}{2} ms/frame",
+    "เครื่องทำงานไม่ทัน": "This computer can't keep up",
+    "แหล่งภาพที่ใช้เวลามากที่สุด:": "Sources taking the most time:",
+    "แปลงวิดีโอ “{}” เป็น 1080p ก่อนใช้ (เช่นโปรแกรม HandBrake แบบ “Fast 1080p30”) — วิดีโอ 4K หนักกว่า 1080p ราว 4 เท่า": "Convert the video “{1}” to 1080p before using it (e.g. HandBrake, “Fast 1080p30”) — 4K video is about 4× heavier than 1080p",
+    "วาดภาพได้": "Drawing",
+    "เฟรม/วินาที (ใช้ {} ms ต่อเฟรม จากที่มี {} ms) — ระบบลดการวาดจอ Preview และภาพย่อให้แล้ว": "frames per second (taking {1} ms per frame out of {2} ms available) — the Preview screen and thumbnails are already drawn less often",
+    "วิธีแก้ (ได้ผลมากไปน้อย)": "How to fix (most effective first)",
+    "ลดคุณภาพเอาต์พุตเป็น 720p30 (แผงไลฟ์ → คุณภาพ → เปลี่ยน)": "Lower the output quality to 720p30 (Live panel → Quality → Change)",
+    "ปิด / ลบแหล่งภาพวิดีโอที่ไม่ได้ใช้ และเลือกการ์ดแหล่งภาพขนาด “เล็ก”": "Close or remove video sources you are not using, and choose the “Small” source cards",
+    "ปิดโปรแกรมอื่นที่เปิดค้าง โดยเฉพาะเบราว์เซอร์หลายแท็บ": "Close other programs left open, especially browsers with many tabs",
+    "· ลดงาน Preview": "· Preview reduced",
     "ทีวี": "TV", "หน้า": "Page", "รายการ": "Item", "ความยาว": "Length", "เหลือ": "Remain", "สไลด์": "Slides"
   });
 })(window.WebMix = window.WebMix || {});
