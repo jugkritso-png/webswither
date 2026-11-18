@@ -187,6 +187,10 @@
 
   // ลองเข้ารหัส H.264 จริง ๆ สั้น ๆ แล้ววัดว่าทันเฟรมเรตไหม — บางเครื่อง (เช่น emulator) รองรับแต่ช้ามาก
   // คืน { ok, fps } · ok = ได้อย่างน้อย 90% ของเฟรมเรตที่ต้องการ
+  // คิวของตัวเข้ารหัสที่ยอมให้ค้างได้ก่อนทิ้งเฟรม: ราว 200 ms — ชิปเข้ารหัสแบบสายพาน (VideoToolbox ของ Mac)
+  // ถือเฟรมไว้หลายเฟรมก่อนส่งออกเป็นปกติ ถ้ายอมแค่ 2 เฟรมจะทิ้งเฟรมตลอดทั้งที่เข้ารหัสทัน (วัดได้ 22 จาก 30 fps)
+  const maxQueue = fps => Math.max(3, Math.round(fps / 5));
+
   async function avcBenchmark(width, height, fps, bitrate, ms = 2500, hw = false) {
     width &= ~1; height &= ~1;
     const sel = hasApi() && await pickVideoConfig(width, height, fps, bitrate, true, true, true, hw);
@@ -207,7 +211,7 @@
         g.fillStyle = `hsl(${(n * 9) % 360} 60% 50%)`; g.fillRect(0, 0, width, height);
         g.fillStyle = '#fff'; g.fillRect((n * 17) % width, (n * 11) % height, width / 6, height / 6);
         n++;
-        if (enc.encodeQueueSize > 2) return;
+        if (enc.encodeQueueSize > maxQueue(fps)) return;
         try { const f = new VideoFrame(canvas, { timestamp: Math.round(t * 1000) }); enc.encode(f, { keyFrame: n === 1 }); f.close(); } catch (e) { broken = true; }
       }, Math.max(4, 1000 / fps / 4));
     });
@@ -382,7 +386,7 @@
       if (slot <= lastSlot) return;
       lastSlot = slot;
       if (venc.state === 'closed') { restartVideo(new Error('ตัวเข้ารหัสวิดีโอถูกปิด')); return; }
-      if (venc.encodeQueueSize > 2) {
+      if (venc.encodeQueueSize > maxQueue(fps)) {
         rec.droppedFrames++;
         // ส่งเข้าไปแล้วแต่ไม่มีอะไรออกมาเลยเกิน 4 วินาที = ตัวเข้ารหัสค้าง
         if (performance.now() - lastOut > 4000) restartVideo(new Error('ตัวเข้ารหัสวิดีโอไม่ตอบเกิน 4 วินาที'));
