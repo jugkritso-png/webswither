@@ -182,6 +182,9 @@
     add('webaudio', typeof (window.AudioContext || window.webkitAudioContext) === 'function', '', false);
     add('encoder', !!info.encoder, (info.encoder || 'ไม่ทราบ') + (info.encoderNote ? ` · ฮาร์ดแวร์ใช้ไม่ได้: ${info.encoderNote}` : ''), false);
     if (info.selftestStream && info.gateway) { progress.step = 'สตรีม'; await streamTest(info, add, wait); }
+    // ความเร็ววาดภาพของสตูดิโอบนเครื่องนี้ (ใช้ดูว่าเครื่องวาดทันเฟรมเรตไหม)
+    const pf = window.webmix && window.webmix.perf ? window.webmix.perf() : null;
+    if (pf) add('render', true, `${window.webmix.renderer ? window.webmix.renderer.active : ''} · ${pf.fps ? pf.fps.toFixed(1) : '-'} fps · ${pf.renderMs.toFixed(1)} ms/เฟรม · ${pf.inputs} แหล่งภาพ`, false);
 
     return { ok: checks.every(c => c.ok || !c.required), ua: navigator.userAgent, checks };
   }
@@ -190,13 +193,15 @@
      (เส้นทางเดียวกับปุ่มสตรีมในหน้า WebMix) */
   async function streamTest(info, add, wait) {
     const types = ['video/webm;codecs=vp8,opus', 'video/webm;codecs=vp9,opus', 'video/webm', 'video/mp4'];
-    // มือถือ: เส้นทางเดียวกับแอป — H.264 จาก WebCodecs (ชิปของเครื่อง) ส่งต่อโดย Gateway ไม่เข้ารหัสซ้ำ
-    // ใช้เกณฑ์เดียวกับแอป: รองรับ และเข้ารหัสทันเฟรมเรต (วัดจริง)
-    const supported = !!(desktop.mobile && WM.wcrec && await WM.wcrec.avcSupported(1280, 720, 30, 2500000));
-    const bench = supported ? await WM.wcrec.avcBenchmark(1280, 720, 30, 2500000) : { ok: false, fps: 0 };
+    // เส้นทางเดียวกับแอป: H.264 จาก WebCodecs (ชิปของเครื่อง) ส่งต่อโดย Gateway ไม่เข้ารหัสซ้ำ
+    // ใช้เกณฑ์เดียวกับแอป: รองรับ และเข้ารหัสทันเฟรมเรต (วัดจริง) · คอมพิวเตอร์ต้องเป็นชิปเข้ารหัส (prefer-hardware) เหมือนในแอป
+    const hw = !desktop.mobile;
+    const supported = !!(WM.wcrec && await WM.wcrec.avcSupported(1280, 720, 30, 2500000, hw));
+    const bench = supported ? await WM.wcrec.avcBenchmark(1280, 720, 30, 2500000, 2500, hw) : { ok: false, fps: 0 };
     const vcopy = bench.ok;
-    add('webcodecs-h264', vcopy, !supported ? `ไม่รองรับ (VideoEncoder: ${typeof VideoEncoder}) — Gateway เข้ารหัสเอง`
-      : vcopy ? `เข้ารหัส H.264 ด้วยชิปของเครื่องได้ ${bench.fps} fps` : `รองรับแต่ช้า (${bench.fps} fps) — Gateway เข้ารหัสเอง`, false);
+    const probe = !vcopy && WM.wcrec && WM.wcrec.avcProbe ? ` · ลอง: ${await WM.wcrec.avcProbe(1280, 720, 30, 2500000)}` : '';
+    add('webcodecs-h264', vcopy, !supported ? `ไม่รองรับ (VideoEncoder: ${typeof VideoEncoder}) — Gateway เข้ารหัสเอง${probe}`
+      : vcopy ? `เข้ารหัส H.264 ด้วยชิปของเครื่องได้ ${bench.fps} fps` : `รองรับแต่ช้า (${bench.fps} fps) — Gateway เข้ารหัสเอง${probe}`, false);
     const useWc = vcopy || (WM.wcrec && WM.wcrec.preferred());
     const type = useWc ? 'webcodecs' : typeof MediaRecorder === 'function' ? types.find(t => MediaRecorder.isTypeSupported(t)) : '';
     if (!type) { add('stream', false, 'ไม่มี MediaRecorder / WebCodecs'); return; }
@@ -247,7 +252,7 @@
         // เหมือนแอปจริง: เปิดบริการเบื้องหน้าทันทีที่เริ่มสตรีม (ระหว่างที่แอปยังอยู่บนหน้าจอ — Android ไม่ให้เริ่มจากเบื้องหลัง)
         if (hold && desktop.mobile) desktop.setLive(true, 'ทดสอบไลฟ์เบื้องหลัง');
         rec = useWc
-          ? WM.wcrec.recorder({ canvas, audioNode: osc, fps: 30, videoBitsPerSecond: 2500000, audioBitsPerSecond: 128000, preferAvc: true, requireAvc: vcopy, constantBitrate: vcopy })
+          ? WM.wcrec.recorder({ canvas, audioNode: osc, fps: 30, videoBitsPerSecond: 2500000, audioBitsPerSecond: 128000, preferAvc: true, requireAvc: vcopy, constantBitrate: vcopy, requireHw: vcopy && hw })
           : new MediaRecorder(stream, { mimeType: type, videoBitsPerSecond: 2500000 });
         rec.ondataavailable = e => { if (e.data.size && ws.readyState === 1) { ws.send(e.data); lastSend = performance.now(); sentBytes += e.data.size; } };
         rec.onrestart = e => note('encoder restart ' + (e && e.message || ''));

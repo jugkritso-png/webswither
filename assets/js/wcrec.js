@@ -167,9 +167,22 @@
   }
 
   // เข้ารหัส H.264 ด้วย WebCodecs ได้ไหม (มือถือ Android = ชิปเข้ารหัสของเครื่องผ่าน MediaCodec)
-  async function avcSupported(width, height, fps, bitrate) {
+  async function avcSupported(width, height, fps, bitrate, hw = false) {
     if (!hasApi()) return false;
-    return !!(await pickVideoConfig(width & ~1, height & ~1, fps, bitrate, true, true));
+    return !!(await pickVideoConfig(width & ~1, height & ~1, fps, bitrate, true, true, false, hw));
+  }
+  // ผลของทุกค่าที่ลอง (ใช้หาสาเหตุในผลทดสอบตัวเอง): โปรไฟล์ × ฮาร์ดแวร์/ไม่บังคับ × บิตเรตคงที่/ปกติ
+  async function avcProbe(width, height, fps, bitrate) {
+    if (!hasApi()) return `VideoEncoder: ${typeof VideoEncoder}`;
+    const level = height > 1080 ? '33' : height > 720 ? '28' : '1f', out = [];
+    for (const p of ['6400', '4d00', '42e0']) for (const hw of [true, false]) for (const cbr of [true, false]) {
+      const cfg = { codec: `avc1.${p}${level}`, width: width & ~1, height: height & ~1, bitrate, framerate: fps, latencyMode: 'realtime', avc: { format: 'avc' },
+        ...(hw ? { hardwareAcceleration: 'prefer-hardware' } : {}), ...(cbr ? { bitrateMode: 'constant' } : {}) };
+      let r;
+      try { r = (await within(VideoEncoder.isConfigSupported(cfg), 3000, { supported: 'timeout' })).supported; } catch (e) { r = e.name || 'error'; }
+      out.push(`${p}${hw ? '/hw' : ''}${cbr ? '/cbr' : ''}=${r}`);
+    }
+    return out.join(' ');
   }
 
   // ลองเข้ารหัส H.264 จริง ๆ สั้น ๆ แล้ววัดว่าทันเฟรมเรตไหม — บางเครื่อง (เช่น emulator) รองรับแต่ช้ามาก
@@ -454,5 +467,5 @@
     return rec;
   }
 
-  WM.wcrec = { preferred, recorder, createRecorder, createMuxer, hasApi, avcSupported, avcBenchmark, every };
+  WM.wcrec = { preferred, recorder, createRecorder, createMuxer, hasApi, avcSupported, avcBenchmark, avcProbe, every };
 })(window.WebMix = window.WebMix || {});
