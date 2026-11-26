@@ -38,6 +38,11 @@
     updateApply: () => invoke('update_apply'),
     // Android: บริการเบื้องหน้า (แจ้งเตือน "กำลังไลฟ์") ให้กล้อง ไมค์ และการสตรีมทำงานต่อตอนปิดจอ/สลับแอป
     setLive: (active, text) => invoke('set_live', { active: !!active, text: String(text || '') }).catch(() => {}),
+    // จอที่ต่ออยู่ → [{ index, name, width, height, x, y, scale, primary }] · หน้าต่างแยก (หาจากชื่อหน้าต่าง) เต็มจอบนจอที่เลือก
+    monitors: () => invoke('monitors').catch(() => []),
+    windowFullscreen: (title, on, monitor) => invoke('window_fullscreen', { title, on: !!on, monitor: monitor == null ? null : monitor }),
+    // [เต็มจออยู่ไหม, ชื่อจอที่หน้าต่างอยู่] หรือ null ถ้ายังไม่พบหน้าต่าง
+    windowState: title => invoke('window_state', { title }).catch(() => null),
 
     // เปิดไฟล์ใหม่ในโฟลเดอร์ แล้วคืนตัวเขียนแบบเดียวกับ FileSystemWritableFileStream
     // write(ข้อมูล) ต่อท้ายไฟล์ · write({ type: 'write', position, data }) เขียนทับตามตำแหน่ง · close()

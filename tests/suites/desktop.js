@@ -19,7 +19,11 @@ const MOCK = () => {
     rec_open: ({ name, dir }) => { const id = ++next; files[id] = { name, dir: dir || '/home/u/Videos/WebMix', data: new Uint8Array(0), closed: false }; return { id, path: `${files[id].dir}/${name}`, dir: files[id].dir }; },
     rec_write: (body, h) => { const f = files[h['x-rec-id']]; const b = bytes(body); const n = new Uint8Array(f.data.length + b.length); n.set(f.data); n.set(b, f.data.length); f.data = n; return f.data.length; },
     rec_patch: (body, h) => { const f = files[h['x-rec-id']]; const pos = +h['x-position']; const b = bytes(body); if (pos + b.length > f.data.length) throw new Error('ตำแหน่งเกินขนาดไฟล์'); f.data.set(b, pos); return null; },
-    rec_close: ({ id }) => { files[id].closed = true; return { path: files[id].name, bytes: files[id].data.length }; }
+    rec_close: ({ id }) => { files[id].closed = true; return { path: files[id].name, bytes: files[id].data.length }; },
+    monitors: () => [{ index: 0, name: 'Built-in Retina Display', width: 3024, height: 1964, x: 0, y: 0, scale: 2, primary: true },
+      { index: 1, name: 'HDMI TV', width: 1920, height: 1080, x: 1512, y: 0, scale: 1, primary: false }],
+    window_fullscreen: ({ title, on, monitor }) => { (window.__fs = window.__fs || []).push({ title, on, monitor }); window.__fsOn = on; window.__fsMon = monitor == null ? window.__fsMon : monitor; return on; },
+    window_state: ({ title }) => title === 'WebMix — Program Output' ? [!!window.__fsOn, window.__fsMon === 1 ? 'HDMI TV' : 'Built-in Retina Display'] : null
   };
   window.__TAURI__ = { core: { invoke: async (cmd, args, opts) => {
     calls[cmd] = (calls[cmd] || 0) + 1;
@@ -111,6 +115,25 @@ const MOCK = () => {
   ok('clear returns to the default folder', (await p.inputValue('.rec-folder-name')) === '/home/u/Videos/WebMix');
   await p.keyboard.press('Escape');
 
+  // หน้าต่าง Program Output: เลือกจอแล้วแอปสั่งหน้าต่างเต็มจอบนจอนั้น (WebView บน Mac เต็มจอเองไม่ได้) · จำจอไว้ เปิดครั้งหน้าเต็มจอเอง
+  {
+    const [win] = await Promise.all([p.waitForEvent('popup'), p.evaluate(() => window.webmix.openOutputWindow())]);
+    await win.waitForTimeout(500);
+    await win.click('#pick');
+    const items = await win.$$eval('#menu [data-i]', bs => bs.map(x => x.textContent));
+    ok('output window lists the monitors from the app', items.length === 2 && /HDMI TV/.test(items[1]) && /1512×982/.test(items[0]), JSON.stringify(items));
+    await win.click('#menu [data-i="1"]'); await win.waitForTimeout(300);
+    ok('picking a monitor goes native fullscreen on it', await p.evaluate(() => { const f = window.__fs.at(-1); return f.on === true && f.monitor === 1 && f.title === 'WebMix — Program Output'; }), JSON.stringify(await p.evaluate(() => window.__fs)));
+    await win.waitForTimeout(700);
+    ok('status shows fullscreen on that monitor', /HDMI TV · เต็มจอ/.test(await win.textContent('#scr')) && /ออกจากเต็มจอ/.test(await win.textContent('#fs')), await win.textContent('#scr'));
+    await win.click('#fs'); await win.waitForTimeout(300);
+    ok('fullscreen button leaves native fullscreen', await p.evaluate(() => window.__fs.at(-1).on === false));
+    await win.close();
+    await p.evaluate(() => { window.__fs = []; window.__fsOn = false; });
+    const [win2] = await Promise.all([p.waitForEvent('popup'), p.evaluate(() => window.webmix.openOutputWindow())]);
+    ok('reopened window goes fullscreen on the remembered monitor', await (async () => { for (let i = 0; i < 20; i++) { if (await p.evaluate(() => (window.__fs || []).some(f => f.on && f.monitor === 1))) return true; await win2.waitForTimeout(200); } return false; })());
+    await win2.close();
+  }
   ok('no page errors', errs.length === 0, JSON.stringify(errs));
   console.log(results.join('\n')); await b.close();
 })().catch(e => { console.log(results.join('\n')); console.error('CRASH', e.message); process.exit(1); });

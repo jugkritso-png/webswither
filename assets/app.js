@@ -7909,7 +7909,35 @@ onmessage = async e => {
     let idleT = 0;
     const wake = () => { d.body.classList.remove('idle'); clearTimeout(idleT); idleT = setTimeout(() => d.body.classList.add('idle'), 3000); };
     d.addEventListener('mousemove', wake); d.addEventListener('keydown', wake); wake();
-    const fs = () => d.fullscreenElement ? d.exitFullscreen() : d.documentElement.requestFullscreen().catch(() => {});
+    // แอปบนคอมพิวเตอร์: WebView เต็มจอระดับ element ไม่ได้ (macOS) → สั่งหน้าต่างเต็มจอจริงผ่านแอป · จำจอที่เลือกไว้ เปิดครั้งหน้าเต็มจอบนจอนั้นเอง
+    const native = !!(desktop && desktop.windowFullscreen);
+    const TITLE = 'WebMix — Program Output', MON_KEY = 'webmix:output-monitor';
+    const savedMon = () => { try { return JSON.parse(localStorage.getItem(MON_KEY) || 'null'); } catch (e) { return null; } };
+    let nativeFs = false, nativeMon = '';
+    const nativeSet = async (on, index) => {
+      try {
+        // ย้ายจอขณะเต็มจออยู่ไม่ได้ (macOS) → ออกก่อน รอแอนิเมชันจบ แล้วค่อยย้าย
+        if (on && index != null && nativeFs) { await desktop.windowFullscreen(TITLE, false); await new Promise(r => setTimeout(r, 900)); }
+        await desktop.windowFullscreen(TITLE, on, index);
+        nativeFs = on;
+      } catch (e) { toast(`เต็มจอไม่สำเร็จ: ${e}`, 'warn'); }
+    };
+    const fs = native ? () => nativeSet(!nativeFs) : () => d.fullscreenElement ? d.exitFullscreen() : d.documentElement.requestFullscreen().catch(() => {});
+    if (native) {
+      d.addEventListener('keydown', e => { if (e.key === 'Escape' && nativeFs) nativeSet(false); });
+      // เปิดหน้าต่างแล้วเต็มจอบนจอที่จำไว้ (ถ้าจอนั้นยังต่ออยู่) · รอให้แอปเห็นหน้าต่างก่อน
+      const want = savedMon();
+      if (want) (async () => {
+        for (let i = 0; i < 20 && !win.closed; i++) {
+          if (await desktop.windowState(TITLE)) {
+            const m = (await desktop.monitors()).find(x => x.name === want.name) || null;
+            if (m) nativeSet(true, m.index);
+            return;
+          }
+          await new Promise(r => setTimeout(r, 250));
+        }
+      })();
+    }
     d.addEventListener('dblclick', e => { if (!e.target.closest('#bar,#menu')) fs(); });
     $w('fs').onclick = fs;
     $w('hide').onclick = () => { d.body.classList.add('hide'); $w('hint').textContent = 'ขยับเมาส์ไม่เรียกแถบกลับแล้ว — กด H เพื่อแสดงแถบอีกครั้ง'; };
@@ -7918,6 +7946,22 @@ onmessage = async e => {
     $w('pick').onclick = async () => {
       const menu = $w('menu');
       if (menu.classList.toggle('open') === false) return;
+      if (native) {
+        const list = await desktop.monitors();
+        if (!list.length) { menu.innerHTML = '<button type="button" disabled>ไม่พบรายชื่อจอ — ลากหน้าต่างไปจอที่ต้องการแล้วกดเต็มจอ</button>'; return; }
+        const want = savedMon();
+        menu.innerHTML = list.map(m => `<button type="button" data-i="${m.index}">จอ ${m.index + 1}${m.primary ? ' (หลัก)' : ''} · ${Math.round(m.width / (m.scale || 1))}×${Math.round(m.height / (m.scale || 1))}${m.name ? ' · ' + esc(m.name) : ''}${want && want.name === m.name ? ' ✓' : ''}</button>`).join('')
+          + (want ? '<button type="button" data-forget>ไม่ต้องเต็มจอเองตอนเปิดหน้าต่าง</button>' : '');
+        menu.onclick = e => {
+          if (e.target.closest('[data-forget]')) { try { localStorage.removeItem(MON_KEY); } catch (err) { /* ไม่มีที่เก็บ */ } menu.classList.remove('open'); return; }
+          const b = e.target.closest('[data-i]'); if (!b) return;
+          menu.classList.remove('open');
+          const m = list.find(x => x.index === +b.dataset.i);
+          try { localStorage.setItem(MON_KEY, JSON.stringify({ name: m.name })); } catch (err) { /* ไม่มีที่เก็บ */ }
+          nativeSet(true, m.index);
+        };
+        return;
+      }
       if (!('getScreenDetails' in win)) { menu.innerHTML = '<button type="button" disabled>เบราว์เซอร์นี้เลือกจอไม่ได้ — ลากหน้าต่างไปจอที่ต้องการแล้วกดเต็มจอ</button>'; return; }
       try {
         const sd = await win.getScreenDetails();
@@ -7931,9 +7975,11 @@ onmessage = async e => {
       const live = !!onAirSince;
       $w('st').textContent = live ? 'ON AIR' : 'OFF AIR'; $w('st').className = live ? 'on' : '';
       $w('tm').textContent = $('#onair-timer').textContent;
-      const sc = win.screen;
-      $w('scr').textContent = `${sc.width}×${sc.height}${d.fullscreenElement ? ' · เต็มจอ' : ''}`;
-      $w('fs').textContent = d.fullscreenElement ? 'ออกจากเต็มจอ (Esc)' : 'เต็มจอ';
+      const sc = win.screen, full = native ? nativeFs : !!d.fullscreenElement;
+      $w('scr').textContent = `${sc.width}×${sc.height}${nativeMon ? ' · ' + nativeMon : ''}${full ? ' · เต็มจอ' : ''}`;
+      $w('fs').textContent = full ? 'ออกจากเต็มจอ (Esc)' : 'เต็มจอ';
+      // ผู้ใช้อาจออกจากเต็มจอเอง (ปุ่มเขียว / ⌃⌘F ของ macOS) → อ่านสถานะจริงจากแอป
+      if (native) desktop.windowState(TITLE).then(st => { if (st) { nativeFs = !!st[0]; nativeMon = st[1] || ''; } });
       setTimeout(tick, 500);
     };
     tick();

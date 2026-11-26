@@ -689,6 +689,105 @@ fn update_apply(app: tauri::AppHandle) -> Result<(), String> {
     }
 }
 
+/// จอที่ต่ออยู่ (หน้าต่าง Program Output เลือกจอเต็มจอได้) — ลำดับเดียวกับ available_monitors
+#[derive(serde::Serialize)]
+struct MonitorInfo {
+    index: usize,
+    name: String,
+    width: u32,
+    height: u32,
+    x: i32,
+    y: i32,
+    scale: f64,
+    primary: bool,
+}
+
+#[tauri::command]
+fn monitors(app: AppHandle) -> Vec<MonitorInfo> {
+    #[cfg(desktop)]
+    {
+        let primary = app.primary_monitor().ok().flatten().map(|m| (*m.position(), *m.size()));
+        app.available_monitors()
+            .unwrap_or_default()
+            .iter()
+            .enumerate()
+            .map(|(index, m)| MonitorInfo {
+                index,
+                name: m.name().cloned().unwrap_or_default(),
+                width: m.size().width,
+                height: m.size().height,
+                x: m.position().x,
+                y: m.position().y,
+                scale: m.scale_factor(),
+                primary: primary.map_or(false, |(p, sz)| p == *m.position() && sz == *m.size()),
+            })
+            .collect()
+    }
+    #[cfg(not(desktop))]
+    {
+        let _ = app;
+        Vec::new()
+    }
+}
+
+/// หน้าต่างที่เปิดจาก window.open ของหน้า WebMix (popup-N) ที่มีชื่อหน้าต่างตรงกัน
+#[cfg(desktop)]
+fn popup_by_title(app: &AppHandle, title: &str) -> Option<tauri::WebviewWindow> {
+    app.webview_windows()
+        .into_iter()
+        .filter(|(label, _)| label.starts_with("popup-"))
+        .map(|(_, w)| w)
+        .find(|w| w.title().map_or(false, |t| t == title))
+}
+
+/// เต็มจอ / ออกจากเต็มจอ ให้หน้าต่างที่ชื่อ `title` (เช่น Program Output) — ระบุจอ = ย้ายไปจอนั้นก่อนแล้วเต็มจอ
+/// คืนสถานะหลังเปลี่ยน (true = เต็มจออยู่) · ไม่พบหน้าต่าง = Err
+#[tauri::command]
+fn window_fullscreen(app: AppHandle, title: String, on: bool, monitor: Option<usize>) -> Result<bool, String> {
+    #[cfg(desktop)]
+    {
+        let w = popup_by_title(&app, &title).ok_or("ไม่พบหน้าต่าง")?;
+        if on {
+            if let Some(i) = monitor {
+                let list = app.available_monitors().map_err(|e| e.to_string())?;
+                let m = list.get(i).ok_or("ไม่พบจอที่เลือก")?;
+                // ออกจากเต็มจอก่อน (ย้ายหน้าต่างที่เต็มจออยู่ไม่ได้บน macOS) แล้วย้ายไปกลางจอนั้น
+                if w.is_fullscreen().unwrap_or(false) {
+                    w.set_fullscreen(false).map_err(|e| e.to_string())?;
+                }
+                let pos = tauri::PhysicalPosition::new(m.position().x + 40, m.position().y + 40);
+                w.set_position(pos).map_err(|e| e.to_string())?;
+            }
+            w.set_fullscreen(true).map_err(|e| e.to_string())?;
+            let _ = w.set_focus();
+        } else {
+            w.set_fullscreen(false).map_err(|e| e.to_string())?;
+        }
+        Ok(on)
+    }
+    #[cfg(not(desktop))]
+    {
+        let _ = (app, title, on, monitor);
+        Err("ใช้ได้เฉพาะแอปบนคอมพิวเตอร์".into())
+    }
+}
+
+/// สถานะเต็มจอของหน้าต่างนั้น (ผู้ใช้อาจออกเองด้วย Esc / ปุ่มเขียวของ macOS) และจอที่หน้าต่างอยู่
+#[tauri::command]
+fn window_state(app: AppHandle, title: String) -> Option<(bool, Option<String>)> {
+    #[cfg(desktop)]
+    {
+        let w = popup_by_title(&app, &title)?;
+        let mon = w.current_monitor().ok().flatten().and_then(|m| m.name().cloned());
+        Some((w.is_fullscreen().unwrap_or(false), mon))
+    }
+    #[cfg(not(desktop))]
+    {
+        let _ = (app, title);
+        None
+    }
+}
+
 /// Android: ไลฟ์/บันทึกอยู่ → เปิดบริการเบื้องหน้าพร้อมแจ้งเตือน (ระบบไม่หยุดกล้อง/สตรีมตอนปิดจอหรือสลับแอป)
 #[tauri::command]
 fn set_live(window: tauri::WebviewWindow, active: bool, text: String) {
@@ -716,6 +815,9 @@ pub fn run() {
             selftest_report,
             selftest_cleanup,
             set_live,
+            monitors,
+            window_fullscreen,
+            window_state,
             update_check,
             update_install,
             update_download,

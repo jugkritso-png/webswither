@@ -2689,6 +2689,13 @@
     "ปิด / ลบแหล่งภาพวิดีโอที่ไม่ได้ใช้ และเลือกการ์ดแหล่งภาพขนาด “เล็ก”": "Close or remove video sources you are not using, and choose the “Small” source cards",
     "ปิดโปรแกรมอื่นที่เปิดค้าง โดยเฉพาะเบราว์เซอร์หลายแท็บ": "Close other programs left open, especially browsers with many tabs",
     "· ลดงาน Preview": "· Preview reduced",
+    "เต็มจอไม่สำเร็จ: {}": "Fullscreen failed: {}",
+    "ไม่พบรายชื่อจอ — ลากหน้าต่างไปจอที่ต้องการแล้วกดเต็มจอ": "No monitor list — drag the window to the display you want, then press Fullscreen",
+    "ไม่ต้องเต็มจอเองตอนเปิดหน้าต่าง": "Don't go fullscreen automatically when the window opens",
+    "{} · {} fps · {} ms/เฟรม · {} แหล่งภาพ": "{} · {} fps · {} ms/frame · {} sources",
+    "· ลอง: {}": "· tried: {}",
+    "ไม่รองรับ (VideoEncoder: {}) — Gateway เข้ารหัสเอง{}": "Not supported (VideoEncoder: {}) — the Gateway encodes instead{}",
+    "รองรับแต่ช้า ({} fps) — Gateway เข้ารหัสเอง{}": "Supported but slow ({} fps) — the Gateway encodes instead{}",
     "ทีวี": "TV", "หน้า": "Page", "รายการ": "Item", "ความยาว": "Length", "เหลือ": "Remain", "สไลด์": "Slides"
   });
 })(window.WebMix = window.WebMix || {});
