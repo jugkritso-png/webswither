@@ -1203,17 +1203,19 @@
     }
 
     enforceMarks();
-    if (now - lastThumbs > THUMB_MS[load.level]) {
-      lastThumbs = now;
-      transport.update();
-      lufs.render();
-      for (const inp of inputs) {
-        const ctx = thumbs.get(inp.id);
-        if (!ctx) continue;
-        // ภาพย่อของแหล่งที่วาดหนัก แต่ยังไม่ได้ใช้: อัปเดต 2 ครั้งต่อวินาทีพอ
-        if (HEAVY_THUMBS.has(inp.type) && !inUse(inp)) { if (now - (inp._thumbAt || 0) < 500) continue; inp._thumbAt = now; }
-        drawThumb(ctx, inp, ctx.canvas.width, ctx.canvas.height);
-      }
+    const thumbsDue = now - lastThumbs > THUMB_MS[load.level];
+    if (thumbsDue) { lastThumbs = now; transport.update(); lufs.render(); }
+    for (const inp of inputs) {
+      const ctx = thumbs.get(inp.id);
+      if (!ctx) continue;
+      // วิดีโอ / กล้องที่กำลังเล่น: ภาพย่อบนการ์ดเดินเต็มเฟรมเรตเมื่อเครื่องทำทัน (10 ครั้ง/วินาทีดูกระตุก)
+      // เครื่องเริ่มไม่ทัน → กลับไปอัปเดตห่างตาม THUMB_MS ให้ภาพไลฟ์ได้เฟรมเรตเต็มก่อน
+      const moving = load.level === 0 && !HEAVY_THUMBS.has(inp.type) && inp.el instanceof HTMLVideoElement && !inp.el.paused && !inp.el.ended && inp.status === 'live';
+      if (!thumbsDue && !moving) continue;
+      // ภาพย่อของแหล่งที่วาดหนัก แต่ยังไม่ได้ใช้: อัปเดต 2 ครั้งต่อวินาทีพอ
+      if (HEAVY_THUMBS.has(inp.type) && !inUse(inp)) { if (now - (inp._thumbAt || 0) < 500) continue; inp._thumbAt = now; }
+      drawThumb(ctx, inp, ctx.canvas.width, ctx.canvas.height);
+      inp._thumbN = (inp._thumbN || 0) + 1;
     }
     audio.tick(now);
 

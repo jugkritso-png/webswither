@@ -37,9 +37,17 @@ const until = async (fn, ms = 15000) => { const end = Date.now() + ms; while (Da
   ok('seeking a paused video uploads the new frame', await until(async () => (await uploadsIn(300)) >= 1, 3000));
   await p.evaluate(() => window.webmix.inputs.find(i => i.el && i.el.videoWidth).el.play());
 
+  // ภาพย่อบนการ์ดของวิดีโอที่เล่นอยู่: เครื่องทำทัน → เดินเต็มเฟรมเรต (ไม่ใช่ 10 ครั้ง/วินาทีที่ดูกระตุก)
+  const thumbsIn = async ms => {
+    const n = () => p.evaluate(() => window.webmix.inputs.find(i => i.el && i.el.videoWidth)._thumbN || 0);
+    const a = await n(); await p.waitForTimeout(ms); return (await n()) - a;
+  };
+
   // จำลองเครื่องช้า: ใช้เวลาวาด 45 ms ต่อเฟรม (เอาต์พุต 30 fps มีแค่ 33 ms)
   await p.evaluate(() => { window.webmix.load.extraMs = 45; });
   ok('overloaded → steps down to level 2 by itself', await until(() => p.evaluate(() => window.webmix.perf().level === 2), 12000), JSON.stringify(await p.evaluate(() => window.webmix.perf())));
+  const slowThumbs = await thumbsIn(2000);
+  ok('…and drops back to 2 updates/s when overloaded', slowThumbs <= 6, `${slowThumbs} updates in 2 s`);
   ok('status bar says Preview work is reduced', /ลดงาน Preview/.test(await p.textContent('#st-engine')), await p.textContent('#st-engine'));
   ok('still too slow → tells which source is heaviest', await until(async () => /เครื่องวาดภาพได้ .*หนักที่สุด: “/.test(await p.textContent('#toasts')), 15000), await p.textContent('#toasts'));
   await p.click('#toasts .toast-action:has-text("ดูวิธีแก้")');
@@ -54,6 +62,8 @@ const until = async (fn, ms = 15000) => { const end = Date.now() + ms; while (Da
   // เครื่องเบาลงจริง (วาดด้วย CPU ซึ่งเบากว่าบนเครื่องทดสอบ) → กลับเป็นปกติเอง
   await p.evaluate(() => window.webmix.setRenderer('cpu'));
   ok('load gone → back to normal by itself', await until(() => p.evaluate(() => window.webmix.perf().level === 0), 20000), JSON.stringify(await p.evaluate(() => window.webmix.perf())));
+  const smooth = await thumbsIn(1000);
+  ok('playing video card thumbnail runs at full frame rate when the machine keeps up', smooth >= 18, `${smooth} updates/s · level ${(await p.evaluate(() => window.webmix.perf())).level}`);
   ok('status bar back to normal', await until(async () => !/ลดงาน/.test(await p.textContent('#st-engine')), 3000), await p.textContent('#st-engine'));
   ok('no page errors', errs.length === 0, JSON.stringify(errs.slice(0, 3)));
   console.log(results.join('\n')); await b.close();
