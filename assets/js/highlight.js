@@ -179,8 +179,8 @@
           return;
         } catch (e) { console.warn('highlight folder', e); }
       }
-      downloadBlob(item.blob, item.name);
-      toast(`ดาวน์โหลด “${item.name}” แล้ว`, 'success', 4000);
+      const r = await downloadBlob(item.blob, item.name);
+      if (r) toast(`บันทึก “${r.path ? String(r.path).split(/[\\/]/).pop() : item.name}” แล้ว`, 'success', 4000);
     }
     const hlLive = () => !!(streamer.ws || streamer.reconnecting || rec.active);
     // แปลงคลิปที่รออยู่ทีละคลิป · ระหว่างไลฟ์/บันทึกรอจนจบ (ไม่ให้ภาพไลฟ์สะดุด) เว้นแต่กด “แปลงตอนนี้”

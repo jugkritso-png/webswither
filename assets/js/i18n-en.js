@@ -2696,6 +2696,9 @@
     "· ลอง: {}": "· tried: {}",
     "ไม่รองรับ (VideoEncoder: {}) — Gateway เข้ารหัสเอง{}": "Not supported (VideoEncoder: {}) — the Gateway encodes instead{}",
     "รองรับแต่ช้า ({} fps) — Gateway เข้ารหัสเอง{}": "Supported but slow ({} fps) — the Gateway encodes instead{}",
+    "บันทึกไฟล์โชว์ “{}” แล้ว": "Show file “{}” saved",
+    "บันทึกไฟล์ไม่สำเร็จ: {}": "Saving the file failed: {}",
+    "บันทึก “{}” แล้ว": "Saved “{}”",
     "ทีวี": "TV", "หน้า": "Page", "รายการ": "Item", "ความยาว": "Length", "เหลือ": "Remain", "สไลด์": "Slides"
   });
 })(window.WebMix = window.WebMix || {});

@@ -245,6 +245,56 @@ async fn pick_folder(app: AppHandle) -> Option<String> {
     rx.await.ok().flatten()
 }
 
+/// ชื่อไฟล์/โฟลเดอร์ในส่วนหัว (หน้าเว็บส่งแบบ encodeURIComponent เพราะส่วนหัวรับได้แค่ ASCII)
+fn uri_decode(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'%' && i + 2 < b.len() {
+            if let Ok(v) = u8::from_str_radix(&s[i + 1..i + 3], 16) {
+                out.push(v);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(b[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// บันทึกไฟล์ด้วยหน้าต่าง "Save As" ของระบบ (เลือกโฟลเดอร์และตั้งชื่อเอง) → { path, dir } หรือ null ถ้ากดยกเลิก
+/// ข้อมูลไฟล์มาเป็น binary · ส่วนหัว x-name = ชื่อที่เสนอ · x-dir = โฟลเดอร์ที่บันทึกครั้งก่อน (ถ้ามี)
+#[cfg(desktop)]
+#[tauri::command]
+async fn save_as(app: AppHandle, request: Request<'_>) -> Result<Option<serde_json::Value>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let name = safe_name(&uri_decode(header(&request, "x-name")?))?;
+    let dir = request.headers().get("x-dir").and_then(|v| v.to_str().ok()).map(uri_decode).map(PathBuf::from).filter(|d| d.is_dir());
+    let data = body_bytes(&request)?.into_owned();
+    let start = dir.or_else(|| app.path().download_dir().ok()).filter(|d| d.is_dir());
+    let mut dlg = app.dialog().file().set_file_name(name);
+    if let Some(d) = start {
+        dlg = dlg.set_directory(d);
+    }
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    dlg.save_file(move |p| {
+        let _ = tx.send(p);
+    });
+    let Some(picked) = rx.await.ok().flatten() else { return Ok(None) };
+    let path = picked.into_path().map_err(|e| e.to_string())?;
+    tokio::fs::write(&path, &data).await.map_err(|e| format!("บันทึกไฟล์ไม่สำเร็จ: {e}"))?;
+    let parent = path.parent().map(|d| d.to_string_lossy().into_owned()).unwrap_or_default();
+    Ok(Some(serde_json::json!({ "path": path.to_string_lossy(), "dir": parent })))
+}
+
+#[cfg(mobile)]
+#[tauri::command]
+async fn save_as() -> Result<Option<serde_json::Value>, String> {
+    Err("ใช้ได้เฉพาะแอปบนคอมพิวเตอร์".into())
+}
+
 fn safe_name(name: &str) -> Result<String, String> {
     let ok = !name.is_empty()
         && name.len() <= 200
@@ -815,6 +865,7 @@ pub fn run() {
             selftest_report,
             selftest_cleanup,
             set_live,
+            save_as,
             monitors,
             window_fullscreen,
             window_state,

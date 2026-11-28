@@ -6,6 +6,7 @@ const { chromium } = require('playwright');
 const fs = require('fs'); const S = process.env.WORK;
 const { spawnSync } = require('child_process');
 const results = []; const ok = (n, c, x = '') => results.push(`${c ? 'PASS' : 'FAIL'}  ${n} ${x}`);
+const until = async (fn, ms = 15000) => { const end = Date.now() + ms; while (Date.now() < end) { if (await fn()) return true; await new Promise(r => setTimeout(r, 250)); } return false; };
 
 // แทน Rust: เก็บไฟล์ไว้ในหน้า (window.__files) และนับการเรียกแต่ละคำสั่ง
 const MOCK = () => {
@@ -20,6 +21,7 @@ const MOCK = () => {
     rec_write: (body, h) => { const f = files[h['x-rec-id']]; const b = bytes(body); const n = new Uint8Array(f.data.length + b.length); n.set(f.data); n.set(b, f.data.length); f.data = n; return f.data.length; },
     rec_patch: (body, h) => { const f = files[h['x-rec-id']]; const pos = +h['x-position']; const b = bytes(body); if (pos + b.length > f.data.length) throw new Error('ตำแหน่งเกินขนาดไฟล์'); f.data.set(b, pos); return null; },
     rec_close: ({ id }) => { files[id].closed = true; return { path: files[id].name, bytes: files[id].data.length }; },
+    save_as: (body, h) => { const r = { name: decodeURIComponent(h['x-name']), dir: h['x-dir'] ? decodeURIComponent(h['x-dir']) : '', bytes: bytes(body).length, text: new TextDecoder().decode(bytes(body)) }; (window.__saves = window.__saves || []).push(r); if (window.__saveCancel) return null; return { path: `/Users/u/Shows/${r.name}`, dir: '/Users/u/Shows' }; },
     monitors: () => [{ index: 0, name: 'Built-in Retina Display', width: 3024, height: 1964, x: 0, y: 0, scale: 2, primary: true },
       { index: 1, name: 'HDMI TV', width: 1920, height: 1080, x: 1512, y: 0, scale: 1, primary: false }],
     window_fullscreen: ({ title, on, monitor }) => { (window.__fs = window.__fs || []).push({ title, on, monitor }); window.__fsOn = on; window.__fsMon = monitor == null ? window.__fsMon : monitor; return on; },
@@ -115,6 +117,21 @@ const MOCK = () => {
   ok('clear returns to the default folder', (await p.inputValue('.rec-folder-name')) === '/home/u/Videos/WebMix');
   await p.keyboard.press('Escape');
 
+  // บันทึกไฟล์ (โชว์ / ภาพนิ่ง ฯลฯ): แอปเปิดหน้าต่าง Save As ของระบบ ไม่ใช่ดาวน์โหลดแบบเบราว์เซอร์ · จำโฟลเดอร์ครั้งก่อน
+  {
+    await p.evaluate(() => { window.__saves = []; try { localStorage.removeItem('webmix:save-dir'); } catch (e) { /* */ } });
+    await p.evaluate(() => window.webmix.show.exportFile());
+    const s1 = await p.evaluate(() => window.__saves[0]);
+    ok('show file goes through the native Save As dialog', s1 && /\.webmix\.json$/.test(s1.name) && s1.dir === '' && JSON.parse(s1.text).app === 'webmix', JSON.stringify(s1 && { name: s1.name, dir: s1.dir }));
+    ok('…and says where it was saved', await until(async () => /บันทึกไฟล์โชว์ .*\.webmix\.json/.test(await p.textContent('#toasts')), 3000), await p.textContent('#toasts'));
+    await p.evaluate(() => window.webmix.show.exportFile());
+    ok('next save starts in the folder used last time', await p.evaluate(() => window.__saves[1] && window.__saves[1].dir === '/Users/u/Shows'));
+    await p.evaluate(() => { window.__saveCancel = true; document.querySelector('#toasts').innerHTML = ''; });
+    const r = await p.evaluate(() => window.webmix.show.exportFile());
+    await p.waitForTimeout(300);
+    ok('cancelling Save As saves nothing and shows no success toast', r === null && !/บันทึกไฟล์โชว์/.test(await p.textContent('#toasts')));
+    await p.evaluate(() => { window.__saveCancel = false; });
+  }
   // หน้าต่าง Program Output: เลือกจอแล้วแอปสั่งหน้าต่างเต็มจอบนจอนั้น (WebView บน Mac เต็มจอเองไม่ได้) · จำจอไว้ เปิดครั้งหน้าเต็มจอเอง
   {
     const [win] = await Promise.all([p.waitForEvent('popup'), p.evaluate(() => window.webmix.openOutputWindow())]);

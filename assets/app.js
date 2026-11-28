@@ -7873,11 +7873,12 @@ onmessage = async e => {
     height: () => H, recFolder: () => recFolder
   });
   /* ------------------------------------------------------------ extras */
+  // ชื่อไฟล์ที่บันทึกจริง (ผู้ใช้อาจเปลี่ยนชื่อในหน้าต่าง Save As)
+  function savedName(r, fallback) { return (r && r.path ? String(r.path).split(/[\\/]/).pop() : '') || fallback; }
   function snapshot() {
     pgmCanvas.toBlob(blob => {
       if (!blob) { toast('บันทึกภาพไม่สำเร็จ', 'error'); return; }
-      downloadBlob(blob, `WebMix-Snapshot-${stamp()}.png`);
-      toast('บันทึกภาพนิ่งจาก Program แล้ว', 'success');
+      downloadBlob(blob, `WebMix-Snapshot-${stamp()}.png`).then(r => { if (r) toast('บันทึกภาพนิ่งจาก Program แล้ว', 'success'); });
     }, 'image/png');
   }
 
@@ -10547,8 +10548,8 @@ onmessage = async e => {
       const data = { ...this.serialize(), savedAt: new Date().toISOString(),
         stream: { gateway: settings.gateway, destinations: settings.destinations.map(d => ({ ...d, key: settings.rememberKey ? d.key : '', passphrase: settings.rememberKey ? d.passphrase : '' })) } };
       const safe = this.name.replace(/[\\/:*?"<>|]+/g, '').trim() || 'WebMix';
-      downloadBlob(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }), `${safe}.webmix.json`);
-      toast(`บันทึกไฟล์โชว์ “${safe}.webmix.json” แล้ว`, 'success');
+      return downloadBlob(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }), `${safe}.webmix.json`)
+        .then(r => { if (r) toast(`บันทึกไฟล์โชว์ “${savedName(r, `${safe}.webmix.json`)}” แล้ว`, 'success'); return r; });
     },
 
     busyWarning() {
@@ -10713,7 +10714,8 @@ onmessage = async e => {
             const it = library.list().find(x => x.id === sel), data = library.data(sel);
             if (!it || !data) return;
             const safe = it.name.replace(/[\\/:*?"<>|]+/g, '').trim() || 'WebMix';
-            downloadBlob(new Blob([JSON.stringify({ ...data, savedAt: new Date(it.savedAt).toISOString() }, null, 2)], { type: 'application/json' }), `${safe}.webmix.json`);
+            downloadBlob(new Blob([JSON.stringify({ ...data, savedAt: new Date(it.savedAt).toISOString() }, null, 2)], { type: 'application/json' }), `${safe}.webmix.json`)
+              .then(r => { if (r) toast(`บันทึกไฟล์โชว์ “${savedName(r, `${safe}.webmix.json`)}” แล้ว`, 'success'); });
           } else if (act === 'lib-open') {
             const it = library.list().find(x => x.id === sel), data = library.data(sel);
             if (!it || !data) { toast('ข้อมูลโชว์นี้หายไปจากเครื่อง', 'error'); return; }

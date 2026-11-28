@@ -37,6 +37,15 @@
     updateDownload: onProgress => { const ch = new T.core.Channel(); ch.onmessage = m => onProgress && onProgress(m); return invoke('update_download', { onProgress: ch }); },
     updateApply: () => invoke('update_apply'),
     // Android: บริการเบื้องหน้า (แจ้งเตือน "กำลังไลฟ์") ให้กล้อง ไมค์ และการสตรีมทำงานต่อตอนปิดจอ/สลับแอป
+    // หน้าต่าง Save As ของระบบ: เสนอชื่อไฟล์และโฟลเดอร์ที่บันทึกครั้งก่อน → { path, dir } หรือ null ถ้ายกเลิก
+    async saveAs(blob, name) {
+      let dir = ''; try { dir = localStorage.getItem('webmix:save-dir') || ''; } catch (e) { /* ไม่มีที่เก็บ */ }
+      const headers = { 'x-name': encodeURIComponent(name) };
+      if (dir) headers['x-dir'] = encodeURIComponent(dir);
+      const r = await invoke('save_as', await toBytes(blob), { headers });
+      if (r && r.dir) try { localStorage.setItem('webmix:save-dir', r.dir); } catch (e) { /* ไม่มีที่เก็บ */ }
+      return r;
+    },
     setLive: (active, text) => invoke('set_live', { active: !!active, text: String(text || '') }).catch(() => {}),
     // จอที่ต่ออยู่ → [{ index, name, width, height, x, y, scale, primary }] · หน้าต่างแยก (หาจากชื่อหน้าต่าง) เต็มจอบนจอที่เลือก
     monitors: () => invoke('monitors').catch(() => []),

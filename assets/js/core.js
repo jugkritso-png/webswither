@@ -28,7 +28,11 @@ window.WebMix = window.WebMix || {};
   const FONT = 'Inter, "IBM Plex Sans Thai", system-ui, sans-serif';
   const MONO = '"JetBrains Mono", ui-monospace, monospace';
 
+  // แอปบนคอมพิวเตอร์: เปิดหน้าต่าง "Save As" ของระบบ (WebView บน Mac ดาวน์โหลดแบบเบราว์เซอร์ไม่ได้)
+  // คืน Promise → { path, dir } เมื่อบันทึกแล้ว · null เมื่อกดยกเลิกหรือบันทึกไม่สำเร็จ
   function downloadBlob(blob, filename) {
+    const d = window.WebMix && window.WebMix.desktop;
+    if (d && d.saveAs && !d.mobile) return d.saveAs(blob, filename).catch(e => { toast(`บันทึกไฟล์ไม่สำเร็จ: ${e && e.message || e}`, 'error', 6000); return null; });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
     a.download = filename;
@@ -36,6 +40,7 @@ window.WebMix = window.WebMix || {};
     a.click();
     a.remove();
     setTimeout(() => URL.revokeObjectURL(a.href), 30000);
+    return Promise.resolve({ path: filename, dir: '' });
   }
 
   /* ---------------------------------------------------------------- storage */
